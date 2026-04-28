@@ -1,13 +1,14 @@
-# Valid KYC credential from provider 42, not expired
-credential_hash = "0x06e460459bc8bb062b18c39324cf2ea46aea0cd229de6f14756eeb528562ea93"
-credential_subject = "123"
+# Valid KYC credential issued by provider 42 to submitter 0xdead, not expired.
+# Per the redesigned circuit (audit C-1), the credential_hash binds:
+#   provider_id, submitter, credential_type, credential_attribute, expiry_timestamp
+# and the leaf is leaf_hash_value(credential_hash) in the provider's credentials tree.
 credential_attribute = "999"
 expiry_timestamp = 2000000000
-provider_merkle_index = "0"
-provider_merkle_path = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+merkle_index = "0"
+merkle_path = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
 provider_id = "42"
 credential_type = 1
 is_valid = true
-merkle_root = "0x15861259068f1398397423d4b3bad764e19c1a68699115ef9ccd090a8a5eba3e"
+credential_root = "0x24ce58f9ed6ca066d25f66b15b0eb1dccebe6e457f5aa0fcd353d82d539f5ed5"
 current_timestamp = 1700000000
 submitter = "0xdead"
