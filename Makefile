@@ -62,8 +62,8 @@ check-toolchain: ## Verify pinned nargo + bb versions match .tool-versions
 fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh
 
-snapshot: ## Capture gas snapshot
-	FOUNDRY_PROFILE=default FOUNDRY_FUZZ_SEED=0x1 $(FORGE) snapshot --no-match-contract InvariantTest
+snapshot: ## Capture gas snapshot (deterministic tests only; fuzz/invariant excluded)
+	FOUNDRY_PROFILE=default $(FORGE) snapshot --no-match-contract InvariantTest --no-match-test "testFuzz_"
 
 benchmark: ## Run gas benchmarks with report
 	$(FORGE) test --match-contract GasBenchmark -vvv --gas-report

@@ -44,7 +44,7 @@ jobs:
         run: forge test -vvv
 
       - name: Check gas snapshot
-        run: FOUNDRY_PROFILE=default FOUNDRY_FUZZ_SEED=0x1 forge snapshot --check --tolerance 2 --no-match-contract InvariantTest
+        run: FOUNDRY_PROFILE=default forge snapshot --check --tolerance 2 --no-match-contract InvariantTest --no-match-test "testFuzz_"
 
   slither:
     name: Slither
