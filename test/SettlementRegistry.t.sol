@@ -290,12 +290,12 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
 
         // Submit pattern proof
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
         emit ISettlementRegistry.TradeFinalized(tradeId, block.timestamp);
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
 
         ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
         assertTrue(s.finalized);
@@ -311,21 +311,21 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         registry.recordSubSettlement(tradeId, 0, proof1);
 
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotComplete.selector, tradeId, 1, 2));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_alreadyFinalized() public {
         bytes32 tradeId = _setupAndFinalizeTradeForAlice();
 
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeAlreadyFinalized.selector, tradeId));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_patternProofZero() public {
@@ -342,7 +342,7 @@ contract SettlementRegistryTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofRequired.selector, tradeId));
-        registry.finalizeTrade(tradeId, bytes32(0));
+        registry.finalizeTrade(tradeId, bytes32(0), "");
     }
 
     function test_finalizeTrade_revert_patternProofNotFound() public {
@@ -360,7 +360,7 @@ contract SettlementRegistryTest is Test {
         bytes32 fakeProof = bytes32(uint256(0xdead));
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.AttestationNotFound.selector, fakeProof));
-        registry.finalizeTrade(tradeId, fakeProof);
+        registry.finalizeTrade(tradeId, fakeProof, "");
     }
 
     function test_finalizeTrade_revert_patternProofSubjectMismatch() public {
@@ -376,16 +376,16 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
 
         // Bob submits pattern proof (wrong subject)
-        bytes32 patternProof = _submitPatternFor(bob);
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternFor(bob, 1);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.SubjectMismatch.selector, alice, bob));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_patternProofTooOld() public {
         // Submit pattern proof BEFORE registering the trade
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.warp(block.timestamp + 1); // advance time so createdAt > pattern timestamp
 
@@ -402,7 +402,7 @@ contract SettlementRegistryTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofRequired.selector, tradeId));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_wrongProofType() public {
@@ -422,7 +422,7 @@ contract SettlementRegistryTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofRequired.selector, tradeId));
-        registry.finalizeTrade(tradeId, complianceProof);
+        registry.finalizeTrade(tradeId, complianceProof, "");
     }
 
     function test_finalizeTrade_revert_notSubject() public {
@@ -437,11 +437,11 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 1, proof2);
         vm.stopPrank();
 
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.NotTradeSubject.selector, bob, alice));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_tradeExpired() public {
@@ -458,11 +458,99 @@ contract SettlementRegistryTest is Test {
 
         vm.warp(block.timestamp + 7 days + 1);
 
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeExpiredError.selector, tradeId));
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    // -------------------------------------------------------------------------
+    // H-2: PATTERN analysis_type binding
+    // -------------------------------------------------------------------------
+
+    function test_finalizeTrade_revert_velocityAnalysisRejected() public {
+        bytes32 tradeId = keccak256("trade-velocity");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proof1 = _submitComplianceForAlice(0);
+        bytes32 proof2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proof1);
+        registry.recordSubSettlement(tradeId, 1, proof2);
+        vm.stopPrank();
+
+        // Submit a VELOCITY (analysis_type=2) pattern proof, not STRUCTURING.
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternFor(alice, 2);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternAnalysisTypeMismatch.selector, 1, 2));
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    function test_finalizeTrade_revert_roundAmountAnalysisRejected() public {
+        bytes32 tradeId = keccak256("trade-round");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proof1 = _submitComplianceForAlice(0);
+        bytes32 proof2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proof1);
+        registry.recordSubSettlement(tradeId, 1, proof2);
+        vm.stopPrank();
+
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternFor(alice, 3);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternAnalysisTypeMismatch.selector, 1, 3));
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    function test_finalizeTrade_revert_publicInputsMismatch() public {
+        bytes32 tradeId = keccak256("trade-mismatch");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proof1 = _submitComplianceForAlice(0);
+        bytes32 proof2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proof1);
+        registry.recordSubSettlement(tradeId, 1, proof2);
+        vm.stopPrank();
+
+        (bytes32 patternProof,) = _submitPatternForAlice();
+
+        // Tampered inputs: substitute analysis_type 1 for 1 but change tx_set_hash
+        bytes memory tamperedInputs = abi.encodePacked(
+            bytes32(uint256(1)), // analysis_type
+            bytes32(uint256(1)), // result
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(86400)), // time_window
+            bytes32(uint256(0xbeef)), // tx_set_hash (different from original 0xabcd)
+            bytes32(uint256(uint160(alice)))
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(); // PatternPublicInputsMismatch with hash data
+        registry.finalizeTrade(tradeId, patternProof, tamperedInputs);
+    }
+
+    function test_submitCompliance_revert_pattern_invalidAnalysisType() public {
+        // Oracle should reject analysis_type==99
+        bytes memory proof = _uniqueProof();
+        bytes memory publicInputs = abi.encodePacked(
+            bytes32(uint256(99)), // analysis_type (invalid)
+            bytes32(uint256(1)), // result
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(86400)), // time_window
+            bytes32(uint256(0xabcd)), // tx_set_hash
+            bytes32(uint256(uint160(alice)))
+        );
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidAnalysisType.selector, 99));
+        oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
     }
 
     // -------------------------------------------------------------------------
@@ -630,19 +718,28 @@ contract SettlementRegistryTest is Test {
         );
         vm.prank(who);
         oracle.submitCompliance(jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
-        proofHash = keccak256(abi.encodePacked(proof, ProofTypes.COMPLIANCE));
+        proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
     }
 
-    /// @dev Submit a pattern proof to the oracle as alice, return the proofHash
-    function _submitPatternForAlice() internal returns (bytes32 proofHash) {
-        return _submitPatternFor(alice);
+    /// @dev Submit a STRUCTURING pattern proof to the oracle as alice, return hash + inputs
+    function _submitPatternForAlice() internal returns (bytes32 proofHash, bytes memory publicInputs) {
+        return _submitPatternFor(alice, 1);
     }
 
-    /// @dev Submit a pattern proof to the oracle as `who`, return the proofHash
-    function _submitPatternFor(address who) internal returns (bytes32 proofHash) {
+    /// @dev Back-compat helper for tests that only need the hash
+    function _submitPatternForAliceHash() internal returns (bytes32 proofHash) {
+        (proofHash,) = _submitPatternFor(alice, 1);
+    }
+
+    /// @dev Submit a pattern proof to the oracle as `who`, return the proofHash + inputs.
+    ///      `analysisType` controls the pattern analysis (1=structuring, 2=velocity, 3=round-amounts).
+    function _submitPatternFor(address who, uint256 analysisType)
+        internal
+        returns (bytes32 proofHash, bytes memory publicInputs)
+    {
         bytes memory proof = _uniqueProof();
-        bytes memory publicInputs = abi.encodePacked(
-            bytes32(uint256(1)), // analysis_type
+        publicInputs = abi.encodePacked(
+            bytes32(analysisType), // analysis_type
             bytes32(uint256(1)), // result
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
@@ -651,7 +748,7 @@ contract SettlementRegistryTest is Test {
         );
         vm.prank(who);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
-        proofHash = keccak256(abi.encodePacked(proof, ProofTypes.PATTERN));
+        proofHash = oracle.computeProofHash(proof, ProofTypes.PATTERN);
     }
 
     /// @dev Full helper: register trade with 2 sub-trades, settle both, finalize
@@ -667,9 +764,9 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 1, proof2);
         vm.stopPrank();
 
-        bytes32 patternProof = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
 
         vm.prank(alice);
-        registry.finalizeTrade(tradeId, patternProof);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 }

@@ -62,6 +62,8 @@ interface ISettlementRegistry {
     error TradeNotExpired(bytes32 tradeId);
     error PatternProofRequired(bytes32 tradeId);
     error InvalidSubTradeCount(uint8 count);
+    error PatternPublicInputsMismatch(bytes32 expected, bytes32 actual);
+    error PatternAnalysisTypeMismatch(uint256 expected, uint256 actual);
 
     // -------------------------------------------------------------------------
     // Functions
@@ -80,14 +82,15 @@ interface ISettlementRegistry {
     function recordSubSettlement(bytes32 tradeId, uint8 index, bytes32 proofHash) external;
 
     /// @notice Finalize a trade after all sub-settlements are recorded
-    /// @dev Requires a pattern detection proof (anti-structuring) for the subject.
-    ///      The registry verifies the attestation exists and belongs to the subject,
-    ///      but cannot verify the proof type from the attestation alone. The caller
-    ///      is responsible for providing a valid pattern proof hash. A future Oracle
-    ///      version could expose proof type metadata to strengthen this check.
+    /// @dev Requires a pattern detection proof of analysis_type=STRUCTURING for the subject.
+    ///      The caller supplies the original public inputs so the registry can verify
+    ///      keccak256(patternPublicInputs) matches the attestation's stored publicInputsHash,
+    ///      then enforces analysis_type==1 (anti-structuring). VELOCITY/ROUND-AMOUNT proofs
+    ///      are rejected.
     /// @param tradeId The trade to finalize
     /// @param patternProofHash Proof hash of a pattern detection proof for the subject
-    function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash) external;
+    /// @param patternPublicInputs Original public inputs used to generate the pattern proof
+    function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external;
 
     /// @notice Expire a trade that has passed its expiry window without finalization
     /// @dev Permissionless -- anyone can call this after expiry
