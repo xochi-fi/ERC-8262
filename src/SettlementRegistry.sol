@@ -5,6 +5,9 @@ import {ISettlementRegistry} from "./interfaces/ISettlementRegistry.sol";
 import {IXochiZKPOracle} from "./interfaces/IXochiZKPOracle.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
 
+/// @dev Mirror of XochiZKPOracle.PATTERN_STRUCTURING constant. Must match circuits/pattern.
+uint256 constant PATTERN_STRUCTURING = 1;
+
 /// @title SettlementRegistry -- Links sub-settlement compliance proofs to a trade identifier
 /// @notice Immutable contract (no owner, no pause) that tracks multi-leg trade settlements.
 ///         Each sub-trade must reference a verified compliance attestation in the Xochi ZKP Oracle.
@@ -92,7 +95,7 @@ contract SettlementRegistry is ISettlementRegistry {
     }
 
     /// @inheritdoc ISettlementRegistry
-    function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash) external {
+    function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external {
         Settlement storage settlement = _settlements[tradeId];
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (msg.sender != settlement.subject) revert NotTradeSubject(msg.sender, settlement.subject);
@@ -108,6 +111,9 @@ contract SettlementRegistry is ISettlementRegistry {
         //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
         //   3. The attestation exists and subject matches
         //   4. The attestation was created after trade registration
+        //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
+        //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
+        //      satisfy the anti-structuring guarantee that this registry depends on
         //
         // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
         // they analyze transaction patterns, not jurisdiction-specific thresholds.
@@ -119,6 +125,17 @@ contract SettlementRegistry is ISettlementRegistry {
             revert SubjectMismatch(settlement.subject, patternAttestation.subject);
         }
         if (patternAttestation.timestamp < settlement.createdAt) revert PatternProofRequired(tradeId);
+
+        bytes32 inputsHash = keccak256(patternPublicInputs);
+        if (inputsHash != patternAttestation.publicInputsHash) {
+            revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
+        }
+        // PATTERN public inputs layout: [0]=analysis_type, [1]=result, ...
+        // Length is enforced by the Oracle on submission (32 bytes * 6 fields).
+        uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
+        if (analysisType != PATTERN_STRUCTURING) {
+            revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
+        }
 
         settlement.finalized = true;
 

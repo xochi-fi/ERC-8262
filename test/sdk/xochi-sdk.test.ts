@@ -20,12 +20,12 @@ import {
   XochiProver,
   XochiVerifier,
   XochiOracle,
-  NodeCircuitLoader,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
   type RiskScoreRangeInput,
 } from "@xochi/sdk";
+import { NodeCircuitLoader } from "@xochi/sdk/node";
 import {
   startAnvil,
   stopAnvil,

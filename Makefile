@@ -1,4 +1,4 @@
-.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint snapshot fixtures clean help
+.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain clean help
 
 FOUNDRY_BIN := $(HOME)/.config/.foundry/bin
 FORGE := $(FOUNDRY_BIN)/forge
@@ -34,8 +34,8 @@ test-noir: ## Run all Noir circuit tests
 test-sdk: ## Run TS consumer SDK tests (noir_js + bb.js + anvil)
 	npm run test:sdk
 
-test-xochi-sdk: ## Run @xochi/sdk cross-repo anvil tests only
-	npx vitest run test/sdk/xochi-sdk.test.ts
+test-xochi-sdk: ## Run @xochi/sdk cross-repo tests (requires ../xochi-sdk)
+	npx vitest run --config vitest.cross-repo.config.ts
 
 test-all: test-sol test-noir test-sdk ## Run all tests
 
@@ -49,13 +49,24 @@ fmt-check: ## Check Solidity formatting (CI)
 
 lint: fmt-check ## Lint (currently fmt-check only)
 
+slither: ## Run Slither static analysis (requires slither-analyzer)
+	@mv src/generated /tmp/xochi-generated-backup 2>/dev/null || true
+	@slither . || (mv /tmp/xochi-generated-backup src/generated 2>/dev/null; exit 1)
+	@mv /tmp/xochi-generated-backup src/generated 2>/dev/null || true
+
 # ── Fixtures & Gas ───────────────────────────────────────────
 
-fixtures: ## Generate proof fixtures for all circuits
+check-toolchain: ## Verify pinned nargo + bb versions match .tool-versions
+	./scripts/check-toolchain.sh
+
+fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh
 
-snapshot: ## Capture gas snapshot
-	$(FORGE) snapshot
+snapshot: ## Capture gas snapshot (deterministic tests only; fuzz/invariant excluded)
+	FOUNDRY_PROFILE=default $(FORGE) snapshot --no-match-contract InvariantTest --no-match-test "testFuzz_"
+
+benchmark: ## Run gas benchmarks with report
+	$(FORGE) test --match-contract GasBenchmark -vvv --gas-report
 
 # ── Clean ────────────────────────────────────────────────────
 

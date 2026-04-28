@@ -15,6 +15,7 @@
 ///   - reporting_threshold: the jurisdiction's reporting threshold (in basis points)
 ///   - time_window: the analysis window in seconds
 ///   - tx_set_hash: commitment to the transaction set analyzed
+///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///
 /// Private inputs:
 ///   - amounts: transaction amounts
@@ -55,6 +56,7 @@ fn main(
     reporting_threshold: pub u64,  // jurisdiction reporting threshold
     time_window: pub u64,          // analysis window in seconds
     tx_set_hash: pub Field,        // commitment to the analyzed set
+    submitter: pub Field,           // authorized submitter address (oracle enforces == msg.sender)
 ) {
     // Validate inputs
     assert(num_transactions >= 1, "At least one transaction required");
@@ -65,6 +67,9 @@ fn main(
         "Threshold too large, would overflow",
     );
     assert(time_window > 0, "Time window must be positive");
+
+    // Anchor submitter as a public input (oracle enforces submitter == msg.sender).
+    assert(submitter != 0, "submitter must be non-zero");
 
     // Validate active slots have sane timestamps; ensure inactive slots are zeroed
     for i in 0..16 {
@@ -206,7 +211,7 @@ fn test_main_structuring_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -216,7 +221,7 @@ fn test_main_velocity_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -226,7 +231,7 @@ fn test_main_round_amounts_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -237,7 +242,7 @@ fn test_main_structuring_detected() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -248,7 +253,7 @@ fn test_structuring_threshold_boundary() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -258,7 +263,7 @@ fn test_velocity_exactly_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -268,7 +273,7 @@ fn test_velocity_exceeds_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead);
 }
 
 #[test]
@@ -279,5 +284,32 @@ fn test_round_amounts_all_round() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead);
+}
+
+#[test]
+fn test_structuring_max_threshold_single_tx() {
+    // Single transaction at MAX_REPORTING_THRESHOLD with amount well below floor.
+    // floor = 204962515653461695 * 90 / 100 = 184466264088115525
+    // amount 100 < floor -> not suspicious -> clean
+    let amounts: [u64; 16] = [100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead);
+}
+
+#[test]
+fn test_structuring_max_threshold_single_tx_suspicious() {
+    // Single transaction with amount at the floor value (suspicious range).
+    // floor = 204962515653461695 * 90 / 100 = 184466264088115525
+    // amount == floor -> in [floor, threshold) -> suspicious
+    // 1 suspicious out of 1 total: half = (1+1)/2 = 1, suspicious_count(1) < 1 is false -> not clean
+    let amounts: [u64; 16] = [184466264088115525, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead);
 }

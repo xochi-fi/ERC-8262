@@ -35,40 +35,54 @@ generate_fixture() {
 
     echo "--- $circuit ---"
 
-    # Compile if needed
-    if [[ ! -f "$circuit_dir/target/$circuit.json" ]]; then
+    # Compile if needed (nargo 1.0.0-beta.20 writes to workspace target/)
+    local circuit_json="$CIRCUITS_DIR/target/$circuit.json"
+    if [[ ! -f "$circuit_json" ]]; then
+        # Fallback for older nargo versions
+        circuit_json="$circuit_dir/target/$circuit.json"
+    fi
+    if [[ ! -f "$circuit_json" ]]; then
         echo "  compiling..."
         (cd "$circuit_dir" && "$NARGO" compile)
+        circuit_json="$CIRCUITS_DIR/target/$circuit.json"
+        if [[ ! -f "$circuit_json" ]]; then
+            circuit_json="$circuit_dir/target/$circuit.json"
+        fi
     fi
 
-    # Generate witness
+    # Generate witness (nargo 1.0.0-beta.20 writes to workspace target/)
     echo "  executing witness..."
     (cd "$circuit_dir" && "$NARGO" execute)
+    local witness_file="$CIRCUITS_DIR/target/$circuit.gz"
+    if [[ ! -f "$witness_file" ]]; then
+        # Fallback for older nargo versions that write to per-circuit target/
+        witness_file="$circuit_dir/target/$circuit.gz"
+    fi
 
     # Generate proof with evm target
     echo "  proving..."
     local proof_dir="$circuit_dir/target/proof"
     rm -r "$proof_dir" 2>/dev/null || true
-    (cd "$circuit_dir" && "$BB" prove \
-        -b "./target/$circuit.json" \
-        -w "./target/$circuit.gz" \
+    "$BB" prove \
+        -b "$circuit_json" \
+        -w "$witness_file" \
         -t evm \
         --write_vk \
-        -o "./target/proof")
+        -o "$circuit_dir/target/proof"
 
     # Verify natively
     echo "  verifying..."
-    (cd "$circuit_dir" && "$BB" verify \
-        -k "./target/proof/vk" \
-        -p "./target/proof/proof" \
-        -i "./target/proof/public_inputs" \
-        -t evm)
+    "$BB" verify \
+        -k "$circuit_dir/target/proof/vk" \
+        -p "$circuit_dir/target/proof/proof" \
+        -i "$circuit_dir/target/proof/public_inputs" \
+        -t evm
 
     # Regenerate Solidity verifier from the proof's VK (ensures VK consistency)
     echo "  generating solidity verifier..."
-    (cd "$circuit_dir" && "$BB" write_solidity_verifier \
-        -k "./target/proof/vk" \
-        -o "./target/${circuit}_verifier.sol")
+    "$BB" write_solidity_verifier \
+        -k "$circuit_dir/target/proof/vk" \
+        -o "$circuit_dir/target/${circuit}_verifier.sol"
 
     # Copy to fixtures
     local fixture_dir="$FIXTURES_DIR/$circuit"

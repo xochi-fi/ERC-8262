@@ -260,3 +260,60 @@ fn test_score_just_below_threshold() {
         0xdead,
     );
 }
+
+#[test]
+fn test_score_one_bps_below_threshold_eu() {
+    // Two providers producing exactly 7099 bps (1 bps below EU threshold of 7100)
+    // weighted_sum = 71*99 + 70*1 = 7029 + 70 = 7099
+    // score = 7099 * 100 / 100 = 7099 bps
+    let signals = [71, 70, 0, 0, 0, 0, 0, 0];
+    let weights: [u32; 8] = [99, 1, 0, 0, 0, 0, 0, 0];
+    let weight_sum: u32 = 100;
+    let provider_ids: [Field; 8] = [1, 2, 0, 0, 0, 0, 0, 0];
+
+    let score = compute_risk_score(signals, weights, weight_sum);
+    assert(score == 7099);
+
+    let threshold = get_high_threshold(0); // EU: 7100
+    assert(score < threshold);
+
+    let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
+    let config_hash = compute_config_hash(weights);
+
+    main(
+        signals, weights, weight_sum, provider_ids, 2,
+        0, // EU
+        provider_set_hash,
+        config_hash,
+        1700000000,
+        true, // 7099 < 7100
+        0xdead,
+    );
+}
+
+#[test]
+fn test_score_one_bps_below_threshold_us() {
+    // Two providers producing exactly 6599 bps (1 bps below US threshold of 6600)
+    // weighted_sum = 66*99 + 65*1 = 6534 + 65 = 6599
+    // score = 6599 * 100 / 100 = 6599 bps
+    let signals = [66, 65, 0, 0, 0, 0, 0, 0];
+    let weights: [u32; 8] = [99, 1, 0, 0, 0, 0, 0, 0];
+    let weight_sum: u32 = 100;
+    let provider_ids: [Field; 8] = [1, 2, 0, 0, 0, 0, 0, 0];
+
+    let score = compute_risk_score(signals, weights, weight_sum);
+    assert(score == 6599);
+
+    let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
+    let config_hash = compute_config_hash(weights);
+
+    main(
+        signals, weights, weight_sum, provider_ids, 2,
+        1, // US
+        provider_set_hash,
+        config_hash,
+        1700000000,
+        true, // 6599 < 6600
+        0xdead,
+    );
+}

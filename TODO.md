@@ -2,137 +2,93 @@
 
 ## Current Status
 
-- 175/175 Solidity tests pass (49 verifier + 98 oracle + 15 integration + 13 ProofTypes)
-- 70/70 Noir circuit tests pass (7 packages: shared 11, compliance 8, risk_score 13, pattern 12, attestation 10, membership 5, non_membership 11)
-- 16/16 xochi e2e tests pass (TS + anvil, all 6 proof types + runtime proving)
-- 3/3 TS consumer SDK tests pass (noir_js -> bb.js -> anvil -> on-chain verify)
-- 7/7 client SDK tests pass (XochiProver + encoding)
+- 424/424 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration, Gas, Invariant, EIP712, ThresholdCrossValidation, AccessControl, ProviderDenylist, LibraryFuzz)
+- 77/77 Noir circuit tests pass (7 workspace packages)
+- 28/35 TS consumer SDK tests pass (7 todo)
+- 7/7 client SDK tests pass
 - EIP draft aligned with implementation
-- Tooling: nargo 1.0.0-beta.19, forge 1.5.1, bb 4.0.0-nightly.20260120
-- Gas snapshot captured (.gas-snapshot)
-- Real proof fixtures for all 6 circuits
-- xochi integration: shared oracle ABI, worker on-chain verification, useCompliance hook, real ZK proving
-- Client SDK: `@xochi/sdk` in ../xochi-sdk (XochiProver, typed input builders, 3 circuit loaders)
+- Tooling: nargo 1.0.0-beta.20, forge 1.5.1, bb 4.0.0-nightly.20260120
+- CI green (solidity + circuits + sdk jobs); Slither: 0 findings
+- Gas: ~2.43M verify, ~2.85M submit, linear batch scaling
+- Client SDK: `../xochi-sdk` (also published as `@xochi/sdk@^0.1.1`)
 
 ## Completed
 
 <details>
-<summary>Security fixes (circuits + Solidity)</summary>
+<summary>Foundational security (circuits + Solidity)</summary>
 
-- Non-membership u64 truncation range checks
-- Risk score overflow (MAX_WEIGHT constraint), weight_sum validation
-- Provider set hash array size assertion, zero-value provider ambiguity guard
-- Pattern floor overflow (MAX_REPORTING_THRESHOLD guard)
-- Pedersen homomorphic properties documented (no circuit exploits them)
-- IUltraVerifier view mismatch fixed (verify() now view)
-- Public input validation for all 6 proof types
-- TOCTOU elimination (verifier address resolved once)
-- Proof hash keyed on (proof, proofType) for cross-type collision prevention
-- Public input alignment check (rejects length % 32 != 0)
-- Merkle root registry for MEMBERSHIP/NON_MEMBERSHIP/ATTESTATION
-- Reporting threshold registry for PATTERN
-- Config revocation with CannotRevokeCurrentConfig guard
-- Proof replay protection (\_usedProofs mapping)
-- Attestation history pagination
-- Ownership transfer 48-hour timeout on both contracts
+Circuit hardening: non-membership u64 range checks, risk-score overflow guard (MAX_WEIGHT, weight_sum validation), provider-set array assertions, pattern floor overflow guard, Pedersen homomorphic properties documented.
+
+Oracle/Verifier hardening: IUltraVerifier `view` correctness, public-input validation for all 6 proof types, TOCTOU elimination, proof-hash keying on `(proof, proofType)`, 32-byte alignment check, merkle-root + reporting-threshold registries, config revocation with `CannotRevokeCurrentConfig` guard, `_usedProofs` replay protection, paginated attestation history, Ownable2Step 48h transfer timeout.
 </details>
 
 <details>
-<summary>Test coverage</summary>
+<summary>Pre-mainnet hardening (2026-04-22)</summary>
 
-- Proof replay, jurisdiction mismatch, providerSetHash mismatch
-- Unaligned public inputs rejection
-- Merkle root + reporting threshold validation
-- Cross-type proof replay allowed (different hash)
-- TTL boundary precision, config revocation
-- View verifier prevents reentrancy (TOCTOU test)
-- Fuzz: expired attestation, replay, attestation fields, revoked config, encoding round trips
-- Integration tests with real proofs for all 6 circuits
-- Circuit main() tests for all 6 circuits
+- Proof front-running: `submitter: pub Field` in all 6 circuits, Oracle enforces `submitter == msg.sender`
+- Timestamp staleness: `MAX_PROOF_AGE = 1h` for COMPLIANCE/ATTESTATION/MEMBERSHIP/NON_MEMBERSHIP
+- Verifier replacement timelock: `proposeVerifier`/`executeVerifierUpdate` (24h), `setVerifierInitial` deploy-only
+- Pattern time_window floor: `MIN_TIME_WINDOW = 3600s`
+- Cross-type semantic gap: `proofType` in ComplianceAttestation struct + `checkComplianceByType()`
+- Code existence check: `NotAContract` rejects EOA verifier addresses
+- Per-proof-type pause + emergency `revokeVerifierVersion`
+- Noir u1 -> bool migration (nargo 1.0.0-beta.20)
+</details>
+
+<details>
+<summary>Static analysis + tests (2026-04-25)</summary>
+
+- Slither v0.11.5 -- 36 findings triaged (all false positives / by-design); `slither.config.json` + CI job; generated UltraHonk verifiers excluded (separately audited by Aztec)
+- Mythril -- 0 issues on Oracle, Verifier, SettlementRegistry, Timelock
+- `compactConfigHistory()` to free slots after revocations
+- EIP-712 typed-data lib (`EIP712Attestation`) for off-chain attestation verification, fork-safe `DOMAIN_SEPARATOR()`
+- `ProofTypes.decodePublicInputs` calldatacopy optimization (~60 gas/input saved)
+- Paired Noir + Solidity threshold cross-validation tests
+- Circuit edge-case tests: u64 max boundary, 1-bps-below-threshold, MAX_REPORTING_THRESHOLD
+</details>
+
+<details>
+<summary>Defense-in-depth hardening (2026-04-28)</summary>
+
+- Cross-chain replay binding: `proofHash = keccak256(proof, proofType, chainId, address(this))`. Same proof bytes can no longer be replayed across chains or alternate Oracle deployments. New `computeProofHash()` view as the source-of-truth helper for integrators.
+- Role-based access control (`AccessControl` library): GUARDIAN (pause/incident), REGISTRAR (merkle/threshold/publisher curation), CONFIG (provider config, TTL, verifier upgrades). Owner implicitly holds every role; only owner can grant/revoke. Splits the admin surface so a single key compromise no longer unlocks the full attack surface.
+- Per-provider denylist: `registerProviderConfigExpansion(configHash, providerIds[])` (CONFIG, append-only) + `denyProvider(id)` / `undenyProvider(id)` (GUARDIAN). Surgical revocation of a single compromised KYC provider without rotating the whole config; opt-in via expansion registration so configs without an expansion are unaffected.
+- 37 new tests across `AccessControl.t.sol` + `ProviderDenylist.t.sol`; Slither: 0 findings.
 </details>
 
 <details>
 <summary>Infrastructure + integrations</summary>
 
-- generate-fixtures.sh (compile, prove, verify, generate Solidity verifiers)
-- Makefile with build/test/lint targets, pre-commit hooks (forge fmt check)
-- xochi e2e harness, shared oracle module, worker verification, useCompliance hook
-- Runtime proof generation in xochi e2e (replaced fixture-loading)
-- TS consumer SDK test, client SDK repo (@xochi/sdk)
+- `generate-fixtures.sh`, Makefile (build/test/lint/benchmark), pre-commit `forge fmt` check
+- xochi e2e harness, runtime proof generation, TS consumer SDK, `@xochi/sdk` published to npm
+- CI: solidity + circuits + sdk jobs, slither job, gas-snapshot regression check
+- XochiTimelock: 24h verifier / 6h config tiers, proposer + guardian roles
 </details>
 
 <details>
 <summary>Code quality refactor (2026-04-08)</summary>
 
-- Extracted shared Noir utilities: verify_weight_sum, weights_to_fields, compute_config_hash, validate_timestamp, compute_tx_set_hash
-- Created circuits/shared/src/validation.nr module
-- Refactored 5 circuits to use shared functions (~60 lines deduplication)
-- Expanded comments: Merkle bit encoding, two-round hashing rationale, truncation attack explanation
-- Extracted Solidity Ownable2Step + Pausable abstract contracts (~50 lines deduplication)
-- Refactored Oracle + Verifier to inherit shared base contracts
+- Extracted Noir shared utilities (`verify_weight_sum`, `weights_to_fields`, `compute_config_hash`, `validate_timestamp`, `compute_tx_set_hash`); circuit deduplication ~60 lines
+- Solidity `Ownable2Step` + `Pausable` abstracts; ~50 lines deduplication
+- Expanded NatSpec on Merkle bit encoding, two-round hashing rationale, truncation-attack explanation
 </details>
 
-## Security hardening
+## Medium-priority hardening (next)
 
-### High priority (pre-mainnet blockers)
+- [x] **Per-subject attestation ratchet** (2026-04-28): `_lastProofTimestamp[subject][jurisdictionId]` enforces non-decreasing proof-internal timestamps via the new `_ratchet()` helper. Each `_validate*Inputs` returns its proof timestamp (proof-internal for COMPLIANCE/ATTESTATION/MEMBERSHIP/NON_MEMBERSHIP, `block.timestamp` for RISK_SCORE/PATTERN). Equal timestamps allowed so legitimate same-block submissions of different proof types can coexist. Public getter `lastProofTimestamp(subject, jurisdictionId)`. 8 new tests in `AttestationRatchet.t.sol`.
+- [ ] **Verifier codehash pinning**: `proposeVerifier(uint8 proofType, address newVerifier, bytes32 expectedCodehash)` rejects when `address(newVerifier).codehash != expectedCodehash`. Belt-and-suspenders on top of the 24h timelock -- forces a compromised owner who pushes a swap to also know the codehash committed to at proposal time, blocking SELFDESTRUCT-and-redeploy bait-and-switch.
+- [ ] **Jurisdiction threshold timelock**: route `JurisdictionConfig` updates through `XochiTimelock LOW_DELAY` (6h). Today the thresholds are compile-time constants -- this only becomes relevant if/when they become governed.
 
-- [ ] **Proof front-running mitigation**: Proofs are not bound to msg.sender. An attacker watching the mempool can copy a user's proof bytes and submit first, burning the proof (ProofAlreadyUsed) while the attacker gets a meaningless attestation. Mitigations: (a) commit-reveal scheme, (b) add subject address as a public circuit input, or (c) use Flashbots/private mempool for submissions. Document as known limitation at minimum.
-- [ ] **Circuit timestamp staleness check**: The Oracle accepts any timestamp in the proof's public inputs (circuits only enforce >2021, <2^40). A proof generated weeks ago can be submitted today. Add on-chain check: `|block.timestamp - proofTimestamp| < MAX_PROOF_AGE` (e.g., 1 hour). Applies to COMPLIANCE (offset 96:128), ATTESTATION (offset 128:160), MEMBERSHIP/NON_MEMBERSHIP (offset 64:96).
-- [ ] **Mandatory timelock on verifier replacement**: A compromised admin key can swap a verifier to one that accepts any proof, then submit fake attestations, all in one block. The EIP says SHOULD for timelocking admin ops -- strengthen to MUST for `setVerifier()` specifically. Implement a minimum delay (e.g., 24h) enforced in the contract itself, not just as an external governance pattern. The two-step ownership is good but insufficient alone -- the admin controls verifier addresses, config hashes, merkle roots, reporting thresholds, TTL, and pause. That's too much power without a timelock.
-- [ ] **Pattern time_window minimum enforcement**: Circuit now enforces `time_window > 0` but the prover still controls the value. Setting it to 1 second trivially passes velocity checks. The Oracle doesn't validate time_window against any minimum. Options: (a) register valid time_windows in a registry alongside reporting thresholds, (b) enforce a per-analysis-type minimum in the Oracle (e.g., 3600s for velocity), or (c) add a `min_time_window` public input to the circuit. Option (b) is simplest.
-- [ ] **Cross-type attestation semantic gap**: The Oracle stores the same `ComplianceAttestation` struct for all 6 proof types but doesn't record which proof type was used. A consumer calling `checkCompliance()` gets `valid=true` regardless of whether the proof was COMPLIANCE (AML risk score) or MEMBERSHIP (address on a whitelist). If an integrator assumes "valid" means "AML-compliant" but the attestation was a MEMBERSHIP proof, that's a silent semantic mismatch. Fix: add `uint8 proofType` field to `ComplianceAttestation` struct and filter in `checkCompliance()`, or provide a `checkComplianceByType()` variant.
-- [ ] **Run Slither + Mythril static analysis**: No static analysis has been run on the contracts. Slither catches common patterns (reentrancy, unchecked returns, etc.), Mythril finds symbolic execution bugs. Add to CI.
+## Lower-priority hardening
 
-### Medium priority
-
-- [ ] **setVerifier code existence check**: `setVerifier(proofType, addr)` accepts any address, including EOAs or contracts without `verify()`. Add `addr.code.length > 0` check. Consider a dry-run verification call.
-- [ ] **Per-proof-type pause**: Currently pause() stops all proof types. A compromised verifier for one type requires pausing the entire system. Add `pauseProofType(uint8)` / `unpauseProofType(uint8)` for surgical response.
-- [ ] **Emergency verifier revocation**: If a verifier is compromised, setting a new one still allows the old one to be used via `verifyProofAtVersion`. Add ability to revoke a specific version from the history.
-- [ ] **Formal verification of jurisdiction thresholds**: The Noir `get_high_threshold()` and Solidity `JurisdictionConfig.getThresholds()` must match exactly. Currently verified by inspection only. Write a cross-validation test (forge ffi calling nargo to compute thresholds, compare against Solidity).
-- [ ] **Config history cleanup**: `MAX_CONFIG_HISTORY = 256` is a hard cap with no cleanup mechanism. After 256 updates, the Oracle is permanently stuck. Add `compactConfigHistory()` that removes revoked entries, or increase the cap.
-
-### Low priority
-
-- [ ] **Attestation history gas griefing**: `_attestationHistory[subject][jurisdiction]` is unbounded. Repeated submissions grow the array, increasing gas for `getAttestationHistory()`. Not exploitable (submitter pays gas) but worth documenting for integrators using `getAttestationHistory` vs paginated variant.
-- [ ] **ProofTypes.decodePublicInputs assembly optimization**: The loop decodes 32-byte slots one at a time with calldata slicing. A `calldatacopy` into memory would be cheaper for large input counts.
-- [ ] **Add EIP-712 typed data hashing**: For off-chain attestation verification, typed hashing would let wallets display structured data instead of raw bytes.
-
-## Low-priority test gaps
-
+- [ ] Mythril in CI alongside Slither (currently only Slither is automated)
+- [ ] Foundry invariant tests for Oracle state machine (attestation monotonicity, no orphaned roots, denied-provider configs always reject)
 - [ ] SDK `.todo()` tests for pattern + attestation circuits (blocked on circuit builds in CI)
 - [ ] Exhaustive cross-type proof routing rejection (all 30 mismatch permutations)
-- [ ] Fuzz jurisdiction ID permutations in submitCompliance (4 values, unit tests sufficient)
-- [ ] Fuzz metadata URI strings in updateProviderConfig (long strings, special chars)
-- [ ] Fuzz corrupted proof bytes (various corruption patterns beyond single-byte flip)
-- [ ] Test paginated history with limit=0, fuzz arbitrary offset/limit combinations
-- [ ] Test that old proofs with revoked config are still retrievable via getHistoricalProof
-- [ ] Non-membership: value at exact MAX_ELEMENT_VALUE boundary (2^64-1)
-- [ ] Compliance: multi-provider score that lands exactly 1 bps below threshold
-- [ ] Pattern: threshold=MAX_REPORTING_THRESHOLD boundary, num_transactions=1 edge case
 
 ## Next up
 
-### 1. CI workflow (GitHub Actions)
-
-Two jobs: `solidity` and `circuits`. Both trigger on push/PR to main.
-
-**solidity job:**
-
-- Install foundry (foundry-rs/foundry-toolchain action)
-- `forge build --sizes` (catch contract size regressions)
-- `forge test -vvv`
-- `forge fmt --check`
-- Cache: `~/.config/.foundry`
-
-**circuits job:**
-
-- Install nargo via noirup (noir-lang/noirup action or curl)
-- `cd circuits && nargo test --workspace`
-- Cache: `~/.nargo`
-
-Optional: add `sdk` job later when CI has node/npm (low priority, fast locally).
-
-### 2. Testnet deployment (Sepolia + Base Sepolia)
+### 1. Testnet deployment (Sepolia + Base Sepolia)
 
 Prerequisite: CI green.
 
@@ -140,29 +96,14 @@ Prerequisite: CI green.
 - [ ] Deploy generated verifiers (6 contracts per chain)
 - [ ] Deploy XochiZKPVerifier, register all 6 per-type verifiers
 - [ ] Deploy XochiZKPOracle with initial config hash
+- [ ] Deploy XochiTimelock with Safe multi-sig as proposer
+- [ ] Transfer Verifier + Oracle ownership to timelock
 - [ ] Register initial merkle roots + reporting thresholds
 - [ ] Verify all contracts on Etherscan/Basescan
 - [ ] Smoke test: submit a real compliance proof on testnet
 - [ ] Document deployed addresses in README
 
-### 3. Timelock + multi-sig for admin ops
-
-Prerequisite: testnet deployment validated.
-
-- [ ] TimelockController for admin operations (verifier updates, TTL changes, config updates)
-- [ ] Minimum delay: 24h for verifier updates, 6h for TTL/config
-- [ ] Safe multi-sig as timelock proposer (2-of-3 minimum)
-- [ ] Update Oracle + Verifier ownership to timelock
-- [ ] Test timelock flow end-to-end on testnet
-
-### 4. Gas benchmarks
-
-- [ ] Per-proof-type verification gas (all 6 types, real proofs)
-- [ ] submitCompliance gas breakdown (verify + storage + events)
-- [ ] Batch verification gas scaling curve
-- [ ] Add to CI as regression check (forge snapshot --check)
-
-### 5. Documentation site
+### 2. Documentation site
 
 - [ ] EIP spec as primary reference
 - [ ] Integration guide (SDK usage, proof generation, on-chain verification)
@@ -175,7 +116,18 @@ Prerequisite: testnet deployment validated.
 - [ ] External security audit (Solidity + Noir circuits)
 - [ ] EIP submission to ethereum/EIPs
 - [ ] Provider signal mock server for local development
-- [ ] Formal verification of jurisdiction threshold logic
+- [x] Formal verification of jurisdiction threshold logic
+
+## Gas benchmarks
+
+| Operation              | Gas    | Notes                                    |
+| ---------------------- | ------ | ---------------------------------------- |
+| verifyProof (any type) | ~2.43M | UltraHonk verification dominates         |
+| submitCompliance       | ~2.85M | +380K Oracle overhead (storage + events) |
+| batch verify x1        | 2.86M  | Baseline                                 |
+| batch verify x2        | 4.84M  | ~2.42M/proof                             |
+| batch verify x5        | 12.07M | ~2.41M/proof                             |
+| batch verify x10       | 24.12M | ~2.41M/proof (linear)                    |
 
 ## Design decisions (documented, not bugs)
 
@@ -188,3 +140,4 @@ Prerequisite: testnet deployment validated.
 - **verifier immutable on Oracle**: XochiZKPVerifier address is immutable. Individual per-type verifiers are upgradeable via setVerifier().
 - **Circuit names match ProofTypes**: Circuit directories (pattern, attestation) match Solidity ProofTypes constants 1:1. Previously `anti_structuring` and `tier_verification`, renamed for ontology alignment.
 - **compliance vs risk_score**: Both use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof. Risk score is a raw scoring primitive for custom integrations (GT/LT/range, no jurisdiction). Intentional composition, not duplication.
+- **Double timelock for verifier updates**: External XochiTimelock (24h) + internal verifier timelock (24h) = 48h total. Defense-in-depth: even if the timelock controller is compromised, the verifier's internal timelock provides a second layer. Emergency bypass via `revokeVerifierVersion` and `pauseProofType` (no timelock).

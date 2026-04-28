@@ -187,7 +187,7 @@ export async function deployContracts(): Promise<DeployedContracts> {
     await walletClient.writeContract({
       address: verifierAddress,
       abi: verifierArtifact.abi,
-      functionName: "setVerifier",
+      functionName: "setVerifierInitial",
       args: [proofType, addr],
     });
   }

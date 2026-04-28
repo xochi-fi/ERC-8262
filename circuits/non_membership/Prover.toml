@@ -1,13 +1,17 @@
-# Non-membership: element 50 not in set {10, 100}, set_id=1
-# Tree: index 0 = hash2(10,1), index 1 = hash2(100,1)
-element = "50"
-low_leaf = "10"
-high_leaf = "100"
+# Non-membership: submitter 0xdead is not in set {0x100, 0x10000}, set_id=1.
+# Per the redesigned circuit (audit H-3 + M-2), the value being proven non-member
+# IS the submitter, and ordering uses Field.lt() (no u64 ceiling).
+# Leaves are computed as leaf_hash_subject(value, set_id, salt). Salts are 0 (public set).
+low_leaf = "0x100"
+low_leaf_salt = "0"
 low_index = "0"
-low_path = ["0x221e24eef47a71db7759851c68c8652da18b4f09c4769f2d5b8c297fbb83f07b", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+low_path = ["0x2e3a62a21fa1706df17be5649ad62e45a4dbdbe9a9ce3923058d940cdc6b929d", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+high_leaf = "0x10000"
+high_leaf_salt = "0"
 high_index = "1"
-high_path = ["0x05d75a4240c69473571bb84967f03169b71440533e7d372a93dc254f9582fc7f", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
-merkle_root = "0x12d001bc3463cb4d3a745f802dffd80c00a2927f77110d1b0a59b9a3bd787b86"
+high_path = ["0x0c57a3ac2ba9abef99b6ab714e307311687782f270b6517717e181e5cd50cce5", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
+merkle_root = "0x138f818fd4f2eec91e4fd93e14bcc47bc06a3ba333e5a2e7795d0beb752d247c"
 set_id = "1"
 timestamp = "1700000000"
 is_non_member = true
+submitter = "0xdead"

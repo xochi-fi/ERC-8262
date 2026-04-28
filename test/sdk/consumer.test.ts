@@ -153,28 +153,37 @@ const RISK_SCORE_GT_INPUTS = {
   submitter: ALICE_ADDRESS,
 };
 
+// Per audit fixes (H-3, M-2, L-2, C-1):
+// - MEMBERSHIP / NON_MEMBERSHIP leaves are now leaf_hash_subject(value, set_id, salt)
+//   and bind to the submitter rather than a free-floating `element`.
+// - NON_MEMBERSHIP requires high_index == low_index + 1 (adjacency).
+// Tests that need a "non-member" (is_member=false) result must produce a tree whose
+// computed root does not equal the supplied merkle_root.
 const MEMBERSHIP_INPUTS = {
-  element: "42",
+  subject_salt: "0",
   merkle_index: "0",
   merkle_path: Array(20).fill("0"),
   merkle_root: "0",
   set_id: "1",
   timestamp: "1700000000",
   is_member: true,
+  submitter: ALICE_ADDRESS,
 };
 
 const NON_MEMBERSHIP_INPUTS = {
-  element: "50",
-  low_leaf: "10",
-  high_leaf: "100",
+  low_leaf: "0x100",
+  low_leaf_salt: "0",
   low_index: "0",
   low_path: Array(20).fill("0"),
+  high_leaf: "0x10000",
+  high_leaf_salt: "0",
   high_index: "1",
   high_path: Array(20).fill("0"),
   merkle_root: "0",
   set_id: "1",
   timestamp: "1700000000",
   is_non_member: true,
+  submitter: ALICE_ADDRESS,
 };
 
 // ============================================================
@@ -352,13 +361,11 @@ describe("SDK layer (no chain)", () => {
       const circuit = loadCircuit("membership");
       const noir = new Noir(circuit);
 
-      // element=99 at index 0 with all-zero path. merkle_root=0.
-      // Circuit computes root = H(H(99,1), 0) iterated 20x, which is not 0.
-      // So computed_root != merkle_root -> membership_valid = false.
-      // With is_member=false, the constraint (membership_valid == is_member) holds.
+      // Per audit H-3: leaf is leaf_hash_subject(submitter, set_id, salt).
+      // With merkle_root=0 and a non-zero submitter, computed_root != 0 ->
+      // membership_valid = false. is_member=false so the assert passes.
       const inputs = normalizeInputs({
         ...MEMBERSHIP_INPUTS,
-        element: "99",
         is_member: false,
       });
 
@@ -370,10 +377,10 @@ describe("SDK layer (no chain)", () => {
       const circuit = loadCircuit("membership");
       const noir = new Noir(circuit);
 
-      // Same setup: computed_root != 0 -> not a member. Claiming is_member=true fails.
+      // Same setup as above: computed_root != 0 -> not a member.
+      // Claiming is_member=true triggers the constraint failure.
       const inputs = normalizeInputs({
         ...MEMBERSHIP_INPUTS,
-        element: "99",
         is_member: true,
       });
 
@@ -392,23 +399,22 @@ describe("SDK layer (no chain)", () => {
 
       const inputs = normalizeInputs({
         ...NON_MEMBERSHIP_INPUTS,
-        low_leaf: "100",
-        high_leaf: "10",
+        low_leaf: "0x10000",
+        high_leaf: "0x100", // swapped
         is_non_member: true,
       });
 
       await expect(noir.execute(inputs)).rejects.toThrow();
     });
 
-    it("rejects when element equals a leaf", async () => {
+    it("rejects when submitter equals a leaf", async () => {
       const circuit = loadCircuit("non_membership");
       const noir = new Noir(circuit);
 
+      // Submitter equals low_leaf -> ordering check fails -> is_non_member=true rejected.
       const inputs = normalizeInputs({
         ...NON_MEMBERSHIP_INPUTS,
-        element: "10",
-        low_leaf: "10",
-        high_leaf: "100",
+        submitter: "0x100",
         is_non_member: true,
       });
 

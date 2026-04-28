@@ -10,6 +10,10 @@ import { foundry } from "viem/chains";
 export const ANVIL_PORT = 8547;
 export const ANVIL_RPC = `http://127.0.0.1:${ANVIL_PORT}`;
 
+// Fixture proofs use this timestamp; anvil must start here so proofs
+// pass the Oracle's MAX_PROOF_AGE (1 hour) check.
+export const FIXTURE_TIMESTAMP = 1700000000;
+
 // anvil account #0
 export const DEPLOYER_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
@@ -51,6 +55,8 @@ export async function startAnvil(): Promise<void> {
       "--silent",
       "--code-size-limit",
       "65536",
+      "--timestamp",
+      String(FIXTURE_TIMESTAMP),
     ],
     { stdio: "ignore", detached: false },
   );

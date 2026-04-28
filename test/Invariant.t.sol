@@ -49,7 +49,7 @@ contract Handler is Test {
             bytes32(uint256(uint160(address(this)))) // submitter = this handler
         );
 
-        bytes32 proofHash = keccak256(abi.encodePacked(proof, ProofTypes.COMPLIANCE));
+        bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
 
         IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
             jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH
@@ -89,8 +89,12 @@ contract Handler is Test {
     function setVerifierOnVerifier(uint8 proofTypeSeed) external {
         uint8 proofType = uint8(bound(proofTypeSeed, 1, 6));
         AlwaysPassVerifierInv newV = new AlwaysPassVerifierInv();
-        vm.prank(verifier.owner());
-        verifier.setVerifier(proofType, address(newV));
+        address own = verifier.owner();
+        vm.prank(own);
+        verifier.proposeVerifier(proofType, address(newV));
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(own);
+        verifier.executeVerifierUpdate(proofType);
     }
 
     function _uniqueProof() internal returns (bytes memory) {
@@ -118,7 +122,7 @@ contract InvariantTest is Test {
 
         AlwaysPassVerifierInv stub = new AlwaysPassVerifierInv();
         for (uint8 i = ProofTypes.COMPLIANCE; i <= ProofTypes.NON_MEMBERSHIP; i++) {
-            verifier.setVerifier(i, address(stub));
+            verifier.setVerifierInitial(i, address(stub));
         }
 
         handler = new Handler(oracle, verifier);

@@ -8,10 +8,11 @@ interface IXochiZKPOracle {
     struct ComplianceAttestation {
         address subject; // address that proved compliance
         uint8 jurisdictionId; // jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
+        uint8 proofType; // which proof type generated this attestation (0x01-0x06)
         bool meetsThreshold; // whether risk score is below filing trigger
         uint256 timestamp; // block.timestamp when attestation was recorded
         uint256 expiresAt; // timestamp after which attestation is stale
-        bytes32 proofHash; // keccak256 of the proof data
+        bytes32 proofHash; // keccak256(proof, proofType, chainId, oracleAddr) -- see computeProofHash
         bytes32 providerSetHash; // hash of provider IDs + weights used
         bytes32 publicInputsHash; // keccak256 of the public inputs
         address verifierUsed; // verifier contract address at submission time
@@ -73,6 +74,17 @@ interface IXochiZKPOracle {
         view
         returns (bool valid, ComplianceAttestation memory attestation);
 
+    /// @notice Check compliance filtered by proof type
+    /// @param subject The address to check
+    /// @param jurisdictionId The jurisdiction to check against
+    /// @param proofType The required proof type (0x01-0x06)
+    /// @return valid Whether a valid attestation of the specified type exists
+    /// @return attestation The attestation if valid
+    function checkComplianceByType(address subject, uint8 jurisdictionId, uint8 proofType)
+        external
+        view
+        returns (bool valid, ComplianceAttestation memory attestation);
+
     /// @notice Retrieve a proof for retroactive verification (proof-of-innocence)
     /// @param proofHash The hash of the original compliance proof
     /// @return attestation The original attestation record
@@ -84,6 +96,8 @@ interface IXochiZKPOracle {
     function getProofType(bytes32 proofHash) external view returns (uint8 proofType);
 
     /// @notice Get all attestation hashes for a subject in a jurisdiction
+    /// @dev Unbounded return -- may exceed gas/RPC limits for subjects with many
+    ///      attestations. Use getAttestationHistoryPaginated() for production.
     /// @param subject The address to query
     /// @param jurisdictionId The jurisdiction
     /// @return proofHashes Array of proof hashes for historical lookup

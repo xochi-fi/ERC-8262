@@ -1,8 +1,12 @@
-# Valid membership: element 42 in set 1, index 0, all-zero sibling path
-element = "42"
+# Valid membership: submitter 0xdead is a member of set 1.
+# Per the redesigned circuit (audit H-3), the leaf is bound to the submitter:
+#   leaf = leaf_hash_subject(submitter, set_id, subject_salt)
+# subject_salt=0 indicates a public set (no per-user privacy).
+subject_salt = "0"
 merkle_index = "0"
 merkle_path = ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
-merkle_root = "0x30211953f68b315a285af9496cdaa51517aba83cb3bb40bdd20b2e42eb189fe6"
+merkle_root = "0x1d7de002251083fdc312a329d46abde0680cbccc27935c33815c18b1beb3da8c"
 set_id = "1"
 timestamp = "1700000000"
 is_member = true
+submitter = "0xdead"

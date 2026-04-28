@@ -40,14 +40,27 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 Implementations MUST support the following proof types. Each type corresponds to a separate ZK circuit with its own verification key.
 
-| Type ID | Name           | Circuit           | Public inputs                                                                          | Private inputs                                                 |
-| ------- | -------------- | ----------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| 0x01    | Compliance     | compliance        | jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold            | signals, weights, weight_sum, provider_ids, num_providers      |
-| 0x02    | Risk Score     | risk_score        | proof_type (threshold/range), direction, bound_lower, bound_upper, result, config_hash, provider_set_hash | signals, weights, weight_sum, provider_ids, num_providers      |
-| 0x03    | Pattern        | pattern           | analysis_type, result, reporting_threshold, time_window, tx_set_hash                   | amounts, timestamps, num_transactions                          |
-| 0x04    | Attestation    | attestation       | provider_id, credential_type, is_valid, merkle_root, current_timestamp                 | credential_hash, subject, attribute, expiry, merkle_proof      |
-| 0x05    | Membership     | membership        | merkle_root, set_id, timestamp, is_member                                              | element, merkle_index, merkle_path                             |
-| 0x06    | Non-membership | non_membership    | merkle_root, set_id, timestamp, is_non_member                                          | element, low_leaf, high_leaf, low/high indices, low/high paths |
+All proof types include `submitter` as a public input; implementations MUST enforce
+`submitter == msg.sender` at submission time.
+
+| Type ID | Name           | Circuit        | Public inputs                                                                                                       | Private inputs                                                                                            |
+| ------- | -------------- | -------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 0x01    | Compliance     | compliance     | jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter                              | signals, weights, weight_sum, provider_ids, num_providers                                                 |
+| 0x02    | Risk Score     | risk_score     | proof_type (threshold/range), direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, submitter | signals, weights, weight_sum, provider_ids, num_providers                                                 |
+| 0x03    | Pattern        | pattern        | analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter                                     | amounts, timestamps, num_transactions                                                                     |
+| 0x04    | Attestation    | attestation    | provider_id, credential_type, is_valid, credential_root, current_timestamp, submitter                               | credential_attribute, expiry_timestamp, merkle_index, merkle_path                                         |
+| 0x05    | Membership     | membership     | merkle_root, set_id, timestamp, is_member, submitter                                                                | subject_salt, merkle_index, merkle_path                                                                   |
+| 0x06    | Non-membership | non_membership | merkle_root, set_id, timestamp, is_non_member, submitter                                                            | low_leaf, low_leaf_salt, low_index, low_path, high_leaf, high_leaf_salt, high_index, high_path            |
+
+Notes on the proof type semantics:
+
+- **Attestation (0x04).** The leaf in the per-provider credentials Merkle tree is `leaf_hash_value(credential_hash)`, where `credential_hash = H(DOMAIN_CREDENTIAL, provider_id, submitter, credential_type, credential_attribute, expiry_timestamp)`. The hash binds the credential to a specific submitter at issuance time; cross-submitter forgery is not possible without breaking Pedersen preimage resistance. `credential_root` references a per-provider tree registered via `publishCredentialRoot`; the on-chain `providerId` recorded against the root must match the `provider_id` in the proof's public inputs.
+
+- **Membership (0x05) and Non-membership (0x06).** The leaf is `leaf_hash_subject(value, set_id, salt)`. For membership, `value` is the submitter's address (the leaf is computed from the public `submitter` input + private `subject_salt`). For non-membership, `value` is the bracketing tree entry (`low_leaf` / `high_leaf`), and the proof asserts `low_leaf < submitter < high_leaf` using full-width Field comparison (no u64 ceiling). Tree publishers MUST sort leaves by `value`; the circuit additionally requires `high_index == low_index + 1` to prevent an attacker from skipping a real intermediate entry.
+
+- **Pattern (0x03).** The `analysis_type` field selects the analysis kind: 1 = anti-structuring, 2 = velocity, 3 = round-amounts. Implementations that depend on a specific analysis (e.g., a settlement registry requiring anti-structuring) MUST verify the `analysis_type` field; storing only the `result` boolean is insufficient.
+
+- **Risk Score (0x02).** Validators MUST reject trivially-true claims (`bound_lower = 0` for direction GT, `bound_lower >= MAX_RISK_SCORE_BPS` for direction LT, full-domain ranges). The `meetsThreshold` boolean stored on the attestation reflects only the cryptographic `result` field; integrators querying RISK_SCORE attestations should also verify the bounds match their integration's expectations.
 
 ### Verifier Interface
 
@@ -225,7 +238,7 @@ The following validation MUST be performed per proof type:
 | COMPLIANCE     | jurisdiction_id, provider_set_hash, config_hash, meets_threshold | Config hash registry         |
 | RISK_SCORE     | result, config_hash, provider_set_hash                           | Config hash registry         |
 | PATTERN        | result, reporting_threshold, tx_set_hash != 0                    | Reporting threshold registry |
-| ATTESTATION    | is_valid, merkle_root                                            | Merkle root registry         |
+| ATTESTATION    | is_valid, credential_root, provider_id                           | Credential root registry (per-provider) |
 | MEMBERSHIP     | merkle_root, is_member                                           | Merkle root registry         |
 | NON_MEMBERSHIP | merkle_root, is_non_member                                       | Merkle root registry         |
 
@@ -239,9 +252,11 @@ The `providerSetHash` parameter in `submitCompliance()` is semantically meaningf
 
 Implementations MUST maintain on-chain registries for values that public inputs are validated against. These registries prevent context-spoofing attacks where a proof generated for one context is submitted in a different context.
 
-**Config hash registry.** Tracks valid provider weight configuration hashes. New hashes are added when the administrator updates the configuration. Historical hashes SHOULD be revocable (see Provider Weight Publication). The currently active configuration MUST NOT be revocable.
+**Config hash registry.** Tracks valid provider weight configuration hashes. New hashes are added when the administrator updates the configuration. Historical hashes SHOULD be revocable (see Provider Weight Publication). The currently active configuration MUST NOT be revocable. Implementations MUST permanently retain revocation status: a previously-revoked config hash MUST NOT be re-registrable, to prevent silent un-revocation.
 
-**Merkle root registry.** Tracks valid merkle roots for MEMBERSHIP, NON_MEMBERSHIP, and ATTESTATION proofs. Roots MUST be registered by the administrator before proofs referencing them can be accepted. Roots SHOULD be revocable when the underlying set is superseded or compromised.
+**Merkle root registry.** Tracks valid merkle roots for MEMBERSHIP and NON_MEMBERSHIP proofs (typically managed sets such as sanctions lists or whitelists). Roots MUST be registered by the administrator before proofs referencing them can be accepted. Roots SHOULD be revocable when the underlying set is superseded or compromised.
+
+**Credential root registry (per-provider).** Tracks valid credentials Merkle roots for ATTESTATION proofs, keyed by `provider_id`. Each provider has an authorized publisher EOA, set by the administrator via a separate registration step. The publisher SHOULD publish new credential roots periodically (replacing prior ones). Roots SHOULD have a finite TTL window during which they are accepted; this window allows users with paths against an outgoing root to continue submitting proofs while a new root propagates. Implementations MUST verify the proof's `provider_id` matches the registered `providerId` for the credential root being referenced; otherwise an attacker could reuse another provider's root with a forged `provider_id`.
 
 **Reporting threshold registry.** Tracks valid reporting thresholds for PATTERN (anti-structuring) proofs. Each jurisdiction defines its own reporting threshold (e.g., $10,000 for US BSA). Thresholds MUST be registered before proofs referencing them can be accepted.
 
@@ -274,11 +289,28 @@ Pedersen commitments are additively homomorphic over the underlying elliptic cur
 
 Implementations MAY migrate to Poseidon2 when high-level APIs stabilize in the circuit language, as Poseidon2 provides stronger random-oracle properties.
 
+### Merkle Tree Domain Separation
+
+Implementations MUST use distinct domain tags for leaf and internal-node hashes to prevent the second-preimage attack where an attacker crafts a leaf whose hash collides with an internal node. The reference implementation uses three explicit tags: one for internal nodes, one for set-style leaves bound to `(element, set_id)`, and one for value-style leaves committing a single value (e.g., `credential_hash` in the attestation circuit).
+
+The fixed-arity Pedersen hash used in the reference implementation does NOT achieve domain separation by input arity alone (e.g., `H([a, b, 0]) == H([a, b])` for the standard pedersen_hash without an explicit length tag). Implementations MUST therefore include an explicit domain tag in the input array.
+
 ### Non-Membership Proof Security
 
-The non-membership circuit proves that an element $e$ is NOT in a sorted Merkle tree by demonstrating adjacency: there exist two consecutive leaves $l$ and $h$ in the tree such that $l < e < h$.
+The non-membership circuit proves that the SUBMITTER is NOT in a sorted Merkle tree by demonstrating adjacency: there exist two consecutive leaves $l$ and $h$ in the tree such that $l < \text{submitter} < h$ AND $\text{high\_index} = \text{low\_index} + 1$.
 
-Circuits that compare elements using fixed-width integers MUST range-check all three values (`element`, `low_leaf`, `high_leaf`) to fit within the comparison width before casting. Without this check, a large field element could wrap when truncated, producing a false non-membership proof.
+The adjacency requirement is critical. Without it, an attacker could pick two non-adjacent tree entries that bracket the submitter, hiding any real intermediate entry that contains the submitter's address. Tree publishers MUST sort leaves by their raw value (the `value` argument to `leaf_hash_subject`). Implementations SHOULD insert sentinel boundary leaves at $0$ and $p-1$ (BN254 prime minus 1) so every submitter has well-defined neighbors.
+
+Comparison MUST be performed over the full Field range using bit-decomposition (Noir's `Field::lt`). Earlier designs that cast to `u64` and compared as fixed-width integers required additional range checks on all values; the reference implementation uses Field-level comparison to support arbitrary-width identifiers (Ethereum addresses, hashes, etc.) without truncation risk.
+
+### Submitter Binding
+
+Implementations MUST bind every proof to its submitter. Each proof type includes `submitter` as a public input that the on-chain validator enforces equal to `msg.sender`. For proofs that prove a fact about a specific party (membership, non-membership, attestation), the proof's leaf format MUST also bind to `submitter` in-circuit so the proof is meaningful only for that submitter:
+
+- Membership / non-membership: `leaf_hash_subject(value, set_id, salt)` where `value` derives from the relevant party (e.g., `submitter` for membership; the bracketing tree entries for non-membership ordering).
+- Attestation: `credential_hash = H(DOMAIN_CREDENTIAL, provider_id, submitter, credential_type, credential_attribute, expiry_timestamp)`, then `leaf_hash_value(credential_hash)`.
+
+Without this binding, an unauthorized party could submit a proof asserting facts about an arbitrary value and claim the resulting attestation as their own.
 
 ### Retroactive Flagging
 
@@ -346,11 +378,14 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 **Public input validation.** Implementations MUST validate public inputs for every proof type, not just the primary compliance proof. Without validation, a prover can generate a proof for one context (e.g., a lenient jurisdiction's reporting threshold) and submit it for a different context. Specifically:
 
 - ALL proof types MUST validate their boolean result field (`meets_threshold`, `result`, `is_valid`, `is_member`, `is_non_member`) equals `bytes32(uint256(1))`. A valid proof with a false result proves non-compliance; accepting it would record a compliant attestation for a non-compliant subject.
+- ALL proof types MUST enforce `submitter == msg.sender` to prevent submission front-running.
 - COMPLIANCE and RISK_SCORE proofs MUST validate `config_hash` against a registry of known configurations.
 - COMPLIANCE proofs MUST validate `jurisdiction_id` and `provider_set_hash` against caller-supplied parameters.
 - RISK_SCORE proofs commit to `provider_set_hash` as a public input, binding the proof to a specific set of screening providers. This prevents a prover from fabricating signals from unverified providers.
-- PATTERN (anti-structuring) proofs MUST validate `reporting_threshold` against a per-jurisdiction registry.
-- MEMBERSHIP, NON_MEMBERSHIP, and ATTESTATION proofs MUST validate `merkle_root` against a registry of known roots.
+- RISK_SCORE proofs MUST validate the semantic public inputs (`proof_type ∈ {threshold, range}`, `direction ∈ {GT, LT}`, and bounds) to reject trivially-true claims. For example, a THRESHOLD/GT proof with `bound_lower = 0` proves only that the score is greater than zero, which is uninformative. Validators MUST reject such proofs.
+- PATTERN (anti-structuring) proofs MUST validate `reporting_threshold` against a per-jurisdiction registry, enforce `time_window >= MIN_TIME_WINDOW`, and validate that `analysis_type` is one of the supported analyses. Implementations that depend on a specific analysis type (e.g., a settlement registry requiring anti-structuring) MUST verify the `analysis_type` field separately, since the result boolean alone is insufficient.
+- ATTESTATION proofs MUST validate `credential_root` against the per-provider credential root registry AND verify the registry's recorded `providerId` matches the proof's `provider_id` public input. Without this cross-check, a proof for one provider's tree could be replayed against another provider's registration.
+- MEMBERSHIP and NON_MEMBERSHIP proofs MUST validate `merkle_root` against the generic merkle root registry.
 - Unknown proof types (outside 0x01-0x06) MUST be rejected.
 
 **Proof replay prevention.** Proof hashes MUST be keyed on both the proof bytes and the proof type: `keccak256(abi.encodePacked(proof, proofType))`. Including `proofType` in the hash ensures that proof uniqueness is scoped per proof type: identical proof bytes submitted for different proof types are treated as distinct proofs.
@@ -363,7 +398,13 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 
 **Registry idempotency.** Registry operations (registering merkle roots, reporting thresholds) SHOULD be idempotent-safe: re-registering an already-registered value SHOULD revert to prevent accidental double-registration. Similarly, revoking a value that is not registered SHOULD revert.
 
-**Emergency circuit break.** Implementations SHOULD include a pause mechanism that can halt proof submissions (and optionally, verifications) in case of a discovered vulnerability in a ZK circuit or verifier contract. Pausing MUST NOT prevent read access to existing attestations, as these are needed for retroactive verification (proof-of-innocence).
+**Emergency circuit break.** Implementations SHOULD include a pause mechanism that can halt proof submissions (and optionally, verifications) in case of a discovered vulnerability in a ZK circuit or verifier contract. Pausing MUST NOT prevent read access to existing attestations, as these are needed for retroactive verification (proof-of-innocence). Implementations SHOULD support per-proof-type pause for surgical incident response without halting unrelated proof types.
+
+**Trust model and signal honesty.** The cryptographic guarantees of this standard assert that the published rule was computed correctly on inputs the prover chose to disclose privately. They do NOT guarantee the inputs are honest: in particular, the COMPLIANCE and RISK_SCORE circuits accept screening signals as private inputs without verifying any provider signature. A user could submit `signals = [0, ...]` and produce a valid "low-risk" proof regardless of their actual screening data. This is documented as an explicit design tradeoff: signal commitments via `provider_set_hash` and `config_hash` only commit to which providers and weights were used, not to what those providers actually returned. Integrators that require signal honesty MUST layer additional attestation flows on top — for example, requiring an ATTESTATION proof from a provider that has independently verified the user's credentials. Implementations SHOULD prominently document this trust model in deployment-facing materials.
+
+**Cross-chain replay.** Proof public inputs do not include a chain identifier. The same proof bytes may be submitted on multiple chain deployments of the Oracle, producing independent attestations on each chain. Per-chain replay protection (`_usedProofs[proofHash]`) prevents within-chain replay. Implementations that require strict chain-binding MUST add `chainId` to a relevant public input or commit it via the credential issuance process (out-of-band).
+
+**Verifier-layer reentrancy.** The `IUltraVerifier.verify(...)` interface MUST be declared `view` so that the EVM uses STATICCALL when invoking the verifier. STATICCALL prevents a malicious or compromised verifier from mutating state in the calling contract via reentrant calls. Implementations MUST NOT call verifiers via interfaces that omit the `view` modifier.
 
 ## Reference Implementation
 

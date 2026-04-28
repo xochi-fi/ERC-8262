@@ -28,7 +28,7 @@ import {
   PROOF_TYPES,
 } from "@xochi/sdk";
 import { NodeCircuitLoader } from "@xochi/sdk/node";
-import { startAnvil, stopAnvil, ANVIL_RPC, ALICE_KEY } from "./anvil";
+import { startAnvil, stopAnvil, ANVIL_RPC, ALICE_KEY, FIXTURE_TIMESTAMP } from "./anvil";
 import {
   deployContracts,
   FIXTURE_HASHES,
@@ -97,12 +97,15 @@ describe("settlement splitting E2E", () => {
     expect(plan.subTrades[2].amount).toBe(100n * ETH);
 
     // Step 2: Prove all sub-trades
+    // anvil is started at FIXTURE_TIMESTAMP (1700000000); pass a matching proof
+    // timestamp so the Oracle's MAX_PROOF_AGE (1h) check passes.
     const batchResult = await proveBatch(prover, plan, {
       score: 25,
       jurisdictionId: EU,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
       submitter: alice.address,
+      timestamp: String(FIXTURE_TIMESTAMP + 5),
     });
 
     expect(batchResult.proofs).toHaveLength(3);
@@ -170,6 +173,7 @@ describe("settlement splitting E2E", () => {
       reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
       timeWindow: 86400, // 24 hours (SDK minimum)
       txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
+      submitter: alice.address,
     });
 
     const patternSubmitTx = await oracle.submitCompliance({
@@ -192,10 +196,13 @@ describe("settlement splitting E2E", () => {
     const storedType = await oracle.getProofType(patternProofHash);
     expect(storedType).toBe(PROOF_TYPES.PATTERN);
 
-    // Step 6: Finalize the trade
+    // Step 6: Finalize the trade.
+    // Audit H-2: pass the original publicInputs bytes so the registry can verify
+    // hash equality against attestation.publicInputsHash AND analysis_type==1.
     const finalizeTx = await registry.finalizeTrade(
       plan.tradeId,
       patternProofHash,
+      patternResult.publicInputsHex,
     );
     await publicClient.waitForTransactionReceipt({ hash: finalizeTx });
     expect(finalizeTx).toMatch(/^0x/);
@@ -212,12 +219,15 @@ describe("settlement splitting E2E", () => {
       splitThreshold: 100n * ETH,
     });
 
+    // anvil is started at FIXTURE_TIMESTAMP (1700000000); pass a matching proof
+    // timestamp so the Oracle's MAX_PROOF_AGE (1h) check passes.
     const batchResult = await proveBatch(prover, plan, {
       score: 25,
       jurisdictionId: EU,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
       submitter: alice.address,
+      timestamp: String(FIXTURE_TIMESTAMP + 5),
     });
 
     const regTx = await registry.registerTrade(plan.tradeId, EU, 2);
@@ -251,8 +261,14 @@ describe("settlement splitting E2E", () => {
       ),
     );
 
+    // Even with public inputs, a COMPLIANCE proofHash is rejected because
+    // oracle.getProofType returns COMPLIANCE not PATTERN.
     await expect(
-      registry.finalizeTrade(plan.tradeId, complianceProofHash),
+      registry.finalizeTrade(
+        plan.tradeId,
+        complianceProofHash,
+        batchResult.proofs[0].proofResult.publicInputsHex,
+      ),
     ).rejects.toThrow();
   }, 180_000);
 });

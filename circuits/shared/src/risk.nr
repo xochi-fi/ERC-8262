@@ -106,3 +106,13 @@ fn test_high_threshold_eu() {
 fn test_high_threshold_us() {
     assert(get_high_threshold(JURISDICTION_US) == 6600);
 }
+
+#[test]
+fn test_threshold_cross_validation_all() {
+    // Cross-validation: these MUST match Solidity JurisdictionConfig.getHighRiskThreshold() * 100
+    // See: src/libraries/JurisdictionConfig.sol (EU=71, US=66, UK=71, SG=76 percentage scale)
+    assert(get_high_threshold(JURISDICTION_EU) == 7100);
+    assert(get_high_threshold(JURISDICTION_US) == 6600);
+    assert(get_high_threshold(JURISDICTION_UK) == 7100);
+    assert(get_high_threshold(JURISDICTION_SG) == 7600);
+}

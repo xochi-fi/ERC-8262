@@ -134,6 +134,24 @@ Risk scores are in basis points (0-10000 = 0.00%-100.00%). Thresholds are publis
 
 ## Development
 
+### Toolchain pinning
+
+Pinned tool versions are in [`.tool-versions`](.tool-versions). Verify your local
+environment matches before regenerating fixtures or generated verifiers:
+
+```bash
+make check-toolchain
+```
+
+Mismatched `nargo` or `bb` versions produce different VK_HASH values, which will
+break the integration test suite and the on-chain verifiers. If your versions
+are off, install the pinned versions:
+
+```bash
+noirup -v 1.0.0-beta.20    # nargo
+bbup   -v 4.0.0-nightly.20260120   # bb
+```
+
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, cast, anvil)
@@ -187,16 +205,38 @@ cd circuits/compliance && nargo execute
 
 ### Deployment
 
+`script/Deploy.s.sol` deploys the verifier router, oracle, all six generated UltraHonk verifiers, and (optionally) the timelock; it registers each verifier with the router.
+
 ```bash
-# Copy and fill in environment variables
-cp .env.example .env
+# 1. Required environment variables
+export PRIVATE_KEY=0x...
+export INITIAL_CONFIG_HASH=0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405
 
-# Deploy to testnet
-forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --broadcast
+# 2. Optional: deploy XochiTimelock and transfer ownership to it (recommended for prod)
+export USE_TIMELOCK=true
+export TIMELOCK_PROPOSER=0x...   # multisig that schedules ops
+export TIMELOCK_GUARDIAN=0x...   # optional cancel-only role
 
-# After deploying generated verifiers, register them:
-cast send $VERIFIER_ADDR "setVerifier(uint8,address)" 0x01 $THRESHOLD_VERIFIER
+# 3. Deploy
+forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
+    --disable-code-size-limit --sender $DEPLOYER_ADDRESS
 ```
+
+**Why `--disable-code-size-limit`?** The bb-generated UltraHonk verifiers are ~24,640 bytes — a hair over EIP-170's 24,576-byte deployment limit. Forge enforces this by default at script time. Most production chains (Ethereum mainnet, Base, Optimism) accept oversized contracts up to ~49KB via EIP-3860/EIP-7702 settings, but a few strictly enforce EIP-170. Verify your target chain accepts the deploy size before broadcasting.
+
+**Post-deployment.** If `USE_TIMELOCK=true`, the proposer multisig must call `XochiTimelock.acceptOwnership(target)` for both the verifier and oracle within 48 hours (Ownable2Step deadline). Then run the post-deploy bootstrap to seed registries:
+
+```bash
+# Register provider publishers, reporting thresholds, merkle roots
+export ORACLE_ADDRESS=0x...      # from Deploy output
+export REPORTING_THRESHOLDS=10000,5000
+export MERKLE_ROOTS=0xabcd...,0x1234...
+export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
+
+forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS
+```
+
+If timelock-owned, the admin must instead schedule each registry op through `XochiTimelock.schedule(...)` and `execute(...)`.
 
 ## Client-side proof generation
 
@@ -233,7 +273,7 @@ const proof = await backend.generateProof(witness, { verifierTarget: "evm" });
 await api.destroy();
 ```
 
-A higher-level SDK is available at [`@xochi/sdk`](../xochi-sdk) with typed input builders and automatic validation.
+A higher-level SDK is available at [`@xochi/sdk`](https://github.com/xochi-fi/xochi-sdk) with typed input builders and automatic validation.
 
 ## Retroactive flagging
 
@@ -263,6 +303,41 @@ _Testnet deployments pending. Mainnet after audit._
 - [ERC-6538](https://eips.ethereum.org/EIPS/eip-6538): stealth meta-address registry
 - [Noir Language](https://noir-lang.org/): ZK circuit language by Aztec
 - [Barretenberg](https://github.com/AztecProtocol/aztec-packages): UltraHonk proving backend
+
+## Trust model
+
+Read this before integrating. Xochi ZKP attestations are a particular kind of
+proof and integrators should understand exactly what they do and do not assert.
+
+**What an attestation cryptographically guarantees:**
+
+- The user ran the published circuit on private inputs.
+- The result the circuit computed (e.g. `meets_threshold`, `is_member`,
+  `is_non_member`) is the value those inputs actually produce under the rule.
+- The proof is bound to the submitter's `msg.sender` (anti-frontrun).
+- Replay-protection: a given proof can only be recorded once.
+
+**What an attestation does NOT guarantee:**
+
+- That the private inputs are honest. The user picks them. For COMPLIANCE and
+  RISK_SCORE proofs, the `signals[]` array is private and not signed by any
+  provider. A user may enter all-zero signals and prove "low risk" without
+  having actually run real screening. ZK proves the *computation*, not the
+  *inputs*.
+- That a private `element` in MEMBERSHIP / NON_MEMBERSHIP proofs corresponds
+  to the submitter's identity. The current circuits do not bind `element` to
+  `submitter`. (This is tracked as audit finding H-3 and is being remediated;
+  consult the working tracker before relying on these proof types.)
+- That an ATTESTATION proof was actually issued by the named provider. The
+  current `attestation` circuit verifies provider authorization (Merkle
+  inclusion in the providers tree) but does not verify a provider signature
+  over the credential. (Tracked as audit finding C-1.)
+
+**Bottom line:** treat attestations as "the user has run the published rule
+on inputs they chose to keep private" -- not "the user is verifiably compliant
+under that rule." If your protocol depends on the latter, require integration
+with a separate identity / KYC provider whose signatures are verified
+in-circuit (open work item; see audit findings).
 
 ## Security
 

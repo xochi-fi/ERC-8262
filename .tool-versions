@@ -1,0 +1,20 @@
+# Toolchain versions for reproducible builds.
+# Used by asdf, mise, and the `make check-toolchain` target.
+#
+# These versions are what fixtures + generated verifiers were produced with.
+# Regenerating fixtures with a different version produces different VK_HASH
+# values and may cause `forge test` integration suites to fail.
+#
+# nargo: Aztec's Noir compiler. Install via:
+#   curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+#   noirup -v 1.0.0-beta.20
+nargo 1.0.0-beta.20
+
+# bb: Aztec's Barretenberg backend (UltraHonk prover/verifier generator).
+# Install via:
+#   curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
+#   bbup -v 0.94.0  (matches nargo 1.0.0-beta.20)
+bb 4.0.0-nightly.20260120
+
+# foundry: stable
+foundry stable

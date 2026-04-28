@@ -25,14 +25,14 @@ library ProofTypes {
         if (proofType == COMPLIANCE) return 6;
         // risk_score: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, submitter
         if (proofType == RISK_SCORE) return 8;
-        // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash
-        if (proofType == PATTERN) return 5;
-        // attestation: provider_id, credential_type, is_valid, merkle_root, current_timestamp
-        if (proofType == ATTESTATION) return 5;
-        // membership: merkle_root, set_id, timestamp, is_member
-        if (proofType == MEMBERSHIP) return 4;
-        // non_membership: merkle_root, set_id, timestamp, is_non_member
-        if (proofType == NON_MEMBERSHIP) return 4;
+        // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter
+        if (proofType == PATTERN) return 6;
+        // attestation: provider_id, credential_type, is_valid, merkle_root, current_timestamp, submitter
+        if (proofType == ATTESTATION) return 6;
+        // membership: merkle_root, set_id, timestamp, is_member, submitter
+        if (proofType == MEMBERSHIP) return 5;
+        // non_membership: merkle_root, set_id, timestamp, is_non_member, submitter
+        if (proofType == NON_MEMBERSHIP) return 5;
         revert InvalidProofType(proofType);
     }
 
@@ -49,14 +49,14 @@ library ProofTypes {
     }
 
     /// @notice Decode packed bytes into a bytes32 array for the verifier
+    /// @dev Uses calldatacopy to batch-copy all slots in one operation instead of
+    ///      per-slot calldata slicing. Saves ~60 gas per additional public input.
     function decodePublicInputs(bytes calldata packed) internal pure returns (bytes32[] memory inputs) {
         uint256 count = packed.length / 32;
         inputs = new bytes32[](count);
-        for (uint256 i; i < count;) {
-            inputs[i] = bytes32(packed[i * 32:(i + 1) * 32]);
-            unchecked {
-                ++i;
-            }
+        /// @solidity memory-safe-assembly
+        assembly {
+            calldatacopy(add(inputs, 0x20), packed.offset, packed.length)
         }
     }
 

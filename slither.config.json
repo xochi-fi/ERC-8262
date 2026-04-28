@@ -1,0 +1,7 @@
+{
+  "filter_paths": "test/,script/,src/generated/,lib/",
+  "exclude_informational": true,
+  "exclude_low": true,
+  "detectors_to_exclude": "naming-convention,solc-version,pragma,arbitrary-send-eth,incorrect-equality,uninitialized-local,timestamp,costly-loop,low-level-calls,reentrancy-events,calls-loop,missing-zero-check",
+  "exclude_dependencies": true
+}
