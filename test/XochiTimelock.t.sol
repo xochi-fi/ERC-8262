@@ -126,6 +126,9 @@ contract XochiTimelockTest is Test {
         assertEq(timelock.getDelay(bytes4(keccak256("registerReportingThreshold(bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("revokeReportingThreshold(bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("revokeConfig(bytes32)"))), 6 hours);
+        // Audit I-3: revokeVerifierVersion is housekeeping (pauseProofType is the
+        // emergency lever); LOW_DELAY protects against compromised-owner DoS.
+        assertEq(timelock.getDelay(bytes4(keccak256("revokeVerifierVersion(uint8,uint256)"))), 6 hours);
     }
 
     function test_delay_highDelay_verifierOps() public view {
@@ -189,7 +192,7 @@ contract XochiTimelockTest is Test {
         bytes32 id = timelock.hashOperation(address(oracle), 0, data, salt);
 
         vm.prank(alice);
-        vm.expectRevert(XochiTimelock.NotProposer.selector);
+        vm.expectRevert(XochiTimelock.NotAuthorized.selector);
         timelock.cancel(id);
     }
 
@@ -347,5 +350,34 @@ contract XochiTimelockTest is Test {
         vm.expectEmit(true, false, false, false);
         emit XochiTimelock.OperationCancelled(id);
         timelock.cancel(id);
+    }
+
+    // -------------------------------------------------------------------------
+    // L-1: msg.value vs scheduled value
+    // -------------------------------------------------------------------------
+
+    function test_execute_revert_valueMismatch() public {
+        bytes memory data = abi.encodeWithSignature("updateAttestationTTL(uint256)", 48 hours);
+        bytes32 salt = bytes32(uint256(99));
+
+        vm.prank(multisig);
+        timelock.schedule(address(oracle), 0, data, salt);
+        vm.warp(block.timestamp + 6 hours);
+
+        // Send msg.value=1 wei against a scheduled value=0 -> reject (locks funds otherwise)
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.ValueMismatch.selector, 1, 0));
+        timelock.execute{value: 1}(address(oracle), 0, data, salt);
+    }
+
+    function test_execute_acceptsExactValue() public {
+        // Schedule a self-call with value=0; msg.value=0 must still work
+        bytes memory data = abi.encodeWithSignature("updateAttestationTTL(uint256)", 48 hours);
+        bytes32 salt = bytes32(uint256(100));
+
+        vm.prank(multisig);
+        timelock.schedule(address(oracle), 0, data, salt);
+        vm.warp(block.timestamp + 6 hours);
+        timelock.execute{value: 0}(address(oracle), 0, data, salt);
     }
 }

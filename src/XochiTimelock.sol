@@ -18,11 +18,13 @@ contract XochiTimelock {
 
     error NotProposer();
     error NotGuardian();
+    error NotAuthorized();
     error OperationAlreadyScheduled(bytes32 operationId);
     error OperationNotReady(bytes32 operationId, uint256 readyAt);
     error OperationNotScheduled(bytes32 operationId);
     error OperationAlreadyExecuted(bytes32 operationId);
     error ExecutionFailed(address target, bytes data);
+    error ValueMismatch(uint256 sent, uint256 expected);
     error ZeroAddress();
 
     event OperationScheduled(
@@ -76,8 +78,11 @@ contract XochiTimelock {
     }
 
     /// @notice Execute a scheduled operation after its delay has elapsed
-    /// @dev Anyone can execute once the timelock has passed
+    /// @dev Anyone can execute once the timelock has passed. msg.value MUST equal the
+    ///      scheduled `value` exactly to avoid silently locking excess ETH in the timelock.
     function execute(address target, uint256 value, bytes calldata data, bytes32 salt) external payable {
+        if (msg.value != value) revert ValueMismatch(msg.value, value);
+
         bytes32 id = hashOperation(target, value, data, salt);
         uint256 readyAt = _timestamps[id];
 
@@ -94,8 +99,9 @@ contract XochiTimelock {
     }
 
     /// @notice Cancel a scheduled operation
+    /// @dev Either the proposer or guardian may cancel.
     function cancel(bytes32 operationId) external {
-        if (msg.sender != proposer && msg.sender != guardian) revert NotProposer();
+        if (msg.sender != proposer && msg.sender != guardian) revert NotAuthorized();
         uint256 readyAt = _timestamps[operationId];
         if (readyAt == 0) revert OperationNotScheduled(operationId);
         if (readyAt == 1) revert OperationAlreadyExecuted(operationId);
@@ -131,7 +137,11 @@ contract XochiTimelock {
     /// @dev HIGH_DELAY for verifier/ownership changes, LOW_DELAY for config operations.
     ///      Unknown selectors default to HIGH_DELAY (fail-safe).
     function getDelay(bytes4 selector) public pure returns (uint256) {
-        // LOW_DELAY (6h): config, TTL, merkle roots, reporting thresholds
+        // LOW_DELAY (6h): config, TTL, merkle roots, reporting thresholds, revocations.
+        // revokeVerifierVersion lives here (not HIGH) because the emergency response to
+        // a soundness bug is `pauseProofType` (instant); revocation is permanent
+        // housekeeping that can afford a short delay -- and the delay protects against
+        // a compromised owner mass-revoking historical versions.
         if (
             selector == bytes4(keccak256("updateProviderConfig(bytes32,string)"))
                 || selector == bytes4(keccak256("updateAttestationTTL(uint256)"))
@@ -140,6 +150,7 @@ contract XochiTimelock {
                 || selector == bytes4(keccak256("registerReportingThreshold(bytes32)"))
                 || selector == bytes4(keccak256("revokeReportingThreshold(bytes32)"))
                 || selector == bytes4(keccak256("revokeConfig(bytes32)"))
+                || selector == bytes4(keccak256("revokeVerifierVersion(uint8,uint256)"))
         ) {
             return LOW_DELAY;
         }
