@@ -6,6 +6,7 @@ import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
+import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
 
 /// @dev Stub verifier that always returns true (for unit testing the router logic)
@@ -18,6 +19,26 @@ contract StubVerifier is IUltraVerifier {
 
     function verify(bytes calldata, bytes32[] calldata) external view returns (bool) {
         return shouldPass;
+    }
+}
+
+/// @dev Regression: malicious verifier that attempts to mutate state from inside verify().
+///      The IUltraVerifier interface declares verify() as `view`, so Solidity emits a
+///      STATICCALL at the CALLER (XochiZKPVerifier) when invoking it. STATICCALL halts
+///      on any SSTORE, LOG, CREATE, SELFDESTRUCT, or CALL with non-zero value -- the
+///      EVM-level guarantee that protects the router from a malicious verifier.
+///
+///      Note: this contract intentionally does NOT inherit IUltraVerifier. Its verify()
+///      function is declared non-view (writes to `counter`) so the compiler is happy.
+///      The selector matches IUltraVerifier.verify, so the router can cast and call it.
+///      At runtime the call is STATICCALL (per the interface used at the call site),
+///      so the SSTORE fails and the entire call reverts.
+contract MutatingVerifier {
+    uint256 public counter;
+
+    function verify(bytes calldata, bytes32[] calldata) external returns (bool) {
+        counter += 1; // SSTORE under STATICCALL must revert
+        return true;
     }
 }
 
@@ -524,12 +545,214 @@ contract XochiZKPVerifierTest is Test {
         _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
 
         vm.prank(alice);
-        vm.expectRevert(Ownable2Step.Unauthorized.selector);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
     }
 
     function test_isVersionRevoked_falseByDefault() public view {
         assertFalse(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
+    }
+
+    // -------------------------------------------------------------------------
+    // I-3: Timelocked propose/execute revocation
+    // -------------------------------------------------------------------------
+
+    function test_proposeVersionRevocation_succeeds() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+
+        uint256 readyAt = block.timestamp + verifier.REVOCATION_TIMELOCK();
+
+        vm.expectEmit(true, true, false, true);
+        emit XochiZKPVerifier.VersionRevocationProposed(ProofTypes.COMPLIANCE, 1, readyAt);
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        assertEq(verifier.getPendingRevocation(ProofTypes.COMPLIANCE, 1), readyAt);
+        // Version is NOT yet revoked
+        assertFalse(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
+    }
+
+    function test_proposeVersionRevocation_revert_currentVersion() public {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPVerifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
+        );
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_proposeVersionRevocation_revert_alreadyRevoked() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        vm.prank(owner);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.AlreadyRevoked.selector, ProofTypes.COMPLIANCE, 1));
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_proposeVersionRevocation_revert_alreadyPending() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+
+        vm.startPrank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+        vm.stopPrank();
+    }
+
+    function test_proposeVersionRevocation_revert_invalidVersion() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 0);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 99);
+    }
+
+    function test_proposeVersionRevocation_revert_notOwner() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_executeVersionRevocation_succeeds() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        // Cannot execute before delay elapses
+        uint256 readyAt = block.timestamp + verifier.REVOCATION_TIMELOCK();
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
+        );
+        vm.prank(owner);
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        // Just before ready
+        vm.warp(readyAt - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
+        );
+        vm.prank(owner);
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        // At ready time -- success
+        vm.warp(readyAt);
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit XochiZKPVerifier.VerifierVersionRevoked(ProofTypes.COMPLIANCE, 1, address(passingVerifier));
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
+        // Pending state cleared
+        assertEq(verifier.getPendingRevocation(ProofTypes.COMPLIANCE, 1), 0);
+    }
+
+    function test_executeVersionRevocation_revert_noPendingProposal() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_cancelVersionRevocation_succeeds() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, false, false);
+        emit XochiZKPVerifier.VersionRevocationCancelled(ProofTypes.COMPLIANCE, 1);
+        verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        assertEq(verifier.getPendingRevocation(ProofTypes.COMPLIANCE, 1), 0);
+        assertFalse(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
+
+        // After cancellation, can re-propose
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_cancelVersionRevocation_revert_noPendingProposal() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_cancelVersionRevocation_revert_notOwner() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
+    }
+
+    function test_executeVersionRevocation_independentVersions() public {
+        // Build a 3-version history (v1, v2, v3 current)
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        StubVerifier v3 = new StubVerifier(true);
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(v3));
+
+        // Propose revocation of v1 and v2 independently
+        vm.startPrank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 2);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + verifier.REVOCATION_TIMELOCK());
+
+        vm.startPrank(owner);
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 2);
+        vm.stopPrank();
+
+        assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
+        assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 2));
+        // Current version (v3) is NOT revoked
+        assertFalse(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 3));
+    }
+
+    // -------------------------------------------------------------------------
+    // Regression: STATICCALL protection against state-mutating verifier
+    // -------------------------------------------------------------------------
+
+    function test_staticcall_prevents_mutatingVerifier() public {
+        // Deploy a malicious verifier that attempts SSTORE inside verify()
+        MutatingVerifier malicious = new MutatingVerifier();
+
+        // Replace COMPLIANCE verifier with the malicious one (via timelock dance)
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(malicious));
+
+        // Call verifyProof: routed through STATICCALL, malicious SSTORE must revert.
+        // The bb-generated verifier interface returns (bool); revert here means the
+        // EVM rejected the inner mutation. Either revert or false is acceptable in
+        // theory, but the SSTORE attempt MUST trigger a revert under STATICCALL.
+        vm.expectRevert();
+        verifier.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), _complianceInputs());
+    }
+
+    function test_executeVersionRevocation_revert_versionBecameCurrent() public {
+        // Edge case: version exists, new versions get added, but never becomes "current"
+        // because current = history.length. Versions only ever stay non-current.
+        // This test verifies the semantics: once a version is < history.length, it stays so.
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+
+        vm.prank(owner);
+        verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+
+        // Add another version while proposal is pending
+        StubVerifier v3 = new StubVerifier(true);
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(v3));
+
+        vm.warp(block.timestamp + verifier.REVOCATION_TIMELOCK());
+        vm.prank(owner);
+        verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
+        assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
     }
 
     // -------------------------------------------------------------------------
@@ -629,7 +852,7 @@ contract XochiZKPVerifierTest is Test {
 
     function test_pause_revert_notOwner() public {
         vm.prank(alice);
-        vm.expectRevert(Ownable2Step.Unauthorized.selector);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
         verifier.pause();
     }
 
@@ -717,7 +940,7 @@ contract XochiZKPVerifierTest is Test {
 
     function test_pauseProofType_revert_notOwner() public {
         vm.prank(alice);
-        vm.expectRevert(Ownable2Step.Unauthorized.selector);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
     }
 

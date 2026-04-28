@@ -16,6 +16,7 @@ contract IntegrationTest is Test {
 
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
+    address internal publisher = makeAddr("publisher");
 
     /// @dev Address baked into compliance/risk_score proof fixtures as the submitter.
     ///      Oracle enforces submitter == msg.sender, so oracle tests must prank as this address.
@@ -30,17 +31,23 @@ contract IntegrationTest is Test {
     bytes32 internal constant FIXTURE_PROVIDER_SET_HASH =
         0x14b6becf762f80a24078e62fc9a7eca246b8e406d19962dda817b173f30a94b2;
 
-    /// @dev Merkle root from the membership fixture (element=42, set_id=1, index=0)
+    /// @dev Merkle root from the membership fixture
+    /// (submitter=0xdead bound to set_id=1, salt=0, index=0)
     bytes32 internal constant FIXTURE_MEMBERSHIP_ROOT =
-        0x30211953f68b315a285af9496cdaa51517aba83cb3bb40bdd20b2e42eb189fe6;
+        0x1d7de002251083fdc312a329d46abde0680cbccc27935c33815c18b1beb3da8c;
 
-    /// @dev Merkle root from the non_membership fixture (element=50, set={10,100}, set_id=1)
+    /// @dev Merkle root from the non_membership fixture
+    /// (submitter=0xdead, set={0x100, 0x10000}, set_id=1, salt=0)
     bytes32 internal constant FIXTURE_NON_MEMBERSHIP_ROOT =
-        0x12d001bc3463cb4d3a745f802dffd80c00a2927f77110d1b0a59b9a3bd787b86;
+        0x138f818fd4f2eec91e4fd93e14bcc47bc06a3ba333e5a2e7795d0beb752d247c;
 
-    /// @dev Merkle root from the attestation fixture (provider_id=42, credential KYC basic)
+    /// @dev Credential root from the attestation fixture
+    /// (provider_id=42, submitter=0xdead, KYC basic, attribute=999, expiry=2000000000)
     bytes32 internal constant FIXTURE_TIER_MERKLE_ROOT =
-        0x15861259068f1398397423d4b3bad764e19c1a68699115ef9ccd090a8a5eba3e;
+        0x24ce58f9ed6ca066d25f66b15b0eb1dccebe6e457f5aa0fcd353d82d539f5ed5;
+
+    /// @dev Provider id used in the attestation fixture
+    uint256 internal constant FIXTURE_PROVIDER_ID = 42;
 
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
@@ -64,19 +71,24 @@ contract IntegrationTest is Test {
             verifier.setVerifierInitial(types[i], v);
         }
 
-        // Register merkle roots needed by membership/non_membership/attestation fixtures
+        // Register merkle roots needed by membership/non_membership fixtures
         oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
         oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_TIER_MERKLE_ROOT);
 
         // Register reporting threshold needed by pattern fixture (10000)
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
 
+        // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign)
+        oracle.setProviderPublisher(FIXTURE_PROVIDER_ID, publisher);
+
         vm.stopPrank();
 
-        // Warp to the timestamp baked into proof fixtures so staleness checks pass.
-        // All Prover.toml files use timestamp = 1700000000.
+        // Warp BEFORE publishing the credential root so the root's TTL aligns with the
+        // proof timestamp baked into the fixtures (1700000000).
         vm.warp(1700000000);
+
+        vm.prank(publisher);
+        oracle.publishCredentialRoot(FIXTURE_PROVIDER_ID, FIXTURE_TIER_MERKLE_ROOT, "");
     }
 
     // -------------------------------------------------------------------------
@@ -114,23 +126,20 @@ contract IntegrationTest is Test {
 
         // Historical proof should be retrievable
         IXochiZKPOracle.ComplianceAttestation memory historical =
-            oracle.getHistoricalProof(keccak256(abi.encodePacked(proof, ProofTypes.COMPLIANCE)));
+            oracle.getHistoricalProof(oracle.computeProofHash(proof, ProofTypes.COMPLIANCE));
         assertEq(historical.subject, FIXTURE_SUBMITTER);
     }
 
     function test_realProof_compliance_replayReverts() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance");
+        bytes32 expectedHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
 
         vm.prank(FIXTURE_SUBMITTER);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
 
         // Same proof should be rejected
         vm.prank(FIXTURE_SUBMITTER);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                XochiZKPOracle.ProofAlreadyUsed.selector, keccak256(abi.encodePacked(proof, ProofTypes.COMPLIANCE))
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofAlreadyUsed.selector, expectedHash));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
     }
 
@@ -248,6 +257,198 @@ contract IntegrationTest is Test {
             oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
+    }
+
+    // -------------------------------------------------------------------------
+    // Frozen-Heart variant tests
+    //
+    // Background: the "Frozen Heart" class of ZK soundness bugs (TrailOfBits, 2022)
+    // affected multiple PLONK implementations where the Fiat-Shamir transcript
+    // omitted public inputs from the challenge derivation. A malicious prover could
+    // forge proofs for arbitrary public inputs by reusing a valid proof against a
+    // different statement.
+    //
+    // bb's UltraHonk verifier hashes publicInputs + VK_HASH into the transcript via
+    // ZKTranscriptLib.generateTranscript. These tests lock that property in: take a
+    // real proof, mutate ONE byte of publicInputs, and confirm the verifier rejects.
+    // If a future bb upgrade ever regresses on transcript safety, these tests fail
+    // immediately.
+    //
+    // Each circuit is tested with its own fixture; the mutation targets a different
+    // semantic field per circuit so the suite covers diverse public-input layouts.
+    // -------------------------------------------------------------------------
+
+    function _flipBitAt(bytes memory data, uint256 byteIndex, uint8 bit) internal pure returns (bytes memory) {
+        bytes memory copy = new bytes(data.length);
+        for (uint256 i; i < data.length; i++) {
+            copy[i] = data[i];
+        }
+        copy[byteIndex] = bytes1(uint8(copy[byteIndex]) ^ uint8(1 << bit));
+        return copy;
+    }
+
+    function test_frozenHeart_compliance_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance");
+        // Sanity: original verifies
+        assertTrue(verifier.verifyProof(ProofTypes.COMPLIANCE, proof, publicInputs));
+
+        // Mutate jurisdiction_id (publicInputs[31] is the LSB of the first 32-byte field)
+        bytes memory tampered = _flipBitAt(publicInputs, 31, 0);
+
+        // bb's verifier reverts on a failed cryptographic check (SumcheckFailed,
+        // ShpleminiFailed, or PairingFailed). Either revert or false-return is acceptable
+        // here -- both prove the transcript binds the public inputs.
+        try verifier.verifyProof(ProofTypes.COMPLIANCE, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch {
+            // Revert is acceptable
+        }
+    }
+
+    function test_frozenHeart_riskScore_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
+        assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE, proof, publicInputs));
+
+        // Mutate the result field (index 4 of 8 -- byte offset 128, LSB at 159)
+        bytes memory tampered = _flipBitAt(publicInputs, 159, 0);
+
+        try verifier.verifyProof(ProofTypes.RISK_SCORE, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    function test_frozenHeart_pattern_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
+        assertTrue(verifier.verifyProof(ProofTypes.PATTERN, proof, publicInputs));
+
+        // Mutate the analysis_type field (index 0 -- byte offset 31)
+        bytes memory tampered = _flipBitAt(publicInputs, 31, 0);
+
+        try verifier.verifyProof(ProofTypes.PATTERN, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    function test_frozenHeart_attestation_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("attestation");
+        assertTrue(verifier.verifyProof(ProofTypes.ATTESTATION, proof, publicInputs));
+
+        // Mutate provider_id (index 0)
+        bytes memory tampered = _flipBitAt(publicInputs, 31, 0);
+
+        try verifier.verifyProof(ProofTypes.ATTESTATION, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    function test_frozenHeart_membership_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("membership");
+        assertTrue(verifier.verifyProof(ProofTypes.MEMBERSHIP, proof, publicInputs));
+
+        // Mutate is_member field (index 3 -- byte offset 96, LSB at 127)
+        bytes memory tampered = _flipBitAt(publicInputs, 127, 0);
+
+        try verifier.verifyProof(ProofTypes.MEMBERSHIP, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    function test_frozenHeart_nonMembership_publicInputMutation() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("non_membership");
+        assertTrue(verifier.verifyProof(ProofTypes.NON_MEMBERSHIP, proof, publicInputs));
+
+        // Mutate is_non_member field (index 3 -- LSB at 127)
+        bytes memory tampered = _flipBitAt(publicInputs, 127, 0);
+
+        try verifier.verifyProof(ProofTypes.NON_MEMBERSHIP, proof, tampered) returns (bool valid) {
+            assertFalse(valid, "tampered publicInputs verified -- TRANSCRIPT IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    function test_frozenHeart_proofMutation_compliance() public {
+        // Symmetric test: mutating the proof bytes should also fail. Catches the
+        // case where the transcript ignores proof commitments (different bug class).
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance");
+        assertTrue(verifier.verifyProof(ProofTypes.COMPLIANCE, proof, publicInputs));
+
+        // Mutate a byte in the middle of the proof
+        bytes memory tamperedProof = _flipBitAt(proof, proof.length / 2, 0);
+
+        try verifier.verifyProof(ProofTypes.COMPLIANCE, tamperedProof, publicInputs) returns (bool valid) {
+            assertFalse(valid, "tampered proof verified -- VERIFIER IS BROKEN");
+        } catch { /* revert acceptable */ }
+    }
+
+    // -------------------------------------------------------------------------
+    // Cross-type proof confusion (verifier layer)
+    //
+    // The Oracle's proofType-keyed validators reject proofs whose public input
+    // count doesn't match. But the deeper guarantee is at the bb-generated
+    // verifier layer: each proof type has a unique VK_HASH burned into its
+    // verifier, so a proof from circuit A submitted to circuit B's verifier
+    // must fail cryptographically. These tests prove that property directly.
+    // -------------------------------------------------------------------------
+
+    function test_crossType_complianceProof_rejectedByRiskScoreVerifier() public {
+        (bytes memory complianceProof,) = _loadFixture("compliance");
+        // Use risk_score's public inputs (different layout, different count)
+        (, bytes memory riskInputs) = _loadFixture("risk_score");
+
+        // Submit a compliance proof under proofType=RISK_SCORE. Should fail.
+        try verifier.verifyProof(ProofTypes.RISK_SCORE, complianceProof, riskInputs) returns (bool valid) {
+            assertFalse(valid, "cross-type proof verified -- VK COLLISION");
+        } catch { /* revert from VK mismatch / sumcheck failure is acceptable */ }
+    }
+
+    function test_crossType_membershipProof_rejectedByNonMembershipVerifier() public {
+        (bytes memory membershipProof,) = _loadFixture("membership");
+        (, bytes memory nonMembershipInputs) = _loadFixture("non_membership");
+
+        try verifier.verifyProof(ProofTypes.NON_MEMBERSHIP, membershipProof, nonMembershipInputs) returns (bool valid) {
+            assertFalse(valid, "cross-type proof verified -- VK COLLISION");
+        } catch { /* revert acceptable */ }
+    }
+
+    // -------------------------------------------------------------------------
+    // Verifier flat-count vs logical count invariant
+    //
+    // bb-generated verifiers expose NUMBER_OF_PUBLIC_INPUTS which includes 16
+    // pairing-point inputs the prover supplies in the proof itself. The
+    // ProofTypes library only knows about the LOGICAL public inputs (the
+    // semantic fields the circuit declares as `pub`). The integration must
+    // ensure: NUMBER_OF_PUBLIC_INPUTS - PAIRING_POINTS_SIZE == logicalCount.
+    //
+    // We can't read NUMBER_OF_PUBLIC_INPUTS from a generic IUltraVerifier
+    // interface, so we test the constraint indirectly: each generated verifier
+    // accepts exactly `expectedPublicInputCount(proofType)` public inputs (per
+    // its internal `publicInputs.length != vk.publicInputsSize - PAIRING_POINTS_SIZE`
+    // check). If the alignment ever drifts, the round-trip test below fails:
+    // the Oracle generates the right-sized inputs, the verifier rejects.
+    // -------------------------------------------------------------------------
+
+    function test_invariant_logicalInputCount_matchesAllVerifiers() public {
+        // Every fixture verifies cleanly => its logical input count matches
+        // the verifier's expected (vk.publicInputsSize - 16). This is implicitly
+        // tested by every existing real-proof test, but we make it explicit here.
+        string[6] memory circuits =
+            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];
+        uint8[6] memory types = [
+            ProofTypes.COMPLIANCE,
+            ProofTypes.RISK_SCORE,
+            ProofTypes.PATTERN,
+            ProofTypes.ATTESTATION,
+            ProofTypes.MEMBERSHIP,
+            ProofTypes.NON_MEMBERSHIP
+        ];
+        for (uint256 i; i < 6; i++) {
+            (bytes memory proof, bytes memory publicInputs) = _loadFixture(circuits[i]);
+            // The verifier will revert with InvalidPublicInputLength if the count
+            // ProofTypes reports differs from what the verifier expects.
+            bool valid = verifier.verifyProof(types[i], proof, publicInputs);
+            assertTrue(valid, string.concat("flat-count drift for ", circuits[i]));
+            // Sanity: ProofTypes-reported count = publicInputs.length / 32
+            assertEq(publicInputs.length / 32, ProofTypes.expectedPublicInputCount(types[i]));
+        }
     }
 
     // -------------------------------------------------------------------------

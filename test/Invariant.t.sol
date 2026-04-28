@@ -49,7 +49,7 @@ contract Handler is Test {
             bytes32(uint256(uint160(address(this)))) // submitter = this handler
         );
 
-        bytes32 proofHash = keccak256(abi.encodePacked(proof, ProofTypes.COMPLIANCE));
+        bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
 
         IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
             jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH

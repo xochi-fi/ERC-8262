@@ -15,17 +15,19 @@ contract GasBenchmarkTest is Test {
     XochiZKPOracle internal oracle;
 
     address internal owner = makeAddr("owner");
+    address internal publisher = makeAddr("publisher");
     address internal constant FIXTURE_SUBMITTER = address(0xdead);
+    uint256 internal constant FIXTURE_PROVIDER_ID = 42;
 
     bytes32 internal constant FIXTURE_CONFIG_HASH = 0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405;
     bytes32 internal constant FIXTURE_PROVIDER_SET_HASH =
         0x14b6becf762f80a24078e62fc9a7eca246b8e406d19962dda817b173f30a94b2;
     bytes32 internal constant FIXTURE_MEMBERSHIP_ROOT =
-        0x30211953f68b315a285af9496cdaa51517aba83cb3bb40bdd20b2e42eb189fe6;
+        0x1d7de002251083fdc312a329d46abde0680cbccc27935c33815c18b1beb3da8c;
     bytes32 internal constant FIXTURE_NON_MEMBERSHIP_ROOT =
-        0x12d001bc3463cb4d3a745f802dffd80c00a2927f77110d1b0a59b9a3bd787b86;
+        0x138f818fd4f2eec91e4fd93e14bcc47bc06a3ba333e5a2e7795d0beb752d247c;
     bytes32 internal constant FIXTURE_TIER_MERKLE_ROOT =
-        0x15861259068f1398397423d4b3bad764e19c1a68699115ef9ccd090a8a5eba3e;
+        0x24ce58f9ed6ca066d25f66b15b0eb1dccebe6e457f5aa0fcd353d82d539f5ed5;
 
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
@@ -49,11 +51,17 @@ contract GasBenchmarkTest is Test {
         }
         oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
         oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_TIER_MERKLE_ROOT);
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
+        // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign)
+        oracle.setProviderPublisher(FIXTURE_PROVIDER_ID, publisher);
         vm.stopPrank();
 
+        // Warp BEFORE publishing the credential root so its registeredAt aligns with
+        // the proof timestamp baked into the fixtures (1700000000).
         vm.warp(1700000000);
+
+        vm.prank(publisher);
+        oracle.publishCredentialRoot(FIXTURE_PROVIDER_ID, FIXTURE_TIER_MERKLE_ROOT, "");
     }
 
     // -------------------------------------------------------------------------

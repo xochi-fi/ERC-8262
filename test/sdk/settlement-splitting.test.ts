@@ -196,10 +196,13 @@ describe("settlement splitting E2E", () => {
     const storedType = await oracle.getProofType(patternProofHash);
     expect(storedType).toBe(PROOF_TYPES.PATTERN);
 
-    // Step 6: Finalize the trade
+    // Step 6: Finalize the trade.
+    // Audit H-2: pass the original publicInputs bytes so the registry can verify
+    // hash equality against attestation.publicInputsHash AND analysis_type==1.
     const finalizeTx = await registry.finalizeTrade(
       plan.tradeId,
       patternProofHash,
+      patternResult.publicInputsHex,
     );
     await publicClient.waitForTransactionReceipt({ hash: finalizeTx });
     expect(finalizeTx).toMatch(/^0x/);
@@ -258,8 +261,14 @@ describe("settlement splitting E2E", () => {
       ),
     );
 
+    // Even with public inputs, a COMPLIANCE proofHash is rejected because
+    // oracle.getProofType returns COMPLIANCE not PATTERN.
     await expect(
-      registry.finalizeTrade(plan.tradeId, complianceProofHash),
+      registry.finalizeTrade(
+        plan.tradeId,
+        complianceProofHash,
+        batchResult.proofs[0].proofResult.publicInputsHex,
+      ),
     ).rejects.toThrow();
   }, 180_000);
 });

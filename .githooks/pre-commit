@@ -7,12 +7,17 @@ FORGE="${FOUNDRY_BIN}/forge"
 echo "pre-commit: checking Solidity formatting..."
 "$FORGE" fmt --check
 
-# If test files changed, ensure .gas-snapshot is also staged
+# If contract/test files changed, ensure .gas-snapshot is up to date.
+# Either the snapshot must be staged (typical case after gas-affecting changes),
+# or it must already match HEAD with no working-tree drift (the case when changes
+# don't affect measured gas, or when snapshot was captured in a prior commit).
 STAGED_TEST_FILES=$(git diff --cached --name-only -- 'test/*.sol' 'test/**/*.sol' 'src/*.sol' 'src/**/*.sol')
 if [ -n "$STAGED_TEST_FILES" ]; then
-    if ! git diff --cached --name-only | grep -q '^\.gas-snapshot$'; then
-        echo "pre-commit: contract/test files changed but .gas-snapshot not staged"
-        echo "  run 'make snapshot' and stage .gas-snapshot"
+    SNAPSHOT_STAGED=$(git diff --cached --name-only | grep -c '^\.gas-snapshot$' || true)
+    SNAPSHOT_DIRTY=$(git diff --name-only -- .gas-snapshot | grep -c '^\.gas-snapshot$' || true)
+    if [ "$SNAPSHOT_STAGED" -eq 0 ] && [ "$SNAPSHOT_DIRTY" -ne 0 ]; then
+        echo "pre-commit: contract/test files changed and .gas-snapshot has unstaged changes"
+        echo "  run 'make snapshot' (if needed) and 'git add .gas-snapshot'"
         exit 1
     fi
 fi

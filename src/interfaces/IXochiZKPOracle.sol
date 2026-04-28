@@ -12,7 +12,7 @@ interface IXochiZKPOracle {
         bool meetsThreshold; // whether risk score is below filing trigger
         uint256 timestamp; // block.timestamp when attestation was recorded
         uint256 expiresAt; // timestamp after which attestation is stale
-        bytes32 proofHash; // keccak256 of the proof data
+        bytes32 proofHash; // keccak256(proof, proofType, chainId, oracleAddr) -- see computeProofHash
         bytes32 providerSetHash; // hash of provider IDs + weights used
         bytes32 publicInputsHash; // keccak256 of the public inputs
         address verifierUsed; // verifier contract address at submission time
