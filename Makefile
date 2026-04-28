@@ -63,7 +63,7 @@ fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh
 
 snapshot: ## Capture gas snapshot
-	$(FORGE) snapshot
+	FOUNDRY_PROFILE=default FOUNDRY_FUZZ_SEED=0x1 $(FORGE) snapshot --no-match-contract InvariantTest
 
 benchmark: ## Run gas benchmarks with report
 	$(FORGE) test --match-contract GasBenchmark -vvv --gas-report
