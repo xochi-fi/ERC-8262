@@ -1,4 +1,4 @@
-.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures clean help
+.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain clean help
 
 FOUNDRY_BIN := $(HOME)/.config/.foundry/bin
 FORGE := $(FOUNDRY_BIN)/forge
@@ -56,7 +56,10 @@ slither: ## Run Slither static analysis (requires slither-analyzer)
 
 # ── Fixtures & Gas ───────────────────────────────────────────
 
-fixtures: ## Generate proof fixtures for all circuits
+check-toolchain: ## Verify pinned nargo + bb versions match .tool-versions
+	./scripts/check-toolchain.sh
+
+fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh
 
 snapshot: ## Capture gas snapshot
