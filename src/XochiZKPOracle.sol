@@ -9,6 +9,7 @@ import {JurisdictionConfig} from "./libraries/JurisdictionConfig.sol";
 import {AccessControl} from "./libraries/AccessControl.sol";
 import {Pausable} from "./libraries/Pausable.sol";
 import {EIP712Attestation} from "./libraries/EIP712Attestation.sol";
+import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 
 /// @title XochiZKPOracle -- Reference implementation of the Xochi ZKP compliance oracle
 /// @notice Records compliance attestations backed by verified ZK proofs and supports
@@ -70,6 +71,14 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     /// @notice Per-provider authorized publisher EOA for ATTESTATION credential roots
     mapping(uint256 providerId => address publisher) internal _providerPublisher;
 
+    /// @notice Per-provider credential-root signing key (audit C-1 closure).
+    /// @dev Distinct from the publisher EOA. The publisher submits the publish tx;
+    ///      the signing key (held in HSM/KMS) authorizes the *content* of the tree
+    ///      via an EIP-712 signature over `CredentialRootPublication`. Compromise
+    ///      of the publisher alone cannot forge credentials -- the publish tx
+    ///      reverts unless the signature verifies against `_credentialSigner[providerId]`.
+    mapping(uint256 providerId => address signer) internal _credentialSigner;
+
     /// @notice Per-config provider expansion: which provider IDs are members of a config hash.
     /// @dev Registered alongside `updateProviderConfig` via `registerProviderConfigExpansion`.
     ///      Used by `denyProvider` to invalidate every config containing a compromised provider
@@ -102,6 +111,17 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
 
     /// @notice Published credential roots with provenance + TTL window
     mapping(bytes32 root => CredentialRootInfo info) internal _credentialRoots;
+
+    /// @notice Authorized signer pubkey hashes for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs.
+    /// @dev Pedersen commitment to a secp256k1 (x, y) pubkey, layout per
+    ///      `xochi_shared::sig::compute_signer_pubkey_hash` in the circuits crate.
+    ///      The signed-variant circuits expose `signer_pubkey_hash` as a public input;
+    ///      the Oracle validates it against this registry. Rotating a compromised key
+    ///      is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the
+    ///      replacement -- the registry intentionally has no reuse-after-revoke
+    ///      protection because secp256k1 keys are externally generated and a re-issued
+    ///      key is a fresh hash.
+    mapping(bytes32 signerPubkeyHash => bool valid) internal _validSignerPubkeyHashes;
 
     error ProofVerificationFailed();
     error ProofAlreadyUsed(bytes32 proofHash);
@@ -142,14 +162,23 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     error ProviderDenied(uint256 providerId);
     error EmptyProviderExpansion();
     error ProofTimestampNotMonotonic(uint256 proofTimestamp, uint256 lastTimestamp);
+    error SignedSignalsRequired(uint8 jurisdictionId, uint8 proofType);
+    error InvalidSignerPubkeyHash(bytes32 signerPubkeyHash);
+    error CredentialSignerNotSet(uint256 providerId);
+    error InvalidCredentialSignature();
+    error CredentialSignatureOutOfWindow(uint64 notBefore, uint64 notAfter);
+    error InvalidSignatureLength(uint256 length);
 
     event ConfigHistoryCompacted(uint256 entriesRemoved, uint256 newLength);
     event ProviderPublisherSet(uint256 indexed providerId, address indexed previous, address indexed publisher);
+    event CredentialSignerSet(uint256 indexed providerId, address indexed previous, address indexed signer);
     event CredentialRootPublished(uint256 indexed providerId, bytes32 indexed root, string cid, uint256 registeredAt);
     event CredentialRootRevoked(bytes32 indexed root);
     event ProviderConfigExpansionRegistered(bytes32 indexed configHash, uint256[] providerIds);
     event ProviderDeniedEvent(uint256 indexed providerId);
     event ProviderUndeniedEvent(uint256 indexed providerId);
+    event SignerPubkeyHashRegistered(bytes32 indexed signerPubkeyHash);
+    event SignerPubkeyHashRevoked(bytes32 indexed signerPubkeyHash);
 
     /// @notice Maximum number of entries in the config history array
     uint256 public constant MAX_CONFIG_HISTORY = 256;
@@ -230,7 +259,10 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, publicInputs);
 
         // Build and store attestation (providerSetHash only meaningful for COMPLIANCE proofs)
-        bytes32 effectiveProviderSetHash = proofType == ProofTypes.COMPLIANCE ? providerSetHash : bytes32(0);
+        bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
+                || proofType == ProofTypes.COMPLIANCE_SIGNED)
+            ? providerSetHash
+            : bytes32(0);
         attestation = _buildAttestation(
             jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(publicInputs), verifierUsed
         );
@@ -611,22 +643,96 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         emit ProviderPublisherSet(providerId, previous, publisher);
     }
 
+    /// @notice Authorize a credential-root signing key for a provider (audit C-1).
+    /// @dev The signing key (held in HSM/KMS, distinct from the publisher EOA) signs
+    ///      `CredentialRootPublication` structs that the publisher EOA forwards via
+    ///      `publishCredentialRoot`. Compromise of the publisher alone can no longer
+    ///      mint credential roots; the publish tx reverts unless the EIP-712
+    ///      signature verifies against this address. Set signer = address(0) to
+    ///      disable credential-root publishing for the provider entirely (existing
+    ///      roots remain provable until TTL or explicit revocation).
+    /// @param providerId Provider identifier (must be non-zero)
+    /// @param signer Address whose private key signs `CredentialRootPublication`
+    function setCredentialSigner(uint256 providerId, address signer) external onlyRole(REGISTRAR_ROLE) {
+        if (providerId == 0) revert InvalidProviderId();
+        address previous = _credentialSigner[providerId];
+        _credentialSigner[providerId] = signer;
+        emit CredentialSignerSet(providerId, previous, signer);
+    }
+
+    /// @notice Get the credential-root signing key for a provider.
+    function getCredentialSigner(uint256 providerId) external view returns (address) {
+        return _credentialSigner[providerId];
+    }
+
     /// @notice Publish a new credential tree root for a provider.
-    /// @dev Called by the provider's authorized publisher EOA. Emits the IPFS CID for
-    ///      the tree contents so users can fetch their merkle paths off-chain.
+    /// @dev Called by the provider's authorized publisher EOA. The publisher must
+    ///      additionally present an EIP-712 signature over a `CredentialRootPublication`
+    ///      struct, signed by the address registered via `setCredentialSigner`. The
+    ///      signature is verified on-chain via `ecrecover` (audit C-1 closure).
+    ///
+    ///      `notBefore` / `notAfter` bound replay of the signature itself; they are
+    ///      independent of the on-chain `CREDENTIAL_ROOT_TTL` that bounds an
+    ///      already-published root's lifetime for ATTESTATION proof acceptance.
+    ///
+    ///      `cidHash = keccak256(bytes(cid))` is committed in the signed struct so
+    ///      a malicious publisher cannot bait-and-switch tree contents under a
+    ///      signed root.
     /// @param providerId Provider identifier
     /// @param root New credential merkle root
     /// @param cid IPFS / Arweave CID for the full tree contents
-    function publishCredentialRoot(uint256 providerId, bytes32 root, string calldata cid) external {
+    /// @param notBefore Unix timestamp; signature is invalid before this
+    /// @param notAfter Unix timestamp; signature is invalid after this
+    /// @param signature 65-byte ECDSA signature (r || s || v) over the EIP-712 digest
+    function publishCredentialRoot(
+        uint256 providerId,
+        bytes32 root,
+        string calldata cid,
+        uint64 notBefore,
+        uint64 notAfter,
+        bytes calldata signature
+    ) external {
         address publisher = _providerPublisher[providerId];
         if (publisher == address(0) || msg.sender != publisher) {
             revert NotProviderPublisher(providerId, msg.sender);
         }
+        address signer = _credentialSigner[providerId];
+        if (signer == address(0)) revert CredentialSignerNotSet(providerId);
+        if (block.timestamp < notBefore || block.timestamp > notAfter) {
+            revert CredentialSignatureOutOfWindow(notBefore, notAfter);
+        }
+
+        bytes32 digest = EIP712CredentialRoot.toTypedDataHash(
+            EIP712CredentialRoot.buildDomainSeparator(address(this)),
+            providerId,
+            root,
+            keccak256(bytes(cid)),
+            notBefore,
+            notAfter
+        );
+        address recovered = _recoverSigner(digest, signature);
+        if (recovered != signer) revert InvalidCredentialSignature();
+
         if (_credentialRoots[root].registeredAt != 0) revert CredentialRootAlreadyPublished(root);
 
         _credentialRoots[root] =
             CredentialRootInfo({providerId: providerId, registeredAt: uint64(block.timestamp), revoked: false});
         emit CredentialRootPublished(providerId, root, cid, block.timestamp);
+    }
+
+    /// @dev Recover the signer of an EIP-712 digest from a 65-byte ECDSA signature
+    ///      (`r || s || v`). Reverts on bad length. We accept both v=27/28 and the
+    ///      legacy v=0/1 (some signers emit the latter); reject otherwise.
+    function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address) {
+        if (signature.length != 65) revert InvalidSignatureLength(signature.length);
+        bytes32 r = bytes32(signature[0:32]);
+        bytes32 s = bytes32(signature[32:64]);
+        uint8 v = uint8(signature[64]);
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) revert InvalidCredentialSignature();
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0)) revert InvalidCredentialSignature();
+        return recovered;
     }
 
     /// @notice Revoke a credential root before its TTL elapses.
@@ -667,6 +773,36 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         if (info.revoked) return false;
         if (block.timestamp > uint256(info.registeredAt) + CREDENTIAL_ROOT_TTL) return false;
         return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Signer pubkey hashes (COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs)
+    // -------------------------------------------------------------------------
+
+    /// @notice Authorize a secp256k1 signer pubkey hash for signed-signals proofs.
+    /// @dev `signerPubkeyHash` is the Pedersen commitment computed by
+    ///      `xochi_shared::sig::compute_signer_pubkey_hash` (circuits/shared/src/sig.nr).
+    ///      Off-chain computation MUST use the same domain tag and field-splitting layout
+    ///      to produce a registry-matching hash. Rotating a key: revoke the outgoing hash,
+    ///      register the new one; in-flight proofs from the outgoing key are rejected the
+    ///      moment its hash is revoked.
+    function registerSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
+        if (signerPubkeyHash == bytes32(0)) revert InvalidSignerPubkeyHash(signerPubkeyHash);
+        if (_validSignerPubkeyHashes[signerPubkeyHash]) revert AlreadyRegistered();
+        _validSignerPubkeyHashes[signerPubkeyHash] = true;
+        emit SignerPubkeyHashRegistered(signerPubkeyHash);
+    }
+
+    /// @notice Revoke a previously-authorized signer pubkey hash.
+    function revokeSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
+        if (!_validSignerPubkeyHashes[signerPubkeyHash]) revert NotRegistered();
+        _validSignerPubkeyHashes[signerPubkeyHash] = false;
+        emit SignerPubkeyHashRevoked(signerPubkeyHash);
+    }
+
+    /// @notice Whether a signer pubkey hash is currently authorized.
+    function isValidSignerPubkeyHash(bytes32 signerPubkeyHash) external view returns (bool valid) {
+        return _validSignerPubkeyHashes[signerPubkeyHash];
     }
 
     /// @notice Register a reporting threshold for PATTERN (anti-structuring) proofs
@@ -753,7 +889,10 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
 
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, inputs);
 
-        bytes32 effectiveProviderSetHash = proofType == ProofTypes.COMPLIANCE ? providerSetHash : bytes32(0);
+        bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
+                || proofType == ProofTypes.COMPLIANCE_SIGNED)
+            ? providerSetHash
+            : bytes32(0);
         attestation = _buildAttestation(
             jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(inputs), verifierUsed
         );
@@ -814,12 +953,20 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     }
 
     /// @dev Dispatch validation by proofType and return the timestamp to ratchet on.
+    ///      Also enforces per-jurisdiction signed-signals policy: when the jurisdiction
+    ///      requires signed signals (`requireSignedSignals == true`), the unsigned
+    ///      COMPLIANCE / RISK_SCORE variants are rejected before any cryptographic work.
     function _validateAndExtractTimestamp(
         uint8 jurisdictionId,
         uint8 proofType,
         bytes32 providerSetHash,
         bytes calldata publicInputs
     ) internal view returns (uint256 proofTimestamp) {
+        if (JurisdictionConfig.requireSignedSignals(jurisdictionId) && ProofTypes.isUnsignedScreeningVariant(proofType))
+        {
+            revert SignedSignalsRequired(jurisdictionId, proofType);
+        }
+
         if (proofType == ProofTypes.COMPLIANCE) {
             return _validateComplianceInputs(jurisdictionId, providerSetHash, publicInputs);
         } else if (proofType == ProofTypes.RISK_SCORE) {
@@ -832,6 +979,10 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
             return _validateMembershipInputs(publicInputs);
         } else if (proofType == ProofTypes.NON_MEMBERSHIP) {
             return _validateNonMembershipInputs(publicInputs);
+        } else if (proofType == ProofTypes.COMPLIANCE_SIGNED) {
+            return _validateComplianceSignedInputs(jurisdictionId, providerSetHash, publicInputs);
+        } else if (proofType == ProofTypes.RISK_SCORE_SIGNED) {
+            return _validateRiskScoreSignedInputs(publicInputs);
         } else {
             revert ProofTypes.InvalidProofType(proofType);
         }
@@ -1080,5 +1231,104 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         if (proofIsNonMember != bytes32(uint256(1))) revert ProofResultNegative();
         address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[128:160]))));
         if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+    }
+
+    /// @dev Validate COMPLIANCE_SIGNED public inputs (audit I-1).
+    ///      Identical to _validateComplianceInputs but with an additional
+    ///      `signer_pubkey_hash` slot validated against the on-chain registry.
+    function _validateComplianceSignedInputs(uint8 jurisdictionId, bytes32 providerSetHash, bytes calldata publicInputs)
+        internal
+        view
+        returns (uint256 proofTimestamp)
+    {
+        // COMPLIANCE_SIGNED public inputs layout (each 32 bytes):
+        //   [0]: jurisdiction_id
+        //   [1]: provider_set_hash
+        //   [2]: config_hash
+        //   [3]: timestamp
+        //   [4]: meets_threshold
+        //   [5]: signer_pubkey_hash
+        //   [6]: submitter
+        bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
+        bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
+        bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
+        bytes32 proofMeetsThreshold = bytes32(publicInputs[128:160]);
+        bytes32 proofSignerPubkeyHash = bytes32(publicInputs[160:192]);
+        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[192:224]))));
+
+        if (proofJurisdiction != bytes32(uint256(jurisdictionId))) revert PublicInputMismatch();
+        if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
+        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
+        if (proofMeetsThreshold != bytes32(uint256(1))) revert ProofResultNegative();
+        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
+            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
+        }
+        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        if (_configContainsDeniedProvider(proofConfigHash)) {
+            revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
+        }
+        proofTimestamp = uint256(bytes32(publicInputs[96:128]));
+        _validateProofTimestamp(proofTimestamp);
+    }
+
+    /// @dev Validate RISK_SCORE_SIGNED public inputs (audit I-1).
+    ///      Identical semantic checks to _validateRiskScoreInputs but with an additional
+    ///      `signer_pubkey_hash` slot validated against the on-chain registry.
+    function _validateRiskScoreSignedInputs(bytes calldata publicInputs)
+        internal
+        view
+        returns (uint256 proofTimestamp)
+    {
+        // RISK_SCORE_SIGNED has no proof-internal timestamp; ratchet uses block.timestamp.
+        proofTimestamp = block.timestamp;
+        // RISK_SCORE_SIGNED public inputs layout (each 32 bytes):
+        //   [0]: proof_type
+        //   [1]: direction
+        //   [2]: bound_lower
+        //   [3]: bound_upper
+        //   [4]: result
+        //   [5]: config_hash
+        //   [6]: provider_set_hash
+        //   [7]: signer_pubkey_hash
+        //   [8]: submitter
+        uint256 proofType = uint256(bytes32(publicInputs[0:32]));
+        uint256 direction = uint256(bytes32(publicInputs[32:64]));
+        uint256 boundLower = uint256(bytes32(publicInputs[64:96]));
+        uint256 boundUpper = uint256(bytes32(publicInputs[96:128]));
+        bytes32 proofResult = bytes32(publicInputs[128:160]);
+        bytes32 proofConfigHash = bytes32(publicInputs[160:192]);
+        bytes32 proofSignerPubkeyHash = bytes32(publicInputs[224:256]);
+        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[256:288]))));
+
+        if (proofResult != bytes32(uint256(1))) revert ProofResultNegative();
+        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
+        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
+            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
+        }
+        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+
+        // Reject trivial / undefined claims (matches unsigned variant).
+        if (proofType == RISK_PROOF_THRESHOLD) {
+            if (direction == RISK_DIRECTION_GT) {
+                if (boundLower == 0 || boundLower >= MAX_RISK_SCORE_BPS) {
+                    revert TrivialRiskBound(boundLower, boundUpper);
+                }
+            } else if (direction == RISK_DIRECTION_LT) {
+                if (boundLower == 0 || boundLower > MAX_RISK_SCORE_BPS) {
+                    revert TrivialRiskBound(boundLower, boundUpper);
+                }
+            } else {
+                revert InvalidRiskDirection(direction);
+            }
+        } else if (proofType == RISK_PROOF_RANGE) {
+            if (boundLower >= boundUpper || boundUpper > MAX_RISK_SCORE_BPS) {
+                revert InvalidRiskBound(boundLower, boundUpper);
+            }
+            if (boundLower == 0 && boundUpper == MAX_RISK_SCORE_BPS) {
+                revert TrivialRiskBound(boundLower, boundUpper);
+            }
+        } else {
+            revert InvalidRiskProofType(proofType);
+        }
     }
 }

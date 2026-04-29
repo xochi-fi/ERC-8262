@@ -233,11 +233,13 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         registry.registerTrade(tradeId, 0, 2); // jurisdiction 0 (EU)
 
-        // Alice submits a proof for jurisdiction 1 (US)
-        bytes32 proofHash = _submitComplianceForAlice(1);
+        // Alice submits a proof for jurisdiction 2 (UK). UK is permissive (does not
+        // require signed signals), preserving the test's focus on jurisdiction-mismatch
+        // detection at the SettlementRegistry boundary.
+        bytes32 proofHash = _submitComplianceForAlice(2);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.JurisdictionMismatch.selector, 0, 1));
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.JurisdictionMismatch.selector, 0, 2));
         registry.recordSubSettlement(tradeId, 0, proofHash);
     }
 

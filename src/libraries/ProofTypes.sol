@@ -12,13 +12,18 @@ library ProofTypes {
     uint8 internal constant ATTESTATION = 0x04; // attestation circuit
     uint8 internal constant MEMBERSHIP = 0x05; // membership circuit
     uint8 internal constant NON_MEMBERSHIP = 0x06; // non_membership circuit
+    /// @dev Provider-signed-signals variants close audit finding I-1. They share the
+    ///      semantic of their unsigned siblings but verify an in-circuit ECDSA-secp256k1
+    ///      signature of the screening-signal payload by an Oracle-registered signer.
+    uint8 internal constant COMPLIANCE_SIGNED = 0x07; // compliance_signed circuit
+    uint8 internal constant RISK_SCORE_SIGNED = 0x08; // risk_score_signed circuit
 
     error InvalidProofType(uint8 proofType);
     error InvalidPublicInputLength(uint8 proofType, uint256 expected, uint256 actual);
 
     /// @notice Expected number of public inputs per proof type
     /// @dev Must match the `pub` parameters in each Noir circuit's main() function
-    /// @param proofType The proof type identifier (0x01-0x06)
+    /// @param proofType The proof type identifier (0x01-0x08)
     /// @return count Number of bytes32 public inputs expected
     function expectedPublicInputCount(uint8 proofType) internal pure returns (uint256 count) {
         // compliance: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
@@ -33,6 +38,10 @@ library ProofTypes {
         if (proofType == MEMBERSHIP) return 5;
         // non_membership: merkle_root, set_id, timestamp, is_non_member, submitter
         if (proofType == NON_MEMBERSHIP) return 5;
+        // compliance_signed: compliance fields + signer_pubkey_hash
+        if (proofType == COMPLIANCE_SIGNED) return 7;
+        // risk_score_signed: risk_score fields + signer_pubkey_hash
+        if (proofType == RISK_SCORE_SIGNED) return 9;
         revert InvalidProofType(proofType);
     }
 
@@ -62,6 +71,19 @@ library ProofTypes {
 
     /// @notice Check if a proof type is valid
     function isValidProofType(uint8 proofType) internal pure returns (bool valid) {
-        return proofType >= COMPLIANCE && proofType <= NON_MEMBERSHIP;
+        return proofType >= COMPLIANCE && proofType <= RISK_SCORE_SIGNED;
+    }
+
+    /// @notice Whether a proof type is a provider-signed-signals variant.
+    /// @dev Used by the Oracle to enforce per-jurisdiction signed-signals policy.
+    function isSignedVariant(uint8 proofType) internal pure returns (bool isSigned) {
+        return proofType == COMPLIANCE_SIGNED || proofType == RISK_SCORE_SIGNED;
+    }
+
+    /// @notice Whether a proof type is the unsigned compliance/risk_score sibling
+    ///         of a signed variant. PATTERN/ATTESTATION/MEMBERSHIP/NON_MEMBERSHIP
+    ///         are not classified as "screening" types.
+    function isUnsignedScreeningVariant(uint8 proofType) internal pure returns (bool isUnsigned) {
+        return proofType == COMPLIANCE || proofType == RISK_SCORE;
     }
 }

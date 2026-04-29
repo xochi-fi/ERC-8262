@@ -1,0 +1,8 @@
+[package]
+name = "compliance_signed"
+type = "bin"
+authors = ["DROO", "Bloo"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+xochi_shared = { path = "../shared" }

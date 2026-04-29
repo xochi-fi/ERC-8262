@@ -29,6 +29,14 @@ pub global DOMAIN_LEAF_VALUE: Field = 0x4d4b4c5f56414c; // ASCII "MKL_VAL"
 /// pass 0 when tree privacy is not required (e.g. published sanctions lists).
 pub global DOMAIN_LEAF_SUBJECT: Field = 0x4d4b4c5f535542; // ASCII "MKL_SUB"
 
+/// Domain tag for the provider-signed-signals payload hash:
+/// H(tag, provider_set_hash, signals[..], weights[..], timestamp, submitter).
+/// Used by the COMPLIANCE_SIGNED / RISK_SCORE_SIGNED circuits (audit finding I-1).
+/// The hash is the message that the provider's authorized signer signs over via
+/// secp256k1 ECDSA; the circuit verifies the signature in-circuit so the signals
+/// the prover discloses privately are anchored to a real provider attestation.
+pub global DOMAIN_SIGNED_SIGNALS: Field = 0x5349475f53494753; // ASCII "SIG_SIGS"
+
 /// Hash two siblings under the internal-node domain.
 pub fn internal_hash(left: Field, right: Field) -> Field {
     pedersen_hash([DOMAIN_INTERNAL, left, right])

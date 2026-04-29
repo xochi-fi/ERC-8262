@@ -10,14 +10,18 @@ This is distinct from view keys (Railgun, Panther) where you trade privately and
 
 ## Proof types
 
-| Type           | ID   | Assertion                         | What stays hidden   | Circuit        |
-| -------------- | ---- | --------------------------------- | ------------------- | -------------- |
-| Compliance     | 0x01 | "Risk score below threshold"      | Signals, score      | compliance     |
-| Risk Score     | 0x02 | "Score > X" or "Score in [X,Y]"   | Exact score         | risk_score     |
-| Pattern        | 0x03 | "No structuring detected"         | Transaction history | pattern        |
-| Attestation    | 0x04 | "Valid credential exists"         | Credential details  | attestation    |
-| Membership     | 0x05 | "Address in authorized set S"     | Which element       | membership     |
-| Non-membership | 0x06 | "Address NOT in sanctions list S" | List contents       | non_membership |
+| Type                | ID   | Assertion                         | What stays hidden   | Circuit           |
+| ------------------- | ---- | --------------------------------- | ------------------- | ----------------- |
+| Compliance          | 0x01 | "Risk score below threshold"      | Signals, score      | compliance        |
+| Risk Score          | 0x02 | "Score > X" or "Score in [X,Y]"   | Exact score         | risk_score        |
+| Pattern             | 0x03 | "No structuring detected"         | Transaction history | pattern           |
+| Attestation         | 0x04 | "Valid credential exists"         | Credential details  | attestation       |
+| Membership          | 0x05 | "Address in authorized set S"     | Which element       | membership        |
+| Non-membership      | 0x06 | "Address NOT in sanctions list S" | List contents       | non_membership    |
+| Compliance (signed) | 0x07 | Compliance + provider sig         | Signals, score, sig | compliance_signed |
+| Risk Score (signed) | 0x08 | Risk Score + provider sig         | Exact score, sig    | risk_score_signed |
+
+The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values. Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA) and Singapore require signed; EU (AMLD6) and UK (MLR) accept either. The `signer_pubkey_hash` public input is validated against an on-chain registry (`registerSignerPubkeyHash`) so a compromised provider can be rotated without redeploying circuits.
 
 ## How it works
 
@@ -64,7 +68,7 @@ Each of the 6 proof types has its own Noir circuit and generates a separate Ultr
 
 Standalone immutable contract that links split settlement proofs to a tradeId (XIP-1). When a large trade is split into sub-trades for privacy, the registry records each sub-trade's compliance proof and enforces an anti-structuring pattern proof at finalization.
 
-- No admin, no pause, no upgradability -- fully immutable
+- No admin, no pause, no upgradability. Fully immutable.
 - References the Oracle via `getHistoricalProof()` to validate proof existence
 - Interface: `ISettlementRegistry`
 - Test: `forge test --match-contract SettlementRegistry` (40 tests)
@@ -103,14 +107,20 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
     shared/                       # Shared Noir library
       src/lib.nr                  # Re-exports all modules
       src/hash.nr                 # Pedersen hash wrappers (hash2..hash32)
-      src/merkle.nr               # Merkle root computation
+      src/merkle.nr               # Merkle root computation + domain tags
       src/risk.nr                 # Risk score + jurisdiction thresholds
-      src/providers.nr             # Provider set commitment
-      src/constants.nr             # Shared constants (jurisdictions, depths, limits)
+      src/providers.nr            # Provider set commitment
+      src/sig.nr                  # secp256k1 ECDSA helpers + signed-payload digest
+      src/validation.nr           # Timestamp + tx-set hash validation
+      src/constants.nr            # Shared constants (jurisdictions, depths, limits)
     compliance/                   # Compliance proof circuit (0x01)
       src/main.nr                 # Risk score below jurisdiction threshold
+    compliance_signed/            # Signed-signals compliance (0x07)
+      src/main.nr                 # Compliance + in-circuit secp256k1 ECDSA verify
     risk_score/                   # Risk score circuit (0x02)
       src/main.nr                 # Threshold and range proofs
+    risk_score_signed/            # Signed-signals risk score (0x08)
+      src/main.nr                 # Risk score + in-circuit secp256k1 ECDSA verify
     pattern/                      # Pattern detection circuit (0x03)
       src/main.nr                 # Structuring, velocity, round-amount analysis
     attestation/                  # Attestation circuit (0x04)
@@ -306,8 +316,9 @@ _Testnet deployments pending. Mainnet after audit._
 
 ## Trust model
 
-Read this before integrating. Xochi ZKP attestations are a particular kind of
-proof and integrators should understand exactly what they do and do not assert.
+A Xochi ZKP attestation is narrower than the word makes it sound. It proves a
+specific computation ran on private inputs. It does not prove the inputs were
+honest. Honesty either comes from somewhere else, or it is a gap you accept.
 
 **What an attestation cryptographically guarantees:**
 
@@ -316,28 +327,70 @@ proof and integrators should understand exactly what they do and do not assert.
   `is_non_member`) is the value those inputs actually produce under the rule.
 - The proof is bound to the submitter's `msg.sender` (anti-frontrun).
 - Replay-protection: a given proof can only be recorded once.
+- For MEMBERSHIP, NON_MEMBERSHIP, and ATTESTATION, the proven element is
+  cryptographically bound to the submitter in-circuit: leaves are computed as
+  `leaf_hash_subject(submitter, set_id, salt)` (membership / non-membership) or
+  `H(DOMAIN_CREDENTIAL, provider_id, submitter, type, attribute, expiry)`
+  (attestation). A proof for one submitter cannot be replayed under another.
+- For ATTESTATION, the credential leaf is included in a per-provider
+  credentials Merkle tree. The provider's authorized publisher EOA registers
+  each tree root via `publishCredentialRoot`; the Oracle binds the root to
+  `provider_id` and enforces a 48 h TTL. A submitter cannot construct a valid
+  proof without an inclusion path against a currently-registered root.
 
 **What an attestation does NOT guarantee:**
 
-- That the private inputs are honest. The user picks them. For COMPLIANCE and
-  RISK_SCORE proofs, the `signals[]` array is private and not signed by any
-  provider. A user may enter all-zero signals and prove "low risk" without
-  having actually run real screening. ZK proves the *computation*, not the
-  *inputs*.
-- That a private `element` in MEMBERSHIP / NON_MEMBERSHIP proofs corresponds
-  to the submitter's identity. The current circuits do not bind `element` to
-  `submitter`. (This is tracked as audit finding H-3 and is being remediated;
-  consult the working tracker before relying on these proof types.)
-- That an ATTESTATION proof was actually issued by the named provider. The
-  current `attestation` circuit verifies provider authorization (Merkle
-  inclusion in the providers tree) but does not verify a provider signature
-  over the credential. (Tracked as audit finding C-1.)
+- That the screening signal values are honest, for the unsigned variants.
+  The unsigned COMPLIANCE (0x01) and RISK_SCORE (0x02) circuits accept
+  `signals[]` as a private witness with no in-circuit provider signature.
+  A user can enter all-zero signals and prove "low risk" without real
+  screening. The `provider_set_hash` and `config_hash` commit to which
+  providers and weights were used, not to what those providers actually
+  returned.
 
-**Bottom line:** treat attestations as "the user has run the published rule
-on inputs they chose to keep private" -- not "the user is verifiably compliant
-under that rule." If your protocol depends on the latter, require integration
-with a separate identity / KYC provider whose signatures are verified
-in-circuit (open work item; see audit findings).
+  The signed variants close this gap mathematically. COMPLIANCE_SIGNED
+  (0x07) and RISK_SCORE_SIGNED (0x08) verify a secp256k1 ECDSA signature
+  over the screening payload in-circuit; the Oracle's
+  `_validSignerPubkeyHashes` registry authenticates the signer's pubkey.
+  Strict jurisdictions (US BSA, Singapore) reject the unsigned variants
+  via `JurisdictionConfig.requireSignedSignals`; EU and UK accept either.
+  The fix is mathematical, not operational: it is useful only when a real
+  provider runs a signing daemon and registers their key. As of writing,
+  no major AML provider (Chainalysis, TRM, Elliptic) does this. The
+  primitive is shipped; adoption is not.
+
+- That PATTERN proofs (0x03) ran on the user's complete transaction history.
+  The circuit consumes a private `(amounts[], timestamps[])` array the user
+  supplies. Nothing forces them to include every transaction. A user can
+  cherry-pick clean transactions and prove "no structuring detected" against
+  a curated subset. There is no provider analog of the COMPLIANCE_SIGNED
+  fix here today: tx-history attestation requires a provider category that
+  signs full per-address chain history, which does not exist yet. Treat
+  PATTERN proofs as evidence about the disclosed subset, not the user's full
+  activity. SettlementRegistry's `finalizeTrade` inherits this gap.
+
+- That the off-chain credential issuance was honest. The on-chain side
+  is locked down: the credential root is signed by a provider key (held
+  separately from the publisher EOA) and the Oracle verifies the EIP-712
+  signature via `ecrecover` at `publishCredentialRoot` time. A compromised
+  publisher cannot mint forged credentials. What remains is the off-chain
+  question of whether the provider's screening process actually verified
+  what the credential claims. That trust does not move on-chain, ever.
+
+- That the user's identity is private. Every attestation is linked on-chain
+  to a submitter EOA in cleartext. Chain analysis correlates submitter EOAs
+  across attestations and against the rest of an address's activity. What
+  this system protects is the score, the signals, the credential attribute,
+  and the merkle path; it does not protect _who_ is being scored. Integrators
+  who need user-identity privacy must layer ERC-5564 stealth addresses,
+  mixers, or trusted relayers on top.
+
+Four proof types, four different trust assumptions. They do not compose
+into a single "is this user compliant" answer. The signed variants close
+signal honesty when a provider opts in. PATTERN remains self-attested.
+ATTESTATION trusts a publisher EOA. Identity privacy is a separate layer
+entirely. See `docs/THREAT_MODEL.md` for the cryptographic breakdown and
+the practical limitations.
 
 ## Security
 

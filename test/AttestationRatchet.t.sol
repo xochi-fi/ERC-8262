@@ -139,17 +139,19 @@ contract AttestationRatchetTest is Test {
     // -------------------------------------------------------------------------
 
     function test_ratchet_separateJurisdictions_independent() public {
+        // Use EU (0) and UK (2), both permissive jurisdictions; the ratchet test is
+        // about per-jurisdiction state isolation and is orthogonal to signed-signals.
         uint256 t0 = block.timestamp;
         vm.startPrank(alice);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0 + 100), PROVIDER_SET_HASH
         );
         // Different jurisdiction; independent ratchet -- earlier proofTimestamp is fine
-        oracle.submitCompliance(1, ProofTypes.COMPLIANCE, _proof(2), _complianceInputs(1, alice, t0), PROVIDER_SET_HASH);
+        oracle.submitCompliance(2, ProofTypes.COMPLIANCE, _proof(2), _complianceInputs(2, alice, t0), PROVIDER_SET_HASH);
         vm.stopPrank();
 
         assertEq(oracle.lastProofTimestamp(alice, 0), t0 + 100);
-        assertEq(oracle.lastProofTimestamp(alice, 1), t0);
+        assertEq(oracle.lastProofTimestamp(alice, 2), t0);
     }
 
     function test_ratchet_separateUsers_independent() public {

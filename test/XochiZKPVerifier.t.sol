@@ -124,8 +124,10 @@ contract XochiZKPVerifierTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x00));
         verifier.verifyProof(0x00, _dummyProof(), _complianceInputs());
 
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x07));
-        verifier.verifyProof(0x07, _dummyProof(), _complianceInputs());
+        // 0x07 (COMPLIANCE_SIGNED) and 0x08 (RISK_SCORE_SIGNED) are valid;
+        // 0x09 is the next out-of-range type.
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
+        verifier.verifyProof(0x09, _dummyProof(), _complianceInputs());
     }
 
     function test_verifyProof_revert_verifierNotSet() public {
@@ -247,8 +249,8 @@ contract XochiZKPVerifierTest is Test {
 
     function test_setVerifierInitial_revert_invalidProofType() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x07));
-        verifier.setVerifierInitial(0x07, address(passingVerifier));
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
+        verifier.setVerifierInitial(0x09, address(passingVerifier));
     }
 
     function test_setVerifierInitial_revert_notAContract() public {
@@ -760,13 +762,14 @@ contract XochiZKPVerifierTest is Test {
     // -------------------------------------------------------------------------
 
     function testFuzz_verifyProof_revert_invalidProofType(uint8 proofType) public {
-        vm.assume(proofType == 0 || proofType > 6);
+        // 0x07 (COMPLIANCE_SIGNED) and 0x08 (RISK_SCORE_SIGNED) are valid; 0x09+ are not.
+        vm.assume(proofType == 0 || proofType > 8);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
         verifier.verifyProof(proofType, _dummyProof(), _complianceInputs());
     }
 
     function testFuzz_proposeVerifier_revert_invalidProofType(uint8 proofType) public {
-        vm.assume(proofType == 0 || proofType > 6);
+        vm.assume(proofType == 0 || proofType > 8);
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
         verifier.proposeVerifier(proofType, address(passingVerifier));
@@ -946,8 +949,8 @@ contract XochiZKPVerifierTest is Test {
 
     function test_pauseProofType_revert_invalidProofType() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x07));
-        verifier.pauseProofType(0x07);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
+        verifier.pauseProofType(0x09);
     }
 
     function test_isProofTypePaused() public {

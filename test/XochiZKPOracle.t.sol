@@ -11,6 +11,7 @@ import {JurisdictionConfig} from "../src/libraries/JurisdictionConfig.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
+import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 
 contract AlwaysPassVerifier is IUltraVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
@@ -36,6 +37,11 @@ contract XochiZKPOracleTest is Test {
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
     uint256 internal constant DEFAULT_PROVIDER_ID = 42;
 
+    /// @dev Deterministic test signing key for credential-root signatures (audit C-1).
+    ///      Registered as the credential signer for `DEFAULT_PROVIDER_ID` in setUp.
+    uint256 internal constant CREDENTIAL_SIGNER_KEY = uint256(keccak256("xochi-test-credential-signer"));
+    address internal credentialSignerAddr;
+
     // Mirror of XochiZKPOracle internal constants for risk-score validation tests.
     uint8 internal constant RISK_PROOF_THRESHOLD = 0x01;
     uint8 internal constant RISK_PROOF_RANGE = 0x02;
@@ -48,21 +54,67 @@ contract XochiZKPOracleTest is Test {
 
         stubVerifier = new AlwaysPassVerifier();
         vm.startPrank(owner);
-        for (uint8 i = ProofTypes.COMPLIANCE; i <= ProofTypes.NON_MEMBERSHIP; i++) {
-            verifier.setVerifierInitial(i, address(stubVerifier));
-        }
+        // Register a stub verifier for every valid proof type, including the signed
+        // variants (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED).
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.RISK_SCORE, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.PATTERN, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.ATTESTATION, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.MEMBERSHIP, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_SIGNED, address(stubVerifier));
+        verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, address(stubVerifier));
         // Register default reporting threshold for PATTERN tests
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
-        // Register the default attestation provider's publisher; individual tests
-        // publish credential roots as needed via `_publishCredentialRoot`.
+        // Register the default attestation provider's publisher and credential
+        // signing key. Tests publish credential roots via `_publishCredentialRoot`,
+        // which signs the EIP-712 publication with `CREDENTIAL_SIGNER_KEY`.
         oracle.setProviderPublisher(DEFAULT_PROVIDER_ID, publisher);
+        credentialSignerAddr = vm.addr(CREDENTIAL_SIGNER_KEY);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, credentialSignerAddr);
         vm.stopPrank();
     }
 
-    /// @dev Publish a credential root for the default provider (test helper)
+    /// @dev Publish a credential root for the default provider (test helper).
     function _publishCredentialRoot(bytes32 root) internal {
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "");
+        _publishCredentialRootSigned(DEFAULT_PROVIDER_ID, publisher, root, "", CREDENTIAL_SIGNER_KEY);
+    }
+
+    /// @dev Publish a credential root with explicit signer key + publisher EOA.
+    ///      Computes `notBefore = block.timestamp` and `notAfter = block.timestamp + 1 hour`.
+    function _publishCredentialRootSigned(
+        uint256 providerId,
+        address pub,
+        bytes32 root,
+        string memory cid,
+        uint256 signerKey
+    ) internal {
+        uint64 notBefore = uint64(block.timestamp);
+        uint64 notAfter = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(providerId, root, cid, notBefore, notAfter, signerKey);
+        vm.prank(pub);
+        oracle.publishCredentialRoot(providerId, root, cid, notBefore, notAfter, sig);
+    }
+
+    /// @dev Build an EIP-712 signature over a CredentialRootPublication for tests.
+    function _signCredentialRoot(
+        uint256 providerId,
+        bytes32 root,
+        string memory cid,
+        uint64 notBefore,
+        uint64 notAfter,
+        uint256 signerKey
+    ) internal view returns (bytes memory) {
+        bytes32 digest = EIP712CredentialRoot.toTypedDataHash(
+            EIP712CredentialRoot.buildDomainSeparator(address(oracle)),
+            providerId,
+            root,
+            keccak256(bytes(cid)),
+            notBefore,
+            notAfter
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     // -------------------------------------------------------------------------
@@ -322,11 +374,13 @@ contract XochiZKPOracleTest is Test {
     // -------------------------------------------------------------------------
 
     function test_submitCompliance_revert_jurisdictionMismatch() public {
-        // Public inputs say jurisdiction=0 (EU), but caller passes jurisdiction=1 (US)
+        // Public inputs say jurisdiction=0 (EU), but caller passes jurisdiction=2 (UK).
+        // Both are permissive (no signed-signals requirement) so PublicInputMismatch fires
+        // before any jurisdiction-policy check.
         bytes memory publicInputs = _complianceInputsFor(0, DEFAULT_PROVIDER_SET_HASH);
         vm.prank(alice);
         vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
-        oracle.submitCompliance(1, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
+        oracle.submitCompliance(2, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
     function test_submitCompliance_revert_providerSetHashMismatch() public {
@@ -380,13 +434,16 @@ contract XochiZKPOracleTest is Test {
     // -------------------------------------------------------------------------
 
     function test_concurrentAttestations_multipleJurisdictions() public {
-        // Alice submits compliance for EU (0), US (1), UK (2)
-        for (uint8 j; j < 3; j++) {
-            _submitForAlice(j);
+        // Alice submits unsigned COMPLIANCE for EU (0) and UK (2), the two permissive
+        // jurisdictions. US (1) and Singapore (3) require signed-signals proofs and
+        // are exercised by the COMPLIANCE_SIGNED test suite.
+        uint8[2] memory permissive = [uint8(0), uint8(2)];
+        for (uint256 i; i < permissive.length; i++) {
+            _submitForAlice(permissive[i]);
         }
 
-        // Each jurisdiction has independent valid attestation
-        for (uint8 j; j < 3; j++) {
+        for (uint256 i; i < permissive.length; i++) {
+            uint8 j = permissive[i];
             (bool valid, IXochiZKPOracle.ComplianceAttestation memory att) = oracle.checkCompliance(alice, j);
             assertTrue(valid);
             assertEq(att.jurisdictionId, j);
@@ -401,15 +458,15 @@ contract XochiZKPOracleTest is Test {
     function test_concurrentAttestations_independentExpiry() public {
         _submitForAlice(0); // EU
         vm.warp(block.timestamp + 12 hours);
-        _submitForAlice(1); // US (submitted 12h later)
+        _submitForAlice(2); // UK (submitted 12h later, also permissive)
 
-        // Fast forward to EU expiry but before US expiry
+        // Fast forward to EU expiry but before UK expiry
         vm.warp(block.timestamp + 12 hours + 1);
 
         (bool euValid,) = oracle.checkCompliance(alice, 0);
-        (bool usValid,) = oracle.checkCompliance(alice, 1);
+        (bool ukValid,) = oracle.checkCompliance(alice, 2);
         assertFalse(euValid); // expired
-        assertTrue(usValid); // still valid
+        assertTrue(ukValid); // still valid
     }
 
     // -------------------------------------------------------------------------
@@ -1076,62 +1133,66 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_publishCredentialRoot_succeeds() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root-v1");
 
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-
-        vm.prank(publisher);
         vm.expectEmit(true, true, false, true);
-        emit XochiZKPOracle.CredentialRootPublished(42, root, "ipfs://Qm...", block.timestamp);
-        oracle.publishCredentialRoot(42, root, "ipfs://Qm...");
+        emit XochiZKPOracle.CredentialRootPublished(DEFAULT_PROVIDER_ID, root, "ipfs://Qm...", block.timestamp);
+        _publishCredentialRootSigned(DEFAULT_PROVIDER_ID, publisher, root, "ipfs://Qm...", CREDENTIAL_SIGNER_KEY);
 
         assertTrue(oracle.isValidCredentialRoot(root));
         XochiZKPOracle.CredentialRootInfo memory info = oracle.getCredentialRoot(root);
-        assertEq(info.providerId, 42);
+        assertEq(info.providerId, DEFAULT_PROVIDER_ID);
         assertEq(uint256(info.registeredAt), block.timestamp);
         assertFalse(info.revoked);
     }
 
     function test_publishCredentialRoot_revert_notAuthorized() public {
-        address publisher = makeAddr("publisher");
+        // Owner cannot publish on behalf of provider (publisher EOA mismatch fires
+        // before the signature check).
+        bytes32 root = keccak256("r");
+        bytes memory sig = _signCredentialRoot(
+            DEFAULT_PROVIDER_ID,
+            root,
+            "",
+            uint64(block.timestamp),
+            uint64(block.timestamp + 1 hours),
+            CREDENTIAL_SIGNER_KEY
+        );
         vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-
-        // Owner cannot publish on behalf of provider
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, 42, owner));
-        oracle.publishCredentialRoot(42, keccak256("r"), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, owner)
+        );
+        oracle.publishCredentialRoot(
+            DEFAULT_PROVIDER_ID, root, "", uint64(block.timestamp), uint64(block.timestamp + 1 hours), sig
+        );
     }
 
     function test_publishCredentialRoot_revert_unsetProvider() public {
-        // Provider id never authorized
+        // Provider id never authorized -- publisher mapping is zero.
+        bytes memory sig = new bytes(65);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, 42, alice));
-        oracle.publishCredentialRoot(42, keccak256("r"), "");
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, 99, alice));
+        oracle.publishCredentialRoot(
+            99, keccak256("r"), "", uint64(block.timestamp), uint64(block.timestamp + 1 hours), sig
+        );
     }
 
     function test_publishCredentialRoot_revert_duplicateRoot() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
+        _publishCredentialRoot(root);
 
-        vm.startPrank(publisher);
-        oracle.publishCredentialRoot(42, root, "");
+        // Attempt to republish: signature is fresh, but the root already exists.
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+        vm.prank(publisher);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialRootAlreadyPublished.selector, root));
-        oracle.publishCredentialRoot(42, root, "");
-        vm.stopPrank();
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
     function test_credentialRoot_expiresAfterTTL() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, root, "");
+        _publishCredentialRoot(root);
 
         assertTrue(oracle.isValidCredentialRoot(root));
         // Just before TTL: still valid
@@ -1143,12 +1204,8 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_revokeCredentialRoot_byOwner() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, root, "");
+        _publishCredentialRoot(root);
 
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
@@ -1159,12 +1216,8 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_revokeCredentialRoot_byPublisher() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, root, "");
+        _publishCredentialRoot(root);
 
         vm.prank(publisher);
         oracle.revokeCredentialRoot(root);
@@ -1173,15 +1226,13 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_revokeCredentialRoot_revert_notAuthorized() public {
-        address publisher = makeAddr("publisher");
         bytes32 root = keccak256("root");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, root, "");
+        _publishCredentialRoot(root);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, 42, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, alice)
+        );
         oracle.revokeCredentialRoot(root);
     }
 
@@ -1194,21 +1245,217 @@ contract XochiZKPOracleTest is Test {
 
     function test_credentialRoot_overlapWindow() public {
         // Publish v1 then v2 within TTL: both remain provable simultaneously.
-        address publisher = makeAddr("publisher");
         bytes32 r1 = keccak256("r1");
         bytes32 r2 = keccak256("r2");
-        vm.prank(owner);
-        oracle.setProviderPublisher(42, publisher);
 
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, r1, "");
+        _publishCredentialRoot(r1);
 
         vm.warp(block.timestamp + 6 hours);
-        vm.prank(publisher);
-        oracle.publishCredentialRoot(42, r2, "");
+        _publishCredentialRoot(r2);
 
         assertTrue(oracle.isValidCredentialRoot(r1));
         assertTrue(oracle.isValidCredentialRoot(r2));
+    }
+
+    // -------------------------------------------------------------------------
+    // Credential signer registry + signed publish flow (audit C-1 closure)
+    // -------------------------------------------------------------------------
+
+    uint256 internal constant ATTACKER_KEY = uint256(keccak256("xochi-test-attacker"));
+    uint256 internal constant ROTATED_SIGNER_KEY = uint256(keccak256("xochi-test-rotated-signer"));
+
+    function test_setCredentialSigner_emitsEvent() public {
+        address newSigner = makeAddr("new-signer");
+        address previous = oracle.getCredentialSigner(DEFAULT_PROVIDER_ID);
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, false);
+        emit XochiZKPOracle.CredentialSignerSet(DEFAULT_PROVIDER_ID, previous, newSigner);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, newSigner);
+
+        assertEq(oracle.getCredentialSigner(DEFAULT_PROVIDER_ID), newSigner);
+    }
+
+    function test_setCredentialSigner_revert_zeroProviderId() public {
+        vm.prank(owner);
+        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        oracle.setCredentialSigner(0, makeAddr("s"));
+    }
+
+    function test_setCredentialSigner_revert_notRegistrar() public {
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, makeAddr("s"));
+    }
+
+    function test_publishCredentialRoot_revert_signerNotSet() public {
+        // Provider with publisher set but no credential signer.
+        uint256 pid = 99;
+        address pub99 = makeAddr("pub99");
+        vm.prank(owner);
+        oracle.setProviderPublisher(pid, pub99);
+
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(pid, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        vm.prank(pub99);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignerNotSet.selector, pid));
+        oracle.publishCredentialRoot(pid, root, "", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_wrongSigner() public {
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        // Sign with the attacker's key, not the registered signer.
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, ATTACKER_KEY);
+
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_tamperedRoot() public {
+        bytes32 signedRoot = keccak256("signed-root");
+        bytes32 swappedRoot = keccak256("swapped-root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        // Signature is over signedRoot; publisher tries to use it for swappedRoot.
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, signedRoot, "", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, swappedRoot, "", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_tamperedCid() public {
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        // Signature is over cid="ipfs://A"; publisher submits with cid="ipfs://B".
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "ipfs://A", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "ipfs://B", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_outsideWindow_before() public {
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp + 1 hours);
+        uint64 na = uint64(block.timestamp + 2 hours);
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        vm.prank(publisher);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignatureOutOfWindow.selector, nb, na));
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_outsideWindow_after() public {
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        // Warp past notAfter and try to publish.
+        vm.warp(uint256(na) + 1);
+        vm.prank(publisher);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignatureOutOfWindow.selector, nb, na));
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
+    }
+
+    function test_publishCredentialRoot_revert_invalidSignatureLength() public {
+        bytes32 root = keccak256("root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory shortSig = new bytes(64);
+
+        vm.prank(publisher);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignatureLength.selector, 64));
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, shortSig);
+    }
+
+    /// @notice C-1 regression: a compromised publisher EOA cannot mint credential
+    ///         roots without holding the credential signing key. Models the threat
+    ///         the two-key separation closes.
+    function test_publishCredentialRoot_compromisedPublisher_cannotForge() public {
+        // The "compromised publisher" attempts to publish with a signature from
+        // their own key. The Oracle's signer registry resolves to the legitimate
+        // credential signer, not the publisher EOA, so the signature does not
+        // recover to the registered signer and the publish reverts.
+        uint256 publisherKey = uint256(keccak256("compromised-publisher-key"));
+        address publisherEoa = vm.addr(publisherKey);
+        uint256 pid = 1234;
+
+        vm.startPrank(owner);
+        oracle.setProviderPublisher(pid, publisherEoa);
+        oracle.setCredentialSigner(pid, vm.addr(CREDENTIAL_SIGNER_KEY));
+        vm.stopPrank();
+
+        bytes32 root = keccak256("forged-root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(pid, root, "", nb, na, publisherKey);
+
+        vm.prank(publisherEoa);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(pid, root, "", nb, na, sig);
+    }
+
+    function test_setCredentialSigner_rotation_oldSigRejected() public {
+        // Rotate the signer; signatures from the old key must be rejected for
+        // new publishes.
+        bytes32 root = keccak256("post-rotation-root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+
+        // Rotate
+        vm.prank(owner);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, vm.addr(ROTATED_SIGNER_KEY));
+
+        // Old key tries to sign a new root: rejected.
+        bytes memory oldSig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, oldSig);
+
+        // New key signs same root: accepted.
+        bytes memory newSig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, ROTATED_SIGNER_KEY);
+        vm.prank(publisher);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, newSig);
+        assertTrue(oracle.isValidCredentialRoot(root));
+    }
+
+    function test_setCredentialSigner_rotation_priorRootsStillProvable() public {
+        // Roots published with the old key remain valid after rotation; only
+        // *new* publishes need the new key.
+        bytes32 oldRoot = keccak256("pre-rotation-root");
+        _publishCredentialRoot(oldRoot);
+        assertTrue(oracle.isValidCredentialRoot(oldRoot));
+
+        vm.prank(owner);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, vm.addr(ROTATED_SIGNER_KEY));
+
+        // Same root remains provable -- registry lookup is by root, not by signer.
+        assertTrue(oracle.isValidCredentialRoot(oldRoot));
+    }
+
+    function test_setCredentialSigner_disable_blocksFuturePublishes() public {
+        // Setting signer to address(0) trips the CredentialSignerNotSet guard
+        // for any future publish, even with a previously-valid signature.
+        vm.prank(owner);
+        oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, address(0));
+
+        bytes32 root = keccak256("post-disable-root");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
+
+        vm.prank(publisher);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignerNotSet.selector, DEFAULT_PROVIDER_ID));
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
     // -------------------------------------------------------------------------
@@ -1595,7 +1842,10 @@ contract XochiZKPOracleTest is Test {
     }
 
     function testFuzz_replayAlwaysReverts(uint8 jurisdictionId) public {
-        jurisdictionId = uint8(bound(jurisdictionId, 0, 3));
+        // Test exercises replay protection on unsigned COMPLIANCE; bound to permissive
+        // jurisdictions (EU=0, UK=2) since strict ones (US, SG) reject the unsigned variant.
+        uint8[2] memory permissive = [uint8(0), uint8(2)];
+        jurisdictionId = permissive[uint256(bound(jurisdictionId, 0, 1))];
         bytes memory proof = _uniqueProof();
         bytes memory publicInputs = _complianceInputsFor(jurisdictionId, DEFAULT_PROVIDER_SET_HASH);
 
@@ -1611,7 +1861,8 @@ contract XochiZKPOracleTest is Test {
     }
 
     function testFuzz_attestationFieldsConsistent(uint8 jurisdictionId) public {
-        jurisdictionId = uint8(bound(jurisdictionId, 0, 3));
+        uint8[2] memory permissive = [uint8(0), uint8(2)];
+        jurisdictionId = permissive[uint256(bound(jurisdictionId, 0, 1))];
         bytes memory proof = _uniqueProof();
         bytes memory publicInputs = _complianceInputsFor(jurisdictionId, DEFAULT_PROVIDER_SET_HASH);
 
@@ -1880,10 +2131,10 @@ contract XochiZKPOracleTest is Test {
         oracle.submitCompliance(0, 0x00, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
-    function test_submitCompliance_revert_unknownProofType_seven() public {
+    function test_submitCompliance_revert_unknownProofType_nine() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x07));
-        oracle.submitCompliance(0, 0x07, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
+        oracle.submitCompliance(0, 0x09, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
     // -------------------------------------------------------------------------
@@ -1999,7 +2250,8 @@ contract XochiZKPOracleTest is Test {
     }
 
     function testFuzz_submitCompliance_revert_unknownProofType(uint8 proofType) public {
-        vm.assume(proofType == 0 || proofType > 6);
+        // 0x07/0x08 are valid (signed variants); 0x09+ are out of range.
+        vm.assume(proofType == 0 || proofType > 8);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
         oracle.submitCompliance(0, proofType, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
@@ -2010,7 +2262,9 @@ contract XochiZKPOracleTest is Test {
     // -------------------------------------------------------------------------
 
     function testFuzz_submitCompliance_validJurisdictionPermutations(uint8 j) public {
-        j = uint8(bound(j, 0, 3));
+        // Unsigned COMPLIANCE only valid for permissive jurisdictions.
+        uint8[2] memory permissive = [uint8(0), uint8(2)];
+        j = permissive[uint256(bound(j, 0, 1))];
         bytes memory proof = _uniqueProof();
         bytes memory publicInputs = _complianceInputsFor(j, DEFAULT_PROVIDER_SET_HASH);
 
@@ -2332,6 +2586,209 @@ contract XochiZKPOracleTest is Test {
     }
 
     // -------------------------------------------------------------------------
+    // Signer pubkey hash registry (audit I-1)
+    // -------------------------------------------------------------------------
+
+    bytes32 internal constant TEST_SIGNER_PUBKEY_HASH = bytes32(uint256(0x5111));
+    bytes32 internal constant OTHER_SIGNER_PUBKEY_HASH = bytes32(uint256(0x5222));
+
+    function test_registerSignerPubkeyHash_happy() public {
+        assertFalse(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, false);
+        emit XochiZKPOracle.SignerPubkeyHashRegistered(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        assertTrue(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
+    }
+
+    function test_registerSignerPubkeyHash_revert_zero() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, bytes32(0)));
+        oracle.registerSignerPubkeyHash(bytes32(0));
+    }
+
+    function test_registerSignerPubkeyHash_revert_alreadyRegistered() public {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.expectRevert(XochiZKPOracle.AlreadyRegistered.selector);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.stopPrank();
+    }
+
+    function test_registerSignerPubkeyHash_revert_notRegistrar() public {
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+    }
+
+    function test_revokeSignerPubkeyHash_happy() public {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.expectEmit(true, false, false, false);
+        emit XochiZKPOracle.SignerPubkeyHashRevoked(TEST_SIGNER_PUBKEY_HASH);
+        oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.stopPrank();
+        assertFalse(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
+    }
+
+    function test_revokeSignerPubkeyHash_revert_notRegistered() public {
+        vm.prank(owner);
+        vm.expectRevert(XochiZKPOracle.NotRegistered.selector);
+        oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+    }
+
+    function test_revokeSignerPubkeyHash_revert_notRegistrar() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+    }
+
+    // -------------------------------------------------------------------------
+    // COMPLIANCE_SIGNED submission paths
+    // -------------------------------------------------------------------------
+
+    function test_submitCompliance_signed_happy() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.proofType, ProofTypes.COMPLIANCE_SIGNED);
+        assertEq(att.providerSetHash, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_signed_revert_unregisteredSignerPubkeyHash() public {
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, OTHER_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
+        );
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_signed_revert_revokedSignerPubkeyHash() public {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.stopPrank();
+
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, TEST_SIGNER_PUBKEY_HASH)
+        );
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_signed_revert_submitterMismatch() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        // Inputs claim alice; caller is bob. Submitter check fires inside the signed validator.
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        address bob = makeAddr("bob");
+        vm.prank(bob);
+        vm.expectRevert(XochiZKPOracle.SubmitterMismatch.selector);
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    // -------------------------------------------------------------------------
+    // RISK_SCORE_SIGNED submission paths
+    // -------------------------------------------------------------------------
+
+    function test_submitCompliance_riskScoreSigned_happy() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(0, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
+        // RISK_SCORE-class proofs do not carry providerSetHash on the attestation.
+        assertEq(att.providerSetHash, bytes32(0));
+    }
+
+    function test_submitCompliance_riskScoreSigned_revert_unregisteredSignerPubkeyHash() public {
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, OTHER_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
+        );
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    // -------------------------------------------------------------------------
+    // Jurisdiction-flag enforcement (US, SG strict; EU, UK permissive)
+    // -------------------------------------------------------------------------
+
+    function test_strictJurisdiction_rejects_unsignedCompliance() public {
+        bytes memory inputs = _complianceInputsFor(
+            1,
+            /* US */
+            DEFAULT_PROVIDER_SET_HASH,
+            alice
+        );
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.SignedSignalsRequired.selector, 1, ProofTypes.COMPLIANCE));
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_strictJurisdiction_rejects_unsignedRiskScore() public {
+        bytes memory inputs = _riskScoreInputs(INITIAL_CONFIG);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.SignedSignalsRequired.selector, 3, ProofTypes.RISK_SCORE));
+        oracle.submitCompliance(
+            3,
+            /* SG */
+            ProofTypes.RISK_SCORE,
+            _uniqueProof(),
+            inputs,
+            DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_strictJurisdiction_acceptsSignedCompliance() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _complianceSignedInputs(
+            1,
+            /* US */
+            DEFAULT_PROVIDER_SET_HASH,
+            TEST_SIGNER_PUBKEY_HASH,
+            alice
+        );
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.jurisdictionId, 1);
+    }
+
+    function test_permissiveJurisdiction_acceptsSignedCompliance() public {
+        // Permissive jurisdictions also accept signed proofs (signed is a stricter
+        // proof and never rejected on policy grounds).
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _complianceSignedInputs(
+            0,
+            /* EU */
+            DEFAULT_PROVIDER_SET_HASH,
+            TEST_SIGNER_PUBKEY_HASH,
+            alice
+        );
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.jurisdictionId, 0);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -2390,6 +2847,43 @@ contract XochiZKPOracleTest is Test {
             INITIAL_CONFIG, // config_hash
             bytes32(block.timestamp), // timestamp
             bytes32(uint256(1)), // meets_threshold
+            bytes32(uint256(uint160(submitter))) // submitter
+        );
+    }
+
+    /// @dev COMPLIANCE_SIGNED public inputs (7 slots: compliance + signer_pubkey_hash)
+    function _complianceSignedInputs(
+        uint8 jurisdictionId,
+        bytes32 providerSetHash,
+        bytes32 signerPubkeyHash,
+        address submitter
+    ) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            bytes32(uint256(jurisdictionId)), // jurisdiction_id
+            providerSetHash, // provider_set_hash
+            INITIAL_CONFIG, // config_hash
+            bytes32(block.timestamp), // timestamp
+            bytes32(uint256(1)), // meets_threshold
+            signerPubkeyHash, // signer_pubkey_hash
+            bytes32(uint256(uint160(submitter))) // submitter
+        );
+    }
+
+    /// @dev RISK_SCORE_SIGNED public inputs (9 slots: risk_score + signer_pubkey_hash)
+    function _riskScoreSignedInputs(bytes32 configHash, bytes32 signerPubkeyHash, address submitter)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodePacked(
+            bytes32(uint256(1)), // proof_type: threshold
+            bytes32(uint256(1)), // direction: GT
+            bytes32(uint256(5000)), // bound_lower
+            bytes32(uint256(0)), // bound_upper
+            bytes32(uint256(1)), // result
+            configHash, // config_hash
+            bytes32(uint256(0xeeff)), // provider_set_hash
+            signerPubkeyHash, // signer_pubkey_hash
             bytes32(uint256(uint160(submitter))) // submitter
         );
     }

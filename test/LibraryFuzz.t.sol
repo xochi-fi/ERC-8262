@@ -68,7 +68,7 @@ contract LibraryFuzzTest is Test {
     }
 
     function testFuzz_validatePublicInputs_revert_wrongCount(uint8 proofType, uint8 extraSlots) public {
-        proofType = uint8(bound(proofType, 1, 6));
+        proofType = uint8(bound(proofType, 1, 8));
         extraSlots = uint8(bound(extraSlots, 1, 10));
         uint256 expected = proofTypes.expectedPublicInputCount(proofType);
         uint256 wrongCount = expected + extraSlots;
@@ -80,12 +80,18 @@ contract LibraryFuzzTest is Test {
     }
 
     function testFuzz_validatePublicInputs_revert_unaligned(uint8 proofType, uint8 extraBytes) public {
-        proofType = uint8(bound(proofType, 1, 6));
+        proofType = uint8(bound(proofType, 1, 8));
         extraBytes = uint8(bound(extraBytes, 1, 31));
         uint256 expected = proofTypes.expectedPublicInputCount(proofType);
         bytes memory packed = new bytes(expected * 32 + extraBytes);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, packed.length));
         proofTypes.validatePublicInputs(proofType, packed);
+    }
+
+    function test_expectedPublicInputCount_signedVariants() public view {
+        // Signed variants add a single signer_pubkey_hash slot to their unsigned siblings.
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 7);
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 9);
     }
 
     // -------------------------------------------------------------------------

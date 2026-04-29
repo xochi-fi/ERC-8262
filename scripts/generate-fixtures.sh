@@ -28,11 +28,6 @@ generate_fixture() {
     local circuit="$1"
     local circuit_dir="$CIRCUITS_DIR/$circuit"
 
-    if [[ ! -f "$circuit_dir/Prover.toml" ]]; then
-        echo "skip: $circuit (no Prover.toml)"
-        return
-    fi
-
     echo "--- $circuit ---"
 
     # Compile if needed (nargo 1.0.0-beta.20 writes to workspace target/)
@@ -48,6 +43,33 @@ generate_fixture() {
         if [[ ! -f "$circuit_json" ]]; then
             circuit_json="$circuit_dir/target/$circuit.json"
         fi
+    fi
+
+    # Verifier-only mode for circuits without Prover.toml.
+    # The signed-variant circuits (compliance_signed, risk_score_signed) require an
+    # off-chain ECDSA signature over an in-circuit Pedersen digest to populate
+    # Prover.toml; until that signing helper lands, we generate the verifier from
+    # the VK only and skip proof/fixture generation.
+    if [[ ! -f "$circuit_dir/Prover.toml" ]]; then
+        echo "  no Prover.toml -- verifier-only mode"
+        local vk_dir="$circuit_dir/target/vk"
+        rm -r "$vk_dir" 2>/dev/null || true
+        mkdir -p "$vk_dir"
+        "$BB" write_vk \
+            -b "$circuit_json" \
+            -t evm \
+            -o "$vk_dir"
+        echo "  generating solidity verifier..."
+        "$BB" write_solidity_verifier \
+            -k "$vk_dir/vk" \
+            -o "$circuit_dir/target/${circuit}_verifier.sol"
+        local verifier_name
+        verifier_name=$(_contract_name "$circuit")
+        cp "$circuit_dir/target/${circuit}_verifier.sol" "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
+        sed -i '' "s/contract HonkVerifier is/contract ${verifier_name} is/" \
+            "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
+        echo "  done: verifier=${verifier_name}"
+        return
     fi
 
     # Generate witness (nargo 1.0.0-beta.20 writes to workspace target/)
@@ -105,13 +127,15 @@ generate_fixture() {
 
 _contract_name() {
     case "$1" in
-        compliance)        echo "ComplianceVerifier" ;;
-        risk_score)        echo "RiskScoreVerifier" ;;
-        pattern)           echo "PatternVerifier" ;;
-        attestation)       echo "AttestationVerifier" ;;
-        membership)        echo "MembershipVerifier" ;;
-        non_membership)    echo "NonMembershipVerifier" ;;
-        *)                 echo "HonkVerifier" ;;
+        compliance)         echo "ComplianceVerifier" ;;
+        compliance_signed)  echo "ComplianceSignedVerifier" ;;
+        risk_score)         echo "RiskScoreVerifier" ;;
+        risk_score_signed)  echo "RiskScoreSignedVerifier" ;;
+        pattern)            echo "PatternVerifier" ;;
+        attestation)        echo "AttestationVerifier" ;;
+        membership)         echo "MembershipVerifier" ;;
+        non_membership)     echo "NonMembershipVerifier" ;;
+        *)                  echo "HonkVerifier" ;;
     esac
 }
 

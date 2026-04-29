@@ -15,9 +15,9 @@ ERC Xochi ZKP: a standard for zero-knowledge compliance proofs on Ethereum. User
 
 ```bash
 make build                     # compile contracts + circuits
-make test                      # run Solidity tests (327)
-make test-noir                 # run Noir circuit tests (77, workspace)
-make test-sdk                  # run TS consumer SDK tests (28 + 7 todo)
+make test                      # run Solidity tests (450)
+make test-noir                 # run Noir circuit tests (87, workspace)
+make test-sdk                  # run TS consumer SDK tests (in test/sdk/)
 make test-all                  # run all tests
 make fmt                       # format Solidity
 make fmt-check                 # check formatting (CI/pre-commit)
@@ -49,33 +49,32 @@ cd circuits/<name> && nargo test           # run a single circuit's tests
 
 Nargo workspace at `circuits/Nargo.toml`. Each proof type is a separate Noir project:
 
-- `circuits/shared/`: shared library split into modules (hash, merkle, risk, providers, constants)
-- `circuits/compliance/`: main compliance proof (jurisdiction-aware risk score check)
-- `circuits/risk_score/`: standalone risk score proof (threshold GT/LT, range)
+- `circuits/shared/`: shared library (hash, merkle, risk, providers, sig, constants, validation). The `sig` module powers in-circuit ECDSA-secp256k1 verification of provider-signed signals.
+- `circuits/compliance/`: jurisdiction-aware compliance proof
+- `circuits/compliance_signed/`: same plus an in-circuit provider signature over the screening payload
+- `circuits/risk_score/`: raw risk-score proof (threshold GT/LT, range)
+- `circuits/risk_score_signed/`: signed variant of risk_score
 - `circuits/pattern/`: pattern detection (anti-structuring, velocity, round amounts)
 - `circuits/attestation/`: credential verification (KYC tier, accreditation)
 - `circuits/membership/`: Merkle inclusion proof
-- `circuits/non_membership/`: sorted Merkle adjacency proof (u64 range-checked)
+- `circuits/non_membership/`: sorted Merkle adjacency proof (full-Field comparison, no u64 truncation)
 
-Note: `compliance` and `risk_score` both use `compute_risk_score()` from shared but serve
-different purposes. Compliance is the primary proof (jurisdiction-aware, provider-committed,
-timestamp-bound). Risk score is a raw scoring primitive for custom integrations (no jurisdiction,
-supports GT/LT/range). This is intentional composition, not duplication.
+`compliance` and `risk_score` both use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof (provider-committed, timestamp-bound). Risk score is a raw scoring primitive for custom integrations (no jurisdiction, supports GT/LT/range). The `_signed` variants add a secp256k1 ECDSA verify in-circuit over a Pedersen digest of `(provider_set_hash, signals, weights, timestamp, submitter)`. Same semantics as their unsigned siblings; one extra public input (`signer_pubkey_hash`) the Oracle validates against an on-chain registry.
 
 ## Proof Types
 
-Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts below are
-_logical_ inputs (what the circuit's `main()` declares as `pub`). The generated UltraHonk
-verifiers see more inputs because Noir flattens arrays into individual field elements.
+Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts are _logical_ inputs (what the circuit's `main()` declares as `pub`). The generated UltraHonk verifiers see 16 more inputs per type because Noir flattens arrays into individual field elements (`NUMBER_OF_PUBLIC_INPUTS - 16 == logical count`).
 
-| ID   | ProofType      | Circuit        | Logical Public Inputs |
-| ---- | -------------- | -------------- | --------------------- |
-| 0x01 | COMPLIANCE     | compliance     | 6                     |
-| 0x02 | RISK_SCORE     | risk_score     | 8                     |
-| 0x03 | PATTERN        | pattern        | 6                     |
-| 0x04 | ATTESTATION    | attestation    | 6                     |
-| 0x05 | MEMBERSHIP     | membership     | 5                     |
-| 0x06 | NON_MEMBERSHIP | non_membership | 5                     |
+| ID   | ProofType         | Circuit           | Logical Public Inputs               |
+| ---- | ----------------- | ----------------- | ----------------------------------- |
+| 0x01 | COMPLIANCE        | compliance        | 6                                   |
+| 0x02 | RISK_SCORE        | risk_score        | 8                                   |
+| 0x03 | PATTERN           | pattern           | 6                                   |
+| 0x04 | ATTESTATION       | attestation       | 6                                   |
+| 0x05 | MEMBERSHIP        | membership        | 5                                   |
+| 0x06 | NON_MEMBERSHIP    | non_membership    | 5                                   |
+| 0x07 | COMPLIANCE_SIGNED | compliance_signed | 7 (compliance + signer_pubkey_hash) |
+| 0x08 | RISK_SCORE_SIGNED | risk_score_signed | 9 (risk_score + signer_pubkey_hash) |
 
 ## Conventions
 
@@ -92,11 +91,16 @@ verifiers see more inputs because Noir flattens arrays into individual field ele
 
 The Oracle validates public inputs for every proof type via on-chain registries:
 
-- `_validConfigs`:provider config hashes (append-only + revocable, current config cannot be revoked)
-- `_validMerkleRoots`:merkle roots for MEMBERSHIP/NON_MEMBERSHIP/ATTESTATION proofs
-- `_validReportingThresholds`:reporting thresholds for PATTERN proofs
+- `_validConfigs`: provider config hashes (append-only + revocable; current config cannot be revoked)
+- `_validMerkleRoots`: merkle roots for MEMBERSHIP / NON_MEMBERSHIP proofs
+- `_validReportingThresholds`: reporting thresholds for PATTERN proofs
+- `_credentialRoots`: per-provider credentials trees for ATTESTATION (48h TTL, publisher-EOA gated)
+- `_validSignerPubkeyHashes`: secp256k1 signer pubkey commitments for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED
+- `_credentialSigner`: per-provider credential-root signing key for ATTESTATION (separate from publisher EOA)
 
-Admin functions: `registerMerkleRoot`, `revokeMerkleRoot`, `registerReportingThreshold`, `revokeReportingThreshold`, `revokeConfig`, `updateProviderConfig`
+Per-jurisdiction policy: `JurisdictionConfig.requireSignedSignals(uint8)` returns true for US (BSA) and Singapore. The Oracle's submission dispatcher rejects unsigned COMPLIANCE / RISK_SCORE for those jurisdictions with `SignedSignalsRequired`.
+
+Admin functions: `registerMerkleRoot`, `revokeMerkleRoot`, `registerReportingThreshold`, `revokeReportingThreshold`, `revokeConfig`, `updateProviderConfig`, `setProviderPublisher`, `setCredentialSigner`, `publishCredentialRoot` (publisher), `revokeCredentialRoot`, `registerSignerPubkeyHash`, `revokeSignerPubkeyHash`.
 
 ## TypeScript SDK Test
 

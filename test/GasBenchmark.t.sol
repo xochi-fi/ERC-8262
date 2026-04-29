@@ -6,6 +6,7 @@ import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
 import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
 import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
+import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 
 /// @title Gas benchmarks for per-proof-type verification and Oracle submission
 /// @notice Uses real UltraHonk proofs from test/fixtures/ for accurate gas measurement.
@@ -52,17 +53,35 @@ contract GasBenchmarkTest is Test {
         oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
         oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
-        // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign)
+        // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
+        // Two-key separation: publisher EOA for tx submission; separate signer for content auth.
         oracle.setProviderPublisher(FIXTURE_PROVIDER_ID, publisher);
+        oracle.setCredentialSigner(FIXTURE_PROVIDER_ID, vm.addr(GAS_BENCH_CREDENTIAL_SIGNER_KEY));
         vm.stopPrank();
 
         // Warp BEFORE publishing the credential root so its registeredAt aligns with
         // the proof timestamp baked into the fixtures (1700000000).
         vm.warp(1700000000);
 
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+        bytes32 digest = EIP712CredentialRoot.toTypedDataHash(
+            EIP712CredentialRoot.buildDomainSeparator(address(oracle)),
+            FIXTURE_PROVIDER_ID,
+            FIXTURE_TIER_MERKLE_ROOT,
+            keccak256(""),
+            nb,
+            na
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(GAS_BENCH_CREDENTIAL_SIGNER_KEY, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
         vm.prank(publisher);
-        oracle.publishCredentialRoot(FIXTURE_PROVIDER_ID, FIXTURE_TIER_MERKLE_ROOT, "");
+        oracle.publishCredentialRoot(FIXTURE_PROVIDER_ID, FIXTURE_TIER_MERKLE_ROOT, "", nb, na, sig);
     }
+
+    uint256 internal constant GAS_BENCH_CREDENTIAL_SIGNER_KEY =
+        uint256(keccak256("xochi-gas-benchmark-credential-signer"));
 
     // -------------------------------------------------------------------------
     // verifyProof gas per proof type (verifier only, no storage)

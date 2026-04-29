@@ -9,7 +9,9 @@ import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 // Force generated verifiers into the script's build graph so vm.getCode can find them.
 // `forge script` only builds files reachable from the script's imports.
 import {ComplianceVerifier} from "../src/generated/compliance_verifier.sol";
+import {ComplianceSignedVerifier} from "../src/generated/compliance_signed_verifier.sol";
 import {RiskScoreVerifier} from "../src/generated/risk_score_verifier.sol";
+import {RiskScoreSignedVerifier} from "../src/generated/risk_score_signed_verifier.sol";
 import {PatternVerifier} from "../src/generated/pattern_verifier.sol";
 import {AttestationVerifier} from "../src/generated/attestation_verifier.sol";
 import {MembershipVerifier} from "../src/generated/membership_verifier.sol";
@@ -100,6 +102,21 @@ contract Deploy is Script {
             address(new NonMembershipVerifier{salt: keccak256(abi.encodePacked(baseSalt, "NonMembershipVerifier"))}());
         verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, nonMembershipVerifier);
         console.log("  NonMembershipVerifier:", nonMembershipVerifier);
+
+        // Provider-signed variants close audit finding I-1. Strict-mode jurisdictions
+        // (US BSA, Singapore) reject the unsigned siblings; permissive jurisdictions
+        // accept either. See JurisdictionConfig.requireSignedSignals.
+        address complianceSignedVerifier = address(
+            new ComplianceSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceSignedVerifier"))}()
+        );
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_SIGNED, complianceSignedVerifier);
+        console.log("  ComplianceSignedVerifier:", complianceSignedVerifier);
+
+        address riskScoreSignedVerifier = address(
+            new RiskScoreSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "RiskScoreSignedVerifier"))}()
+        );
+        verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, riskScoreSignedVerifier);
+        console.log("  RiskScoreSignedVerifier:", riskScoreSignedVerifier);
 
         // 4. Optional: deploy XochiTimelock and transfer ownership to it.
         //    For production deployments, this is strongly recommended -- the timelock

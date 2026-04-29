@@ -28,6 +28,9 @@ import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
 ///                           e.g., "10000,5000"
 ///   MERKLE_ROOTS         -- comma-separated list of merkle roots (bytes32 hex) to register
 ///                           e.g., "0xabcd...,0x1234..."
+///   SIGNER_PUBKEY_HASHES -- comma-separated list of signer pubkey hashes (bytes32 hex)
+///                           authorized for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs.
+///                           e.g., "0xabcd...,0x1234..."
 ///
 /// Examples:
 ///   ORACLE_ADDRESS=0x... REPORTING_THRESHOLDS=10000 forge script script/Bootstrap.s.sol --broadcast
@@ -46,6 +49,7 @@ contract Bootstrap is Script {
         _bootstrapProviders(oracle);
         _bootstrapReportingThresholds(oracle);
         _bootstrapMerkleRoots(oracle);
+        _bootstrapSignerPubkeyHashes(oracle);
 
         vm.stopBroadcast();
 
@@ -103,6 +107,22 @@ contract Bootstrap is Script {
             oracle.registerMerkleRoot(root);
             console.log("Registered merkle root:");
             console.logBytes32(root);
+        }
+    }
+
+    /// @dev Register signer pubkey hashes for provider-signed-signals proofs (audit I-1).
+    function _bootstrapSignerPubkeyHashes(XochiZKPOracle oracle) internal {
+        string memory raw = vm.envOr("SIGNER_PUBKEY_HASHES", string(""));
+        if (bytes(raw).length == 0) {
+            console.log("No SIGNER_PUBKEY_HASHES; skipping signer pubkey hash registration.");
+            return;
+        }
+        string[] memory parts = vm.split(raw, ",");
+        for (uint256 i; i < parts.length; i++) {
+            bytes32 hash = vm.parseBytes32(parts[i]);
+            oracle.registerSignerPubkeyHash(hash);
+            console.log("Registered signer pubkey hash:");
+            console.logBytes32(hash);
         }
     }
 }
