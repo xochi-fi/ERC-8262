@@ -30,9 +30,14 @@ contract GasBenchmarkTest is Test {
     bytes32 internal constant FIXTURE_TIER_MERKLE_ROOT =
         0x24ce58f9ed6ca066d25f66b15b0eb1dccebe6e457f5aa0fcd353d82d539f5ed5;
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH);
+        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         string[6] memory circuits =
             ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];

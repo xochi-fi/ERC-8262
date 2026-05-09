@@ -29,9 +29,18 @@ contract ProviderDenylistTest is Test {
     uint256 internal constant CHAINALYSIS = 2;
     uint256 internal constant TRM = 3;
 
+    /// @dev Initial provider expansion registered in the constructor (audit F-2).
+    ///      INITIAL_CONFIG commits to {SUMSUB, CHAINALYSIS, TRM} for all tests below.
+    function _initialProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](3);
+        ps[0] = SUMSUB;
+        ps[1] = CHAINALYSIS;
+        ps[2] = TRM;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _initialProviders());
         stub = new AlwaysPassVerifier();
 
         vm.startPrank(owner);
@@ -61,18 +70,10 @@ contract ProviderDenylistTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // registerProviderConfigExpansion
+    // Atomic constructor + updateProviderConfig expansion (audit F-2)
     // -------------------------------------------------------------------------
 
-    function test_registerExpansion_storesProviders() public {
-        uint256[] memory providers = new uint256[](3);
-        providers[0] = SUMSUB;
-        providers[1] = CHAINALYSIS;
-        providers[2] = TRM;
-
-        vm.prank(owner);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
-
+    function test_constructor_storesInitialExpansion() public view {
         uint256[] memory stored = oracle.getProviderConfigExpansion(INITIAL_CONFIG);
         assertEq(stored.length, 3);
         assertEq(stored[0], SUMSUB);
@@ -80,50 +81,59 @@ contract ProviderDenylistTest is Test {
         assertEq(stored[2], TRM);
     }
 
-    function test_registerExpansion_revert_invalidConfig() public {
-        uint256[] memory providers = new uint256[](1);
-        providers[0] = SUMSUB;
-
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, keccak256("nope")));
-        oracle.registerProviderConfigExpansion(keccak256("nope"), providers);
-    }
-
-    function test_registerExpansion_revert_alreadySet() public {
-        uint256[] memory providers = new uint256[](1);
-        providers[0] = SUMSUB;
-
-        vm.startPrank(owner);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ConfigExpansionAlreadySet.selector, INITIAL_CONFIG));
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
-        vm.stopPrank();
-    }
-
-    function test_registerExpansion_revert_emptySet() public {
-        uint256[] memory providers = new uint256[](0);
-        vm.prank(owner);
+    function test_constructor_revert_emptyInitialExpansion() public {
+        XochiZKPVerifier v = new XochiZKPVerifier(owner);
+        uint256[] memory empty = new uint256[](0);
         vm.expectRevert(XochiZKPOracle.EmptyProviderExpansion.selector);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
+        new XochiZKPOracle(address(v), owner, INITIAL_CONFIG, empty);
     }
 
-    function test_registerExpansion_revert_zeroProviderId() public {
+    function test_constructor_revert_zeroProviderInInitialExpansion() public {
+        XochiZKPVerifier v = new XochiZKPVerifier(owner);
+        uint256[] memory bad = new uint256[](2);
+        bad[0] = SUMSUB;
+        bad[1] = 0;
+        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        new XochiZKPOracle(address(v), owner, INITIAL_CONFIG, bad);
+    }
+
+    function test_updateProviderConfig_storesExpansionAtomically() public {
+        bytes32 v2 = keccak256("v2");
         uint256[] memory providers = new uint256[](2);
         providers[0] = SUMSUB;
-        providers[1] = 0;
+        providers[1] = CHAINALYSIS;
 
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
+        oracle.updateProviderConfig(v2, "ipfs://v2", providers);
+
+        uint256[] memory stored = oracle.getProviderConfigExpansion(v2);
+        assertEq(stored.length, 2);
+        assertEq(stored[0], SUMSUB);
+        assertEq(stored[1], CHAINALYSIS);
     }
 
-    function test_registerExpansion_revert_notConfigRole() public {
+    function test_updateProviderConfig_revert_emptyExpansion() public {
+        uint256[] memory empty = new uint256[](0);
+        vm.prank(owner);
+        vm.expectRevert(XochiZKPOracle.EmptyProviderExpansion.selector);
+        oracle.updateProviderConfig(keccak256("v2"), "", empty);
+    }
+
+    function test_updateProviderConfig_revert_zeroProviderId() public {
+        uint256[] memory bad = new uint256[](2);
+        bad[0] = SUMSUB;
+        bad[1] = 0;
+        vm.prank(owner);
+        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        oracle.updateProviderConfig(keccak256("v2"), "", bad);
+    }
+
+    function test_updateProviderConfig_revert_notConfigRole() public {
         uint256[] memory providers = new uint256[](1);
         providers[0] = SUMSUB;
-
         vm.prank(alice);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
+        oracle.updateProviderConfig(keccak256("v2"), "", providers);
     }
 
     // -------------------------------------------------------------------------
@@ -177,25 +187,16 @@ contract ProviderDenylistTest is Test {
     // -------------------------------------------------------------------------
 
     function test_submit_succeeds_whenNoDenials() public {
-        uint256[] memory providers = new uint256[](2);
-        providers[0] = SUMSUB;
-        providers[1] = CHAINALYSIS;
-        vm.prank(owner);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
-
+        // Initial config in setUp committed to {SUMSUB, CHAINALYSIS, TRM} atomically;
+        // no denial yet (audit F-2 closure).
         bytes memory proof = _proof(1);
         vm.prank(alice);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(alice), PROVIDER_SET_HASH);
     }
 
     function test_submit_revertsWhenConfigContainsDeniedProvider() public {
-        uint256[] memory providers = new uint256[](2);
-        providers[0] = SUMSUB;
-        providers[1] = CHAINALYSIS;
-        vm.startPrank(owner);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
+        vm.prank(owner);
         oracle.denyProvider(CHAINALYSIS); // simulate compromise
-        vm.stopPrank();
 
         bytes memory proof = _proof(1);
         vm.prank(alice);
@@ -204,10 +205,7 @@ contract ProviderDenylistTest is Test {
     }
 
     function test_submit_recoversAfterUndeny() public {
-        uint256[] memory providers = new uint256[](1);
-        providers[0] = SUMSUB;
         vm.startPrank(owner);
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers);
         oracle.denyProvider(SUMSUB);
         oracle.undenyProvider(SUMSUB);
         vm.stopPrank();
@@ -217,33 +215,19 @@ contract ProviderDenylistTest is Test {
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(alice), PROVIDER_SET_HASH);
     }
 
-    function test_submit_succeedsForConfigsWithoutExpansion() public {
-        // No expansion registered: denial does not affect this config (opt-in semantics)
-        vm.prank(owner);
-        oracle.denyProvider(SUMSUB);
-
-        bytes memory proof = _proof(1);
-        vm.prank(alice);
-        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(alice), PROVIDER_SET_HASH);
-    }
-
     function test_denial_appliesToAllConfigsContainingProvider() public {
-        // Two configs, both include SUMSUB
+        // Add a second config that also contains SUMSUB. After denyProvider(SUMSUB)
+        // both configs are unusable -- audit F-2 closure: every valid config has
+        // its expansion on-chain at registration time.
         bytes32 v2 = keccak256("v2");
-        vm.startPrank(owner);
-        oracle.updateProviderConfig(v2, "ipfs://v2");
-        // After updateProviderConfig, v2 is now the active config; INITIAL_CONFIG is historical
-        uint256[] memory providers1 = new uint256[](1);
-        providers1[0] = SUMSUB;
-        oracle.registerProviderConfigExpansion(INITIAL_CONFIG, providers1);
         uint256[] memory providers2 = new uint256[](2);
         providers2[0] = SUMSUB;
         providers2[1] = CHAINALYSIS;
-        oracle.registerProviderConfigExpansion(v2, providers2);
+        vm.startPrank(owner);
+        oracle.updateProviderConfig(v2, "ipfs://v2", providers2);
         oracle.denyProvider(SUMSUB);
         vm.stopPrank();
 
-        // Proof against v2 must also fail because v2 contains SUMSUB
         bytes memory proof = _proof(2);
         bytes memory inputs = abi.encodePacked(
             bytes32(uint256(0)),

@@ -17,8 +17,8 @@ import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 /// @dev Privileged actions are split across roles (see AccessControl):
 ///      - GUARDIAN: pause/unpause (global + per-proof-type), revokeConfig, denyProvider
 ///      - REGISTRAR: register/revoke merkle roots and reporting thresholds, set provider publishers
-///      - CONFIG: updateProviderConfig, updateAttestationTTL, compactConfigHistory,
-///        registerProviderConfigExpansion
+///      - CONFIG: updateProviderConfig (atomic with provider expansion),
+///        updateAttestationTTL, compactConfigHistory
 ///      - owner: grant/revoke roles, transfer ownership
 contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     /// @notice The verifier contract used to validate proofs
@@ -80,13 +80,14 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     mapping(uint256 providerId => address signer) internal _credentialSigner;
 
     /// @notice Per-config provider expansion: which provider IDs are members of a config hash.
-    /// @dev Registered alongside `updateProviderConfig` via `registerProviderConfigExpansion`.
-    ///      Used by `denyProvider` to invalidate every config containing a compromised provider
-    ///      without rotating the underlying hash. The expansion is trust-on-publish: the
-    ///      Oracle cannot recompute the Pedersen-based providerSetHash on-chain, so the
-    ///      registrar is responsible for ensuring the expansion matches the off-chain config.
-    ///      Mismatches do not affect proof acceptance unless `denyProvider` is invoked --
-    ///      which only the GUARDIAN can do.
+    /// @dev Written atomically alongside the config registration (constructor +
+    ///      `updateProviderConfig`). Used by `denyProvider` to invalidate every
+    ///      config containing a compromised provider without rotating the
+    ///      underlying hash. The expansion is trust-on-publish: the Oracle cannot
+    ///      recompute the Pedersen-based providerSetHash on-chain, so CONFIG is
+    ///      responsible for ensuring the expansion matches the off-chain config.
+    ///      Mismatches do not affect proof acceptance unless `denyProvider` is
+    ///      invoked -- which only the GUARDIAN can do.
     mapping(bytes32 configHash => uint256[] providerIds) internal _configProviders;
 
     /// @notice Provider IDs marked as compromised. Configs that include any denied provider
@@ -157,7 +158,6 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     error InvalidProviderId();
     error CredentialRootExpired(bytes32 root, uint256 registeredAt);
     error CredentialRootProviderMismatch(uint256 expected, uint256 actual);
-    error ConfigExpansionAlreadySet(bytes32 configHash);
     error ConfigExpansionNotRegistered(bytes32 configHash);
     error ProviderDenied(uint256 providerId);
     error EmptyProviderExpansion();
@@ -217,8 +217,19 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     /// @param _verifier The XochiZKPVerifier contract address
     /// @param initialOwner The initial owner address
     /// @param initialConfigHash The initial provider weight configuration hash
-    constructor(address _verifier, address initialOwner, bytes32 initialConfigHash) {
-        if (_verifier == address(0) || initialOwner == address(0)) revert ZeroAddress();
+    /// @param initialProviderIds Provider IDs whose weights are committed-to by
+    ///        `initialConfigHash`. The expansion is written atomically with the
+    ///        config so `denyProvider` enforcement is in effect from block one.
+    ///        Must be non-empty; zero IDs are rejected (audit F-2).
+    constructor(
+        address _verifier,
+        address initialOwner,
+        bytes32 initialConfigHash,
+        uint256[] memory initialProviderIds
+    ) {
+        if (_verifier == address(0) || initialOwner == address(0)) {
+            revert ZeroAddress();
+        }
         if (initialConfigHash == bytes32(0)) revert InvalidConfigHash(bytes32(0));
 
         verifier = IXochiZKPVerifier(_verifier);
@@ -228,9 +239,11 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
 
         _configHistory.push(initialConfigHash);
         _validConfigs[initialConfigHash] = true;
+        _writeConfigExpansion(initialConfigHash, initialProviderIds);
 
         emit OwnershipTransferred(address(0), initialOwner);
         emit ProviderWeightsUpdated(initialConfigHash, block.timestamp, "");
+        emit ProviderConfigExpansionRegistered(initialConfigHash, initialProviderIds);
     }
 
     // -------------------------------------------------------------------------
@@ -423,19 +436,30 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     // Admin
     // -------------------------------------------------------------------------
 
-    /// @notice Update the provider weight configuration
-    /// @dev A previously-revoked config hash cannot be re-registered. Mistaken revocations
-    ///      require deploying a fresh hash (hash of new metadata), not re-using the old one.
+    /// @notice Update the provider weight configuration AND atomically register
+    ///         its provider expansion (audit F-2 closure).
+    /// @dev A previously-revoked config hash cannot be re-registered. Mistaken
+    ///      revocations require deploying a fresh hash (hash of new metadata),
+    ///      not re-using the old one. The expansion is written in the same call
+    ///      so `denyProvider` enforcement is never silently disabled by a
+    ///      partially-applied rotation.
     /// @param newConfigHash The new configuration hash
     /// @param metadataURI URI pointing to the full config (IPFS, Arweave, etc.)
-    function updateProviderConfig(bytes32 newConfigHash, string calldata metadataURI) external onlyRole(CONFIG_ROLE) {
+    /// @param providerIds Provider IDs whose weights are committed-to by
+    ///        `newConfigHash`. Must be non-empty; zero IDs are rejected.
+    function updateProviderConfig(bytes32 newConfigHash, string calldata metadataURI, uint256[] calldata providerIds)
+        external
+        onlyRole(CONFIG_ROLE)
+    {
         if (newConfigHash == _providerConfigHash) revert ConfigAlreadyCurrent();
         if (_revokedConfigs[newConfigHash]) revert ConfigPermanentlyRevoked(newConfigHash);
         if (_configHistory.length >= MAX_CONFIG_HISTORY) revert ConfigHistoryFull();
         _providerConfigHash = newConfigHash;
         _configHistory.push(newConfigHash);
         _validConfigs[newConfigHash] = true;
+        _writeConfigExpansion(newConfigHash, providerIds);
         emit ProviderWeightsUpdated(newConfigHash, block.timestamp, metadataURI);
+        emit ProviderConfigExpansionRegistered(newConfigHash, providerIds);
     }
 
     /// @notice Update the attestation TTL
@@ -527,25 +551,13 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     // Per-provider denylist (compliance proofs)
     // -------------------------------------------------------------------------
 
-    /// @notice Register the provider expansion behind a registered config hash.
-    /// @dev Required before `denyProvider` can take effect for compliance proofs that use
-    ///      this config. The expansion is the list of provider IDs whose weights are
-    ///      committed-to by `configHash`; the Oracle cannot recompute the Pedersen hash
-    ///      on-chain, so the CONFIG role is trusted to publish the matching set.
-    ///      Expansions are append-only (single-write) to prevent silently swapping the
-    ///      provider list out from under previously-emitted proofs.
-    /// @param configHash The previously-registered config hash (current or historical, not revoked)
-    /// @param providerIds The full list of provider IDs that contributed to this config
-    function registerProviderConfigExpansion(bytes32 configHash, uint256[] calldata providerIds)
-        external
-        onlyRole(CONFIG_ROLE)
-    {
-        if (!_validConfigs[configHash]) revert InvalidConfigHash(configHash);
-        if (_configProviders[configHash].length != 0) revert ConfigExpansionAlreadySet(configHash);
-        if (providerIds.length == 0) revert EmptyProviderExpansion();
-
-        // Copy calldata into storage; reject zero IDs (matches `setProviderPublisher` invariant)
+    /// @dev Atomically write a provider expansion for `configHash`. Used by the
+    ///      constructor and `updateProviderConfig`. Validates non-empty + no zero
+    ///      IDs. The expansion is written via memory copy because the constructor
+    ///      receives a memory array; calldata copies are implicitly converted.
+    function _writeConfigExpansion(bytes32 configHash, uint256[] memory providerIds) internal {
         uint256 length = providerIds.length;
+        if (length == 0) revert EmptyProviderExpansion();
         for (uint256 i; i < length;) {
             if (providerIds[i] == 0) revert InvalidProviderId();
             _configProviders[configHash].push(providerIds[i]);
@@ -553,8 +565,6 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
                 ++i;
             }
         }
-
-        emit ProviderConfigExpansionRegistered(configHash, providerIds);
     }
 
     /// @notice Mark a provider as denied. Compliance proofs whose config expansion includes
@@ -590,9 +600,10 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     }
 
     /// @dev True if the registered expansion for `configHash` contains any denied provider.
-    ///      Returns false if no expansion has been registered (denial only enforces against
-    ///      configs whose expansion is on-chain). Configs without an expansion still validate
-    ///      via `_validConfigs`; per-provider denial is opt-in by registration.
+    ///      Every valid config has a non-empty expansion (audit F-2): the constructor
+    ///      and `updateProviderConfig` both write atomically, so the `length == 0` branch
+    ///      can only fire for configs that were never registered, which the caller has
+    ///      already excluded via `_validConfigs`.
     function _configContainsDeniedProvider(bytes32 configHash) internal view returns (bool) {
         uint256[] storage providers = _configProviders[configHash];
         uint256 length = providers.length;

@@ -18,13 +18,18 @@ contract EIP712AttestationTest is Test {
     XochiZKPOracle internal oracle;
     XochiZKPOracle internal oracle2;
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         address owner = makeAddr("owner");
         XochiZKPVerifier verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, keccak256("config"));
+        oracle = new XochiZKPOracle(address(verifier), owner, keccak256("config"), _defaultProviders());
 
         XochiZKPVerifier verifier2 = new XochiZKPVerifier(owner);
-        oracle2 = new XochiZKPOracle(address(verifier2), owner, keccak256("config"));
+        oracle2 = new XochiZKPOracle(address(verifier2), owner, keccak256("config"), _defaultProviders());
     }
 
     function _sampleAttestation() internal pure returns (IXochiZKPOracle.ComplianceAttestation memory) {

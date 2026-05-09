@@ -37,6 +37,11 @@ contract Handler is Test {
         verifier = _verifier;
     }
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function submitComplianceProof(uint8 jurisdictionSeed) external {
         uint8 jurisdictionId = jurisdictionSeed % 4;
         bytes memory proof = _uniqueProof();
@@ -70,7 +75,7 @@ contract Handler is Test {
 
         oldConfigs.push(current);
         vm.prank(oracle.owner());
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
         configUpdateCount++;
     }
 
@@ -115,10 +120,15 @@ contract InvariantTest is Test {
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         address owner = address(this);
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         AlwaysPassVerifierInv stub = new AlwaysPassVerifierInv();
         for (uint8 i = ProofTypes.COMPLIANCE; i <= ProofTypes.NON_MEMBERSHIP; i++) {

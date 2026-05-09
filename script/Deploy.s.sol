@@ -28,6 +28,11 @@ import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.so
 /// Required env vars:
 ///   PRIVATE_KEY          -- deployer private key
 ///   INITIAL_CONFIG_HASH  -- initial provider weight config hash (must be non-zero)
+///   INITIAL_PROVIDER_IDS -- comma-separated uint256 provider IDs whose weights
+///                           are committed-to by INITIAL_CONFIG_HASH. The
+///                           expansion is registered atomically with the config
+///                           in the Oracle constructor (audit F-2). Must be
+///                           non-empty; zero IDs are rejected.
 ///
 /// Optional env vars:
 ///   DEPLOY_SALT          -- CREATE2 salt prefix (default: "xochi-v1")
@@ -47,14 +52,20 @@ contract Deploy is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         bytes32 configHash = vm.envBytes32("INITIAL_CONFIG_HASH");
+        uint256[] memory providerIds = vm.envUint("INITIAL_PROVIDER_IDS", ",");
         bytes32 baseSalt = vm.envOr("DEPLOY_SALT", bytes32("xochi-v1"));
         bool useTimelock = vm.envOr("USE_TIMELOCK", false);
 
         require(configHash != bytes32(0), "INITIAL_CONFIG_HASH must be non-zero");
+        require(providerIds.length > 0, "INITIAL_PROVIDER_IDS must be non-empty");
 
         console.log("Deployer:", deployer);
         console.log("Initial config hash:");
         console.logBytes32(configHash);
+        console.log("Initial provider IDs:");
+        for (uint256 i; i < providerIds.length; i++) {
+            console.log("  -", providerIds[i]);
+        }
         console.log("Use timelock:", useTimelock);
 
         vm.startBroadcast(deployerKey);
@@ -63,9 +74,11 @@ contract Deploy is Script {
         XochiZKPVerifier verifier = new XochiZKPVerifier{salt: baseSalt}(deployer);
         console.log("XochiZKPVerifier:", address(verifier));
 
-        // 2. Deploy the oracle (deterministic via CREATE2)
+        // 2. Deploy the oracle (deterministic via CREATE2). The provider expansion
+        //    for `configHash` is written atomically in the constructor so denylist
+        //    enforcement is in effect from block one (audit F-2).
         XochiZKPOracle oracle = new XochiZKPOracle{salt: keccak256(abi.encodePacked(baseSalt, "oracle"))}(
-            address(verifier), deployer, configHash
+            address(verifier), deployer, configHash, providerIds
         );
         console.log("XochiZKPOracle:", address(oracle));
 

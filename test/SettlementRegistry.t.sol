@@ -29,9 +29,14 @@ contract SettlementRegistryTest is Test {
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         stubVerifier = new AlwaysPassVerifier();
         vm.startPrank(owner);

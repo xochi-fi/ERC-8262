@@ -50,9 +50,14 @@ contract IntegrationTest is Test {
     /// @dev Provider id used in the attestation fixture
     uint256 internal constant FIXTURE_PROVIDER_ID = 42;
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH);
+        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         // Deploy all generated verifiers and register them
         string[6] memory circuits =

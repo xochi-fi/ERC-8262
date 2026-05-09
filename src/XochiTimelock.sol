@@ -143,7 +143,7 @@ contract XochiTimelock {
         // housekeeping that can afford a short delay -- and the delay protects against
         // a compromised owner mass-revoking historical versions.
         if (
-            selector == bytes4(keccak256("updateProviderConfig(bytes32,string)"))
+            selector == bytes4(keccak256("updateProviderConfig(bytes32,string,uint256[])"))
                 || selector == bytes4(keccak256("updateAttestationTTL(uint256)"))
                 || selector == bytes4(keccak256("registerMerkleRoot(bytes32)"))
                 || selector == bytes4(keccak256("revokeMerkleRoot(bytes32)"))
