@@ -146,13 +146,17 @@ contract Deploy is Script {
             console.log("  guardian:", guardian);
 
             // Begin two-step ownership transfer to the timelock.
-            // The timelock proposer must call XochiTimelock.acceptOwnership(target)
-            // for each contract within the 48-hour Ownable2Step deadline.
+            // The timelock proposer must accept via the standard schedule +
+            // execute path (audit F-5: the convenience acceptOwnership shortcut
+            // was removed). Each accept consumes one HIGH_DELAY slot; the
+            // 48-hour Ownable2Step deadline leaves a 24h margin.
             verifier.transferOwnership(address(timelock));
             oracle.transferOwnership(address(timelock));
-            console.log("Ownership transfer initiated. Proposer must accept within 48h:");
-            console.log("  - timelock.acceptOwnership(verifier)");
-            console.log("  - timelock.acceptOwnership(oracle)");
+            console.log("Ownership transfer initiated. Proposer accepts via timelock schedule+execute:");
+            console.log("  data = abi.encodeWithSignature(\"acceptOwnership()\")");
+            console.log("  - timelock.schedule(verifier, 0, data, salt)  then execute after 24h");
+            console.log("  - timelock.schedule(oracle,   0, data, salt)  then execute after 24h");
+            console.log("Must complete within Ownable2Step's 48h acceptance window.");
         }
 
         vm.stopBroadcast();

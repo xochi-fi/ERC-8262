@@ -48,11 +48,22 @@ contract XochiTimelockTest is Test {
         oracle.transferOwnership(address(timelock));
         vm.stopPrank();
 
-        // Timelock accepts ownership
-        vm.prank(multisig);
-        timelock.acceptOwnership(address(verifier));
-        vm.prank(multisig);
-        timelock.acceptOwnership(address(oracle));
+        // Timelock accepts ownership via the standard schedule + execute path
+        // (audit F-5: the convenience `acceptOwnership(address)` shortcut was
+        // removed; every action goes through the configured delay).
+        bytes memory acceptCall = abi.encodeWithSignature("acceptOwnership()");
+        bytes32 saltV = bytes32(uint256(0xACCE7));
+        bytes32 saltO = bytes32(uint256(0xACCE8));
+
+        vm.startPrank(multisig);
+        timelock.schedule(address(verifier), 0, acceptCall, saltV);
+        timelock.schedule(address(oracle), 0, acceptCall, saltO);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + timelock.HIGH_DELAY());
+
+        timelock.execute(address(verifier), 0, acceptCall, saltV);
+        timelock.execute(address(oracle), 0, acceptCall, saltO);
     }
 
     // -------------------------------------------------------------------------
