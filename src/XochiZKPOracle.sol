@@ -736,11 +736,18 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
 
     /// @dev Recover the signer of an EIP-712 digest from a 65-byte ECDSA signature
     ///      (`r || s || v`). Reverts on bad length. We accept both v=27/28 and the
-    ///      legacy v=0/1 (some signers emit the latter); reject otherwise.
+    ///      legacy v=0/1 (some signers emit the latter); reject otherwise. Audit F-4:
+    ///      enforce low-s to block signature malleability -- secp256k1 group order
+    ///      n means (r, s) and (r, n-s) both recover to the same signer; rejecting
+    ///      s > n/2 leaves exactly one canonical encoding per signer.
+    /// @dev `secp256k1n / 2` (EIP-2 canonical low-s bound).
+    bytes32 internal constant SECP256K1N_HALF = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
+
     function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address) {
         if (signature.length != 65) revert InvalidSignatureLength(signature.length);
         bytes32 r = bytes32(signature[0:32]);
         bytes32 s = bytes32(signature[32:64]);
+        if (uint256(s) > uint256(SECP256K1N_HALF)) revert InvalidCredentialSignature();
         uint8 v = uint8(signature[64]);
         if (v < 27) v += 27;
         if (v != 27 && v != 28) revert InvalidCredentialSignature();

@@ -1198,6 +1198,36 @@ contract XochiZKPOracleTest is Test {
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
+    /// @notice Audit F-4: signature malleability via high-s must revert.
+    ///         Given a valid (r, s, v), the symmetric (r, n-s, v') would
+    ///         normally also recover to the same signer. Enforcing low-s in
+    ///         _recoverSigner rejects the symmetric form so there is exactly
+    ///         one canonical encoding per (signer, digest).
+    function test_publishCredentialRoot_revert_highSMalleability() public {
+        bytes32 root = keccak256("root-malleable");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+
+        bytes32 digest = EIP712CredentialRoot.toTypedDataHash(
+            EIP712CredentialRoot.buildDomainSeparator(address(oracle)),
+            DEFAULT_PROVIDER_ID,
+            root,
+            keccak256(bytes("")),
+            nb,
+            na
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(CREDENTIAL_SIGNER_KEY, digest);
+        // Flip s -> n - s (invert v parity)
+        uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 sFlipped = bytes32(n - uint256(s));
+        uint8 vFlipped = v == 27 ? 28 : 27;
+        bytes memory sigMalleable = abi.encodePacked(r, sFlipped, vFlipped);
+
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sigMalleable);
+    }
+
     function test_credentialRoot_expiresAfterTTL() public {
         bytes32 root = keccak256("root");
         _publishCredentialRoot(root);
