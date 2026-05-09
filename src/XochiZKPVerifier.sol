@@ -57,8 +57,11 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     error EmptyBatch();
     error BatchTooLarge();
 
-    /// @notice Maximum number of proofs in a single batch verification
-    uint256 public constant MAX_BATCH_SIZE = 100;
+    /// @notice Maximum number of proofs in a single batch verification.
+    /// @dev Calibrated against the per-proof gas baseline in `.gas-snapshot`
+    ///      (~2.4M for verifyProof). 10 × 2.4M = 24M, leaving ~6M headroom under
+    ///      the 30M mainnet block gas target. Audit F-3.
+    uint256 public constant MAX_BATCH_SIZE = 10;
 
     /// @notice Delay before a proposed verifier can be executed
     uint256 public constant VERIFIER_TIMELOCK = 24 hours;

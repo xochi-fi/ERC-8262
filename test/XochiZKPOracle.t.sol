@@ -2468,7 +2468,7 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_submitComplianceBatch_revert_exceedsMaxBatchSize() public {
-        uint256 size = 101;
+        uint256 size = oracle.MAX_BATCH_SIZE() + 1;
         uint8[] memory proofTypes = new uint8[](size);
         bytes[] memory proofs = new bytes[](size);
         bytes[] memory inputs = new bytes[](size);

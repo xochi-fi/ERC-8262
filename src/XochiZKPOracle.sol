@@ -183,8 +183,11 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     /// @notice Maximum number of entries in the config history array
     uint256 public constant MAX_CONFIG_HISTORY = 256;
 
-    /// @notice Maximum number of proofs in a single batch submission
-    uint256 public constant MAX_BATCH_SIZE = 100;
+    /// @notice Maximum number of proofs in a single batch submission.
+    /// @dev Calibrated against the per-proof gas baseline in `.gas-snapshot`
+    ///      (~2.83M for submitCompliance). 10 × 2.83M ≈ 28.3M, just under the
+    ///      30M mainnet block gas target. Audit F-3.
+    uint256 public constant MAX_BATCH_SIZE = 10;
 
     /// @notice Minimum time window for PATTERN (anti-structuring) proofs in seconds
     uint256 public constant MIN_TIME_WINDOW = 3600;
