@@ -126,7 +126,9 @@ export async function deployContracts(): Promise<DeployedContracts> {
   const oracleHash = await walletClient.deployContract({
     abi: oracleArtifact.abi,
     bytecode: oracleArtifact.bytecode,
-    args: [verifierAddress, account.address, FIXTURE_HASHES.CONFIG_HASH],
+    // Audit F-2: constructor now takes initialProviderIds atomically with the
+    // initial config so denylist enforcement is in effect from block one.
+    args: [verifierAddress, account.address, FIXTURE_HASHES.CONFIG_HASH, [1n]],
   });
   const oracleReceipt = await publicClient.waitForTransactionReceipt({
     hash: oracleHash,

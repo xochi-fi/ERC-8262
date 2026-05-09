@@ -25,9 +25,14 @@ contract AccessControlTest is Test {
     bytes32 internal REGISTRAR;
     bytes32 internal CONFIG;
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         GUARDIAN = keccak256("GUARDIAN");
         REGISTRAR = keccak256("REGISTRAR");
         CONFIG = keccak256("CONFIG");
@@ -178,7 +183,7 @@ contract AccessControlTest is Test {
 
         bytes32 newHash = keccak256("v2");
         vm.prank(config);
-        oracle.updateProviderConfig(newHash, "ipfs://v2");
+        oracle.updateProviderConfig(newHash, "ipfs://v2", _defaultProviders());
         assertEq(oracle.providerConfigHash(), newHash);
     }
 
@@ -188,7 +193,7 @@ contract AccessControlTest is Test {
 
         vm.prank(guardian);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.updateProviderConfig(keccak256("v2"), "");
+        oracle.updateProviderConfig(keccak256("v2"), "", _defaultProviders());
     }
 
     // -------------------------------------------------------------------------

@@ -51,6 +51,8 @@ All proof types include `submitter` as a public input; implementations MUST enfo
 | 0x04    | Attestation    | attestation    | provider_id, credential_type, is_valid, credential_root, current_timestamp, submitter                               | credential_attribute, expiry_timestamp, merkle_index, merkle_path                                         |
 | 0x05    | Membership     | membership     | merkle_root, set_id, timestamp, is_member, submitter                                                                | subject_salt, merkle_index, merkle_path                                                                   |
 | 0x06    | Non-membership | non_membership | merkle_root, set_id, timestamp, is_non_member, submitter                                                            | low_leaf, low_leaf_salt, low_index, low_path, high_leaf, high_leaf_salt, high_index, high_path            |
+| 0x07    | Compliance Signed | compliance_signed | jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, signer_pubkey_hash, chain_id, oracle_address, submitter | signals, weights, weight_sum, provider_ids, num_providers, signature, pubkey_x, pubkey_y |
+| 0x08    | Risk Score Signed | risk_score_signed | proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, signer_pubkey_hash, chain_id, oracle_address, submitter | signals, weights, weight_sum, provider_ids, num_providers, signature, pubkey_x, pubkey_y, signed_timestamp |
 
 Notes on the proof type semantics:
 
@@ -61,6 +63,8 @@ Notes on the proof type semantics:
 - **Pattern (0x03).** The `analysis_type` field selects the analysis kind: 1 = anti-structuring, 2 = velocity, 3 = round-amounts. Implementations that depend on a specific analysis (e.g., a settlement registry requiring anti-structuring) MUST verify the `analysis_type` field; storing only the `result` boolean is insufficient.
 
 - **Risk Score (0x02).** Validators MUST reject trivially-true claims (`bound_lower = 0` for direction GT, `bound_lower >= MAX_RISK_SCORE_BPS` for direction LT, full-domain ranges). The `meetsThreshold` boolean stored on the attestation reflects only the cryptographic `result` field; integrators querying RISK_SCORE attestations should also verify the bounds match their integration's expectations.
+
+- **Provider-signed variants (0x07 Compliance Signed, 0x08 Risk Score Signed).** Identical semantics to their unsigned siblings, plus an in-circuit secp256k1 ECDSA verification of a Pedersen digest committing to `(chain_id, oracle_address, provider_set_hash, signals, weights, timestamp, submitter)`. The provider's pubkey commitment is exposed as `signer_pubkey_hash`; implementations MUST validate it against an on-chain registry. The `chain_id` and `oracle_address` public inputs MUST match `block.chainid` and the consuming Oracle's address: this binds a single provider signature to one deployment so the same signed payload cannot mint attestations across chains or against alternate Oracle deployments. Strict-mode jurisdictions (e.g. US BSA, Singapore) reject the unsigned siblings entirely; permissive jurisdictions accept either form.
 
 ### Verifier Interface
 

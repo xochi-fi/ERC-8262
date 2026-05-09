@@ -48,9 +48,17 @@ contract XochiZKPOracleTest is Test {
     uint8 internal constant RISK_DIRECTION_GT = 1;
     uint8 internal constant RISK_DIRECTION_LT = 2;
 
+    /// @dev Default 1-element provider expansion used by tests that do not exercise
+    ///      `denyProvider` semantics. Tests that need a different layout build their
+    ///      own array inline.
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = DEFAULT_PROVIDER_ID;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         stubVerifier = new AlwaysPassVerifier();
         vm.startPrank(owner);
@@ -130,12 +138,12 @@ contract XochiZKPOracleTest is Test {
 
     function test_constructor_revert_zeroVerifier() public {
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
-        new XochiZKPOracle(address(0), owner, INITIAL_CONFIG);
+        new XochiZKPOracle(address(0), owner, INITIAL_CONFIG, _defaultProviders());
     }
 
     function test_constructor_revert_zeroOwner() public {
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
-        new XochiZKPOracle(address(verifier), address(0), INITIAL_CONFIG);
+        new XochiZKPOracle(address(verifier), address(0), INITIAL_CONFIG, _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -314,7 +322,7 @@ contract XochiZKPOracleTest is Test {
         vm.prank(owner);
         vm.expectEmit(true, false, false, true);
         emit IXochiZKPOracle.ProviderWeightsUpdated(newConfig, block.timestamp, uri);
-        oracle.updateProviderConfig(newConfig, uri);
+        oracle.updateProviderConfig(newConfig, uri, _defaultProviders());
 
         assertEq(oracle.providerConfigHash(), newConfig);
         assertEq(oracle.configHistoryLength(), 2);
@@ -324,7 +332,7 @@ contract XochiZKPOracleTest is Test {
     function test_updateProviderConfig_revert_notOwner() public {
         vm.prank(alice);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.updateProviderConfig(bytes32(0), "");
+        oracle.updateProviderConfig(bytes32(0), "", _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -713,7 +721,7 @@ contract XochiZKPOracleTest is Test {
         // Update config so INITIAL_CONFIG becomes historical (not current)
         bytes32 newConfig = keccak256("new-config");
         vm.prank(owner);
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
 
         // Submit with INITIAL_CONFIG -- should still be accepted
         vm.prank(alice);
@@ -794,7 +802,7 @@ contract XochiZKPOracleTest is Test {
         vm.startPrank(owner);
         for (uint8 i; i < numUpdates; i++) {
             bytes32 config = keccak256(abi.encodePacked("config-", i));
-            oracle.updateProviderConfig(config, "");
+            oracle.updateProviderConfig(config, "", _defaultProviders());
         }
         vm.stopPrank();
 
@@ -1026,7 +1034,7 @@ contract XochiZKPOracleTest is Test {
         // Add a second config, then revoke the initial one
         bytes32 newConfig = keccak256("new-config");
         vm.startPrank(owner);
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
         oracle.revokeConfig(INITIAL_CONFIG);
         vm.stopPrank();
 
@@ -1057,7 +1065,7 @@ contract XochiZKPOracleTest is Test {
     function test_revokeConfig_marksRevoked() public {
         bytes32 newConfig = keccak256("new-config");
         vm.startPrank(owner);
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
         assertFalse(oracle.isRevokedConfig(INITIAL_CONFIG));
         oracle.revokeConfig(INITIAL_CONFIG);
         vm.stopPrank();
@@ -1070,16 +1078,16 @@ contract XochiZKPOracleTest is Test {
         // Rotate to a new config so INITIAL_CONFIG is no longer current and can be revoked
         bytes32 secondConfig = keccak256("second-config");
         vm.startPrank(owner);
-        oracle.updateProviderConfig(secondConfig, "");
+        oracle.updateProviderConfig(secondConfig, "", _defaultProviders());
         oracle.revokeConfig(INITIAL_CONFIG);
 
         // Rotate to a third config so secondConfig is no longer current
         bytes32 thirdConfig = keccak256("third-config");
-        oracle.updateProviderConfig(thirdConfig, "");
+        oracle.updateProviderConfig(thirdConfig, "", _defaultProviders());
 
         // Try to re-register the revoked INITIAL_CONFIG -- must revert
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ConfigPermanentlyRevoked.selector, INITIAL_CONFIG));
-        oracle.updateProviderConfig(INITIAL_CONFIG, "");
+        oracle.updateProviderConfig(INITIAL_CONFIG, "", _defaultProviders());
         vm.stopPrank();
     }
 
@@ -1087,7 +1095,7 @@ contract XochiZKPOracleTest is Test {
         // Sanity: adding a brand-new (never-revoked) hash still works under the new check
         bytes32 newConfig = keccak256("brand-new");
         vm.prank(owner);
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
         assertEq(oracle.providerConfigHash(), newConfig);
         assertTrue(oracle.isValidConfig(newConfig));
     }
@@ -1188,6 +1196,36 @@ contract XochiZKPOracleTest is Test {
         vm.prank(publisher);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialRootAlreadyPublished.selector, root));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
+    }
+
+    /// @notice Audit F-4: signature malleability via high-s must revert.
+    ///         Given a valid (r, s, v), the symmetric (r, n-s, v') would
+    ///         normally also recover to the same signer. Enforcing low-s in
+    ///         _recoverSigner rejects the symmetric form so there is exactly
+    ///         one canonical encoding per (signer, digest).
+    function test_publishCredentialRoot_revert_highSMalleability() public {
+        bytes32 root = keccak256("root-malleable");
+        uint64 nb = uint64(block.timestamp);
+        uint64 na = uint64(block.timestamp + 1 hours);
+
+        bytes32 digest = EIP712CredentialRoot.toTypedDataHash(
+            EIP712CredentialRoot.buildDomainSeparator(address(oracle)),
+            DEFAULT_PROVIDER_ID,
+            root,
+            keccak256(bytes("")),
+            nb,
+            na
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(CREDENTIAL_SIGNER_KEY, digest);
+        // Flip s -> n - s (invert v parity)
+        uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+        bytes32 sFlipped = bytes32(n - uint256(s));
+        uint8 vFlipped = v == 27 ? 28 : 27;
+        bytes memory sigMalleable = abi.encodePacked(r, sFlipped, vFlipped);
+
+        vm.prank(publisher);
+        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sigMalleable);
     }
 
     function test_credentialRoot_expiresAfterTTL() public {
@@ -1469,10 +1507,10 @@ contract XochiZKPOracleTest is Test {
         bytes32 c3 = keccak256("c3");
         bytes32 c4 = keccak256("c4");
         bytes32 c5 = keccak256("c5");
-        oracle.updateProviderConfig(c2, "");
-        oracle.updateProviderConfig(c3, "");
-        oracle.updateProviderConfig(c4, "");
-        oracle.updateProviderConfig(c5, "");
+        oracle.updateProviderConfig(c2, "", _defaultProviders());
+        oracle.updateProviderConfig(c3, "", _defaultProviders());
+        oracle.updateProviderConfig(c4, "", _defaultProviders());
+        oracle.updateProviderConfig(c5, "", _defaultProviders());
         assertEq(oracle.configHistoryLength(), 5);
 
         // Revoke 2 non-current entries
@@ -1509,13 +1547,13 @@ contract XochiZKPOracleTest is Test {
         vm.startPrank(owner);
         // Fill history to near capacity
         for (uint256 i = 1; i < oracle.MAX_CONFIG_HISTORY(); i++) {
-            oracle.updateProviderConfig(keccak256(abi.encode(i)), "");
+            oracle.updateProviderConfig(keccak256(abi.encode(i)), "", _defaultProviders());
         }
         assertEq(oracle.configHistoryLength(), oracle.MAX_CONFIG_HISTORY());
 
         // Cannot add more
         vm.expectRevert(XochiZKPOracle.ConfigHistoryFull.selector);
-        oracle.updateProviderConfig(keccak256("overflow"), "");
+        oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
 
         // Revoke a few old entries and compact
         oracle.revokeConfig(INITIAL_CONFIG);
@@ -1523,7 +1561,7 @@ contract XochiZKPOracleTest is Test {
         oracle.compactConfigHistory();
 
         // Now we can add again
-        oracle.updateProviderConfig(keccak256("new-after-compact"), "");
+        oracle.updateProviderConfig(keccak256("new-after-compact"), "", _defaultProviders());
         vm.stopPrank();
 
         assertTrue(oracle.configHistoryLength() <= oracle.MAX_CONFIG_HISTORY());
@@ -1777,7 +1815,7 @@ contract XochiZKPOracleTest is Test {
 
         // Same proof on a different oracle deployment must produce a different hash
         vm.chainId(block.chainid - 1);
-        XochiZKPOracle other = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        XochiZKPOracle other = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         bytes32 hashOtherOracle = other.computeProofHash(proof, ProofTypes.COMPLIANCE);
         assertTrue(hashHere != hashOtherOracle);
     }
@@ -1893,7 +1931,7 @@ contract XochiZKPOracleTest is Test {
         vm.assume(newConfig != INITIAL_CONFIG && newConfig != bytes32(0));
 
         vm.startPrank(owner);
-        oracle.updateProviderConfig(newConfig, "");
+        oracle.updateProviderConfig(newConfig, "", _defaultProviders());
         oracle.revokeConfig(INITIAL_CONFIG);
         vm.stopPrank();
 
@@ -2064,20 +2102,20 @@ contract XochiZKPOracleTest is Test {
         vm.startPrank(owner);
         // setUp already pushed 1 (initial config). Push 255 more to reach 256.
         for (uint256 i; i < 255; i++) {
-            oracle.updateProviderConfig(keccak256(abi.encodePacked("fill-", i)), "");
+            oracle.updateProviderConfig(keccak256(abi.encodePacked("fill-", i)), "", _defaultProviders());
         }
         assertEq(oracle.configHistoryLength(), 256);
 
         // 257th should revert
         vm.expectRevert(XochiZKPOracle.ConfigHistoryFull.selector);
-        oracle.updateProviderConfig(keccak256("overflow"), "");
+        oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
         vm.stopPrank();
     }
 
     function test_updateProviderConfig_revert_duplicateConfig() public {
         vm.prank(owner);
         vm.expectRevert(XochiZKPOracle.ConfigAlreadyCurrent.selector);
-        oracle.updateProviderConfig(INITIAL_CONFIG, "");
+        oracle.updateProviderConfig(INITIAL_CONFIG, "", _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -2086,7 +2124,7 @@ contract XochiZKPOracleTest is Test {
 
     function test_constructor_revert_zeroConfigHash() public {
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, bytes32(0)));
-        new XochiZKPOracle(address(verifier), owner, bytes32(0));
+        new XochiZKPOracle(address(verifier), owner, bytes32(0), _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -2287,7 +2325,7 @@ contract XochiZKPOracleTest is Test {
         bytes32 config = keccak256(abi.encodePacked("fuzz-config-", seed));
 
         vm.prank(owner);
-        oracle.updateProviderConfig(config, uri);
+        oracle.updateProviderConfig(config, uri, _defaultProviders());
         assertEq(oracle.providerConfigHash(), config);
     }
 
@@ -2351,7 +2389,7 @@ contract XochiZKPOracleTest is Test {
 
         // Add new config, revoke old one
         vm.startPrank(owner);
-        oracle.updateProviderConfig(keccak256("new-config"), "");
+        oracle.updateProviderConfig(keccak256("new-config"), "", _defaultProviders());
         oracle.revokeConfig(INITIAL_CONFIG);
         vm.stopPrank();
 
@@ -2460,7 +2498,7 @@ contract XochiZKPOracleTest is Test {
     }
 
     function test_submitComplianceBatch_revert_exceedsMaxBatchSize() public {
-        uint256 size = 101;
+        uint256 size = oracle.MAX_BATCH_SIZE() + 1;
         uint8[] memory proofTypes = new uint8[](size);
         bytes[] memory proofs = new bytes[](size);
         bytes[] memory inputs = new bytes[](size);
@@ -2851,7 +2889,7 @@ contract XochiZKPOracleTest is Test {
         );
     }
 
-    /// @dev COMPLIANCE_SIGNED public inputs (7 slots: compliance + signer_pubkey_hash)
+    /// @dev COMPLIANCE_SIGNED public inputs (9 slots: compliance + signer_pubkey_hash + chain_id + oracle_address)
     function _complianceSignedInputs(
         uint8 jurisdictionId,
         bytes32 providerSetHash,
@@ -2865,14 +2903,16 @@ contract XochiZKPOracleTest is Test {
             bytes32(block.timestamp), // timestamp
             bytes32(uint256(1)), // meets_threshold
             signerPubkeyHash, // signer_pubkey_hash
+            bytes32(block.chainid), // chain_id (audit F-6)
+            bytes32(uint256(uint160(address(oracle)))), // oracle_address (audit F-6)
             bytes32(uint256(uint160(submitter))) // submitter
         );
     }
 
-    /// @dev RISK_SCORE_SIGNED public inputs (9 slots: risk_score + signer_pubkey_hash)
+    /// @dev RISK_SCORE_SIGNED public inputs (11 slots: risk_score + signer_pubkey_hash + chain_id + oracle_address)
     function _riskScoreSignedInputs(bytes32 configHash, bytes32 signerPubkeyHash, address submitter)
         internal
-        pure
+        view
         returns (bytes memory)
     {
         return abi.encodePacked(
@@ -2884,6 +2924,8 @@ contract XochiZKPOracleTest is Test {
             configHash, // config_hash
             bytes32(uint256(0xeeff)), // provider_set_hash
             signerPubkeyHash, // signer_pubkey_hash
+            bytes32(block.chainid), // chain_id (audit F-6)
+            bytes32(uint256(uint160(address(oracle)))), // oracle_address (audit F-6)
             bytes32(uint256(uint160(submitter))) // submitter
         );
     }

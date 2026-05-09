@@ -2,16 +2,35 @@
 
 ## Current Status
 
-- 450/450 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration, Gas, Invariant, EIP712, ThresholdCrossValidation, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, signed-variant oracle paths)
-- 87/87 Noir tests pass (9 workspace packages incl. compliance_signed, risk_score_signed, shared sig parity vectors)
-- 204/204 xochi-sdk tests pass (incl. provider signing daemon + on-chain E2E for COMPLIANCE_SIGNED)
-- EIP draft aligned with implementation (signed variants documented)
+- 472/472 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration, Gas, Invariant, EIP712, ThresholdCrossValidation, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths)
+- 89/89 Noir tests pass (9 workspace packages incl. compliance_signed, risk_score_signed, shared sig parity vectors with chain_id + oracle_address binding)
+- xochi-sdk: signed-variant API extended with `chainId` + `oracleAddress` (paired with circuit revision; SDK side on `fix/f-6-bind-chain-oracle-in-digest`)
+- EIP draft aligned with implementation (signed-variant rows include the F-6 chain/oracle binding contract)
 - Tooling: nargo 1.0.0-beta.20, forge 1.5.1, bb 4.0.0-nightly.20260120
-- CI green; Slither: 0 findings on hand-written code
-- Gas: ~2.43M verify, ~2.85M submit, linear batch scaling (signed variants ~30% heavier per circuit)
+- CI green; Slither: 0 findings on hand-written code; `make parity-check` is now a CI gate (F-8) -- 8/8 circuits in parity
+- Gas: ~2.43M verify, ~2.85M submit; `MAX_BATCH_SIZE = 10` (audit F-3, ~24M at cap, fits 30M mainnet block)
+- Pre-EIP audit: see [`audit/PRE_EIP_AUDIT.md`](audit/PRE_EIP_AUDIT.md). All 9 findings closed on `fix/f-2-atomic-provider-expansion`.
 - Client SDK: `../xochi-sdk` (also published as `@xochi/sdk@^0.2.0`)
 
 ## Completed
+
+<details>
+<summary>Pre-EIP audit fix-first sweep (2026-05-09)</summary>
+
+`audit/PRE_EIP_AUDIT.md` surfaced 9 findings against `0c12337`. All 9 closed on branch `fix/f-2-atomic-provider-expansion` (8 commits) plus xochi-sdk `fix/f-6-bind-chain-oracle-in-digest` (1 commit, paired with F-6). 472 forge tests + 89 nargo tests + parity-check pass post-fix.
+
+- **F-2 `6daacbd`** -- atomicize `updateProviderConfig` with provider expansion. Constructor takes `initialProviderIds`; new signature is `updateProviderConfig(bytes32, string, uint256[])`; `registerProviderConfigExpansion` removed. Every valid config now has its expansion on-chain at registration, closing the silent denylist-bypass window.
+- **F-7 `45f0e8b`** -- `Incident_VerifierSoundness.t.sol` runbook-as-code. Walks the documented incident response (pause -> propose -> 24h -> execute -> revoke -> unpause) end-to-end so any future regression in the response sequence breaks CI instead of breaking the runbook during a live incident.
+- **F-3 `ea812c9`** -- `MAX_BATCH_SIZE` lowered from 100 to 10. Per-proof gas baseline (~2.4M verify / ~2.83M submit) put 100 batched at 240M-283M gas, 10x over mainnet's 30M block target. New gas-bounded test pins the cap to a 29M budget.
+- **F-4 `731f54b`** -- enforce low-s on credential-root signatures. Inlined `secp256k1n / 2` constant rejects malleable (`r, n-s`) tuples without adding OZ as a dependency.
+- **F-5 `ef5b1c2`** -- removed permissive `acceptOwnership(address)` shortcut from `XochiTimelock`. Bootstrap workflow now uses standard schedule + execute; every action goes through the configured delay.
+- **F-8 `82d26c2`** -- vendor `parity-check.py` from the `zk-x-ray` skill into `scripts/`; wire `make parity-check` into the Noir Circuits CI job. Logical / physical / Solidity-expected / verifier `NUMBER_OF_PUBLIC_INPUTS` are now CI-asserted to agree on every PR.
+- **F-1 `37b5fbf`** -- harden `script/Deploy.s.sol` with post-condition assertions (oracle.verifier wiring, every proof-type verifier set + has code, initial provider expansion length matches, ownership shape matches `useTimelock`). A multi-step partial deploy now reverts the broadcast.
+- **F-6 `25d52ca` + xochi-sdk `080ceeb`** -- bind `chain_id` + `oracle_address` into the in-circuit Pedersen digest for signed variants. compliance_signed logical pubs 7 -> 9, risk_score_signed 9 -> 11. Verifier `NUMBER_OF_PUBLIC_INPUTS` regenerated to 25 / 27. A single provider signature can no longer mint attestations across chains or alternate Oracle deployments. xochi-sdk parity vector regenerated to `0x161ce9164a86defd6b8c44e9923690407bea0488eb15bd91b99ce71438dae106`.
+- **F-9** -- documented (no code change). `getAttestationHistory` is unbounded by design; integrators should use `getAttestationHistoryPaginated`.
+
+Methodology side-effect: drafted the `zk-x-ray` skill (https://github.com/DROOdotFOO/agent-skills/pull/1) -- a pashov-inspired pre-audit briefing generator for ZK + EVM hybrid protocols. The parity-check gate above is one of its outputs.
+</details>
 
 <details>
 <summary>Credential-root signature verification (2026-04-29)</summary>
@@ -91,7 +110,7 @@ Prerequisite: CI green.
 
 ## Pre-deployment (blocked on testnet validation)
 
-- [ ] External security audit (Solidity + Noir circuits)
+- [ ] External security audit (Solidity + Noir circuits) -- internal pre-EIP audit complete; see `audit/PRE_EIP_AUDIT.md`
 - [ ] EIP submission to ethereum/EIPs
 - [ ] Provider signal mock server for local development (the reference signing daemon is the closest thing today)
 - [x] Formal verification of jurisdiction threshold logic

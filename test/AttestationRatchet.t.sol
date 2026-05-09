@@ -26,9 +26,14 @@ contract AttestationRatchetTest is Test {
     bytes32 internal constant INITIAL_CONFIG = keccak256("config");
     bytes32 internal constant PROVIDER_SET_HASH = keccak256("providers");
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG);
+        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         stub = new AlwaysPassVerifier();
 
         vm.startPrank(owner);

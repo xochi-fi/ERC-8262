@@ -143,7 +143,7 @@ contract XochiTimelock {
         // housekeeping that can afford a short delay -- and the delay protects against
         // a compromised owner mass-revoking historical versions.
         if (
-            selector == bytes4(keccak256("updateProviderConfig(bytes32,string)"))
+            selector == bytes4(keccak256("updateProviderConfig(bytes32,string,uint256[])"))
                 || selector == bytes4(keccak256("updateAttestationTTL(uint256)"))
                 || selector == bytes4(keccak256("registerMerkleRoot(bytes32)"))
                 || selector == bytes4(keccak256("revokeMerkleRoot(bytes32)"))
@@ -184,12 +184,20 @@ contract XochiTimelock {
         return readyAt > 1 && block.timestamp >= readyAt;
     }
 
-    /// @notice Accept ownership of a target contract (for Ownable2Step integration)
-    /// @dev Called during setup to accept ownership after transferOwnership
-    function acceptOwnership(address target) external onlyProposer {
-        (bool success,) = target.call(abi.encodeWithSignature("acceptOwnership()"));
-        if (!success) revert ExecutionFailed(target, "");
-    }
+    /// @dev Audit F-5: the previous `acceptOwnership(address target)` shortcut
+    ///      let the proposer bypass the timelock to invoke `acceptOwnership()`
+    ///      on any address that designated this contract as `pendingOwner`. It
+    ///      was removed in favour of the standard schedule+execute path so
+    ///      every action -- including the post-transfer accept -- goes through
+    ///      the configured delay. Bootstrap workflow:
+    ///
+    ///          target.transferOwnership(timelock)
+    ///          timelock.schedule(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)
+    ///          // wait HIGH_DELAY (24h)
+    ///          timelock.execute(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)
+    ///
+    ///      `Ownable2Step` enforces a 48-hour acceptance window which leaves
+    ///      24 hours of headroom after the timelock delay elapses.
 
     receive() external payable {}
 }

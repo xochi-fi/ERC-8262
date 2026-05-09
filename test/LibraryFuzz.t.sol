@@ -89,9 +89,10 @@ contract LibraryFuzzTest is Test {
     }
 
     function test_expectedPublicInputCount_signedVariants() public view {
-        // Signed variants add a single signer_pubkey_hash slot to their unsigned siblings.
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 7);
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 9);
+        // Signed variants add signer_pubkey_hash + chain_id + oracle_address (audit F-6)
+        // to their unsigned siblings -- 3 extra slots each.
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 9);
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 11);
     }
 
     // -------------------------------------------------------------------------

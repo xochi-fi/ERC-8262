@@ -95,6 +95,14 @@ jobs:
           export PATH="$HOME/.nargo/bin:$PATH"
           cd circuits && nargo test --workspace
 
+      - name: Compile circuits for parity check
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          cd circuits && nargo compile --workspace
+
+      - name: Circuit <-> Solidity public-input parity (audit F-8)
+        run: python3 scripts/parity-check.py .
+
   sdk:
     name: SDK
     runs-on: ubuntu-latest

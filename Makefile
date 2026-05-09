@@ -1,4 +1,4 @@
-.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain clean help
+.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain parity-check clean help
 
 FOUNDRY_BIN := $(HOME)/.config/.foundry/bin
 FORGE := $(FOUNDRY_BIN)/forge
@@ -58,6 +58,9 @@ slither: ## Run Slither static analysis (requires slither-analyzer)
 
 check-toolchain: ## Verify pinned nargo + bb versions match .tool-versions
 	./scripts/check-toolchain.sh
+
+parity-check: ## Verify circuit <-> Solidity public-input arity parity (audit F-8)
+	python3 scripts/parity-check.py .
 
 fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh

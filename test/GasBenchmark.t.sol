@@ -30,9 +30,14 @@ contract GasBenchmarkTest is Test {
     bytes32 internal constant FIXTURE_TIER_MERKLE_ROOT =
         0x24ce58f9ed6ca066d25f66b15b0eb1dccebe6e457f5aa0fcd353d82d539f5ed5;
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH);
+        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         string[6] memory circuits =
             ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];
@@ -179,6 +184,32 @@ contract GasBenchmarkTest is Test {
 
     function test_gas_batch_10() public {
         _submitBatch(10);
+    }
+
+    /// @notice MAX_BATCH_SIZE batched verifies must fit under the mainnet block
+    ///         gas target (audit F-3). The cap was lowered from 100 to 10 after
+    ///         the per-proof gas baseline put 100 × 2.4M ≈ 240M, far above any
+    ///         block target. This test pins the new cap to a measured budget.
+    function test_gas_batch_atMaxSize_fitsBlockGasTarget() public {
+        uint256 maxBatch = verifier.MAX_BATCH_SIZE();
+        // 30M is the canonical L1 block gas target; we leave 1M headroom.
+        uint256 budget = 29_000_000;
+
+        (bytes memory proof, bytes memory inputs) = _loadFixture("compliance");
+        uint8[] memory proofTypes = new uint8[](maxBatch);
+        bytes[] memory proofs = new bytes[](maxBatch);
+        bytes[] memory publicInputs = new bytes[](maxBatch);
+        for (uint256 i; i < maxBatch; i++) {
+            proofTypes[i] = ProofTypes.COMPLIANCE;
+            proofs[i] = proof;
+            publicInputs[i] = inputs;
+        }
+
+        uint256 before = gasleft();
+        verifier.verifyProofBatch(proofTypes, proofs, publicInputs);
+        uint256 used = before - gasleft();
+
+        assertLt(used, budget, "MAX_BATCH_SIZE exceeds 29M block gas target");
     }
 
     function _submitBatch(uint256 size) internal {

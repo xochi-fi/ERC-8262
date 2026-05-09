@@ -26,13 +26,18 @@ contract XochiTimelockTest is Test {
 
     bytes32 internal constant CONFIG_HASH = bytes32(uint256(0xc0ffee));
 
+    function _defaultProviders() internal pure returns (uint256[] memory ps) {
+        ps = new uint256[](1);
+        ps[0] = 1;
+    }
+
     function setUp() public {
         timelock = new XochiTimelock(multisig, guardian);
 
         // Deploy contracts owned by deployer, then transfer to timelock
         vm.startPrank(deployer);
         verifier = new XochiZKPVerifier(deployer);
-        oracle = new XochiZKPOracle(address(verifier), deployer, CONFIG_HASH);
+        oracle = new XochiZKPOracle(address(verifier), deployer, CONFIG_HASH, _defaultProviders());
 
         // Register a stub verifier for compliance (needed for some integration tests)
         StubVerifier stub = new StubVerifier();
@@ -43,11 +48,22 @@ contract XochiTimelockTest is Test {
         oracle.transferOwnership(address(timelock));
         vm.stopPrank();
 
-        // Timelock accepts ownership
-        vm.prank(multisig);
-        timelock.acceptOwnership(address(verifier));
-        vm.prank(multisig);
-        timelock.acceptOwnership(address(oracle));
+        // Timelock accepts ownership via the standard schedule + execute path
+        // (audit F-5: the convenience `acceptOwnership(address)` shortcut was
+        // removed; every action goes through the configured delay).
+        bytes memory acceptCall = abi.encodeWithSignature("acceptOwnership()");
+        bytes32 saltV = bytes32(uint256(0xACCE7));
+        bytes32 saltO = bytes32(uint256(0xACCE8));
+
+        vm.startPrank(multisig);
+        timelock.schedule(address(verifier), 0, acceptCall, saltV);
+        timelock.schedule(address(oracle), 0, acceptCall, saltO);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + timelock.HIGH_DELAY());
+
+        timelock.execute(address(verifier), 0, acceptCall, saltV);
+        timelock.execute(address(oracle), 0, acceptCall, saltO);
     }
 
     // -------------------------------------------------------------------------
@@ -119,7 +135,7 @@ contract XochiTimelockTest is Test {
     // -------------------------------------------------------------------------
 
     function test_delay_lowDelay_configOps() public view {
-        assertEq(timelock.getDelay(bytes4(keccak256("updateProviderConfig(bytes32,string)"))), 6 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("updateProviderConfig(bytes32,string,uint256[])"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("updateAttestationTTL(uint256)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("registerMerkleRoot(bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("revokeMerkleRoot(bytes32)"))), 6 hours);

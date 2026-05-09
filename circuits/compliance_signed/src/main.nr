@@ -14,6 +14,12 @@
 ///   - meets_threshold: boolean result (1 = compliant, 0 = not)
 ///   - signer_pubkey_hash: Pedersen commitment to the provider's secp256k1 pubkey
 ///                        (Oracle validates against `_validSignerPubkeyHashes`)
+///   - chain_id: EVM chain ID, committed in the in-circuit signed digest so a
+///               provider signature cannot be replayed cross-chain (audit F-6)
+///   - oracle_address: deployment address of the consuming Oracle, committed in
+///                     the in-circuit signed digest so a signature cannot be
+///                     replayed against a different Oracle on the same chain
+///                     (audit F-6)
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///
 /// Private inputs (known only to prover):
@@ -51,6 +57,9 @@ fn main(
     timestamp: pub Field,
     meets_threshold: pub bool,
     signer_pubkey_hash: pub Field,
+    // Audit F-6: bind the signed digest to a specific deployment.
+    chain_id: pub Field,
+    oracle_address: pub Field,
     submitter: pub Field,
 ) {
     // 1. Validate provider count
@@ -104,6 +113,8 @@ fn main(
     // Without this, signal honesty is not enforced cryptographically. The Oracle's
     // _validSignerPubkeyHashes registry authenticates `signer_pubkey_hash`.
     let payload_hash = compute_signed_payload_hash(
+        chain_id,
+        oracle_address,
         provider_set_hash,
         signals,
         weights,
@@ -151,6 +162,8 @@ fn test_main_revert_wrong_pubkey_hash() {
         1700000000,
         true,
         0xdeadbeef, // mismatched pubkey hash -> assertion fires before signature check
+        1,          // chain_id
+        0xabcd1234, // oracle_address
         0xdead,
     );
 }
@@ -177,6 +190,8 @@ fn test_main_revert_wrong_meets_threshold() {
         1700000000,
         true, // claim meets threshold but score 8000 >= 7100 -> fails BEFORE signature check
         0,
+        1,          // chain_id
+        0xabcd1234, // oracle_address
         0xdead,
     );
 }
@@ -203,6 +218,8 @@ fn test_main_revert_inactive_signal_nonzero() {
         1700000000,
         true,
         0,
+        1,          // chain_id
+        0xabcd1234, // oracle_address
         0xdead,
     );
 }

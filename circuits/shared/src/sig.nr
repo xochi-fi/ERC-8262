@@ -44,29 +44,37 @@ pub fn compute_signer_pubkey_hash(pubkey_x: [u8; 32], pubkey_y: [u8; 32]) -> Fie
 
 /// Compute the Pedersen digest the provider signs over.
 ///
-/// Layout (20 field elements):
+/// Layout (22 field elements, audit F-6: chain_id + oracle_address bind the
+/// signed payload to a specific deployment so a single signature cannot mint
+/// attestations on multiple Oracle instances or chains):
 ///   [0]:    DOMAIN_SIGNED_SIGNALS
-///   [1]:    provider_set_hash
-///   [2..10): signals[0..8]
-///   [10..18): weights[0..8]
-///   [18]:   timestamp
-///   [19]:   submitter
+///   [1]:    chain_id
+///   [2]:    oracle_address
+///   [3]:    provider_set_hash
+///   [4..12):  signals[0..8]
+///   [12..20): weights[0..8]
+///   [20]:   timestamp
+///   [21]:   submitter
 pub fn compute_signed_payload_hash(
+    chain_id: Field,
+    oracle_address: Field,
     provider_set_hash: Field,
     signals: [u32; 8],
     weights: [u32; 8],
     timestamp: Field,
     submitter: Field,
 ) -> Field {
-    let mut input: [Field; 20] = [0; 20];
+    let mut input: [Field; 22] = [0; 22];
     input[0] = DOMAIN_SIGNED_SIGNALS;
-    input[1] = provider_set_hash;
+    input[1] = chain_id;
+    input[2] = oracle_address;
+    input[3] = provider_set_hash;
     for i in 0..8 {
-        input[2 + i] = signals[i] as Field;
-        input[10 + i] = weights[i] as Field;
+        input[4 + i] = signals[i] as Field;
+        input[12 + i] = weights[i] as Field;
     }
-    input[18] = timestamp;
-    input[19] = submitter;
+    input[20] = timestamp;
+    input[21] = submitter;
     pedersen_hash(input)
 }
 
@@ -120,8 +128,8 @@ fn test_coordinate_to_fields_pattern() {
 fn test_signed_payload_hash_deterministic() {
     let signals: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
-    let h1 = compute_signed_payload_hash(0xdead, signals, weights, 1700000000, 0xcafe);
-    let h2 = compute_signed_payload_hash(0xdead, signals, weights, 1700000000, 0xcafe);
+    let h1 = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
+    let h2 = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
     assert(h1 == h2);
 }
 
@@ -130,8 +138,8 @@ fn test_signed_payload_hash_changes_on_signal_mutation() {
     let signals_a: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
     let signals_b: [u32; 8] = [11, 20, 30, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
-    let h_a = compute_signed_payload_hash(0xdead, signals_a, weights, 1700000000, 0xcafe);
-    let h_b = compute_signed_payload_hash(0xdead, signals_b, weights, 1700000000, 0xcafe);
+    let h_a = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals_a, weights, 1700000000, 0xcafe);
+    let h_b = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals_b, weights, 1700000000, 0xcafe);
     assert(h_a != h_b);
 }
 
@@ -139,9 +147,27 @@ fn test_signed_payload_hash_changes_on_signal_mutation() {
 fn test_signed_payload_hash_changes_on_submitter_mutation() {
     let signals: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
-    let h_a = compute_signed_payload_hash(0xdead, signals, weights, 1700000000, 0xcafe);
-    let h_b = compute_signed_payload_hash(0xdead, signals, weights, 1700000000, 0xbeef);
+    let h_a = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
+    let h_b = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xbeef);
     assert(h_a != h_b);
+}
+
+#[test]
+fn test_signed_payload_hash_changes_on_chain_id_mutation() {
+    let signals: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
+    let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
+    let h_a = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
+    let h_b = compute_signed_payload_hash(8453, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
+    assert(h_a != h_b, "chain_id must alter the digest");
+}
+
+#[test]
+fn test_signed_payload_hash_changes_on_oracle_address_mutation() {
+    let signals: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
+    let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
+    let h_a = compute_signed_payload_hash(1, 0xabcd, 0xdead, signals, weights, 1700000000, 0xcafe);
+    let h_b = compute_signed_payload_hash(1, 0xfeed, 0xdead, signals, weights, 1700000000, 0xcafe);
+    assert(h_a != h_b, "oracle_address must alter the digest");
 }
 
 // ---------------------------------------------------------------------------
@@ -156,16 +182,26 @@ fn test_signed_payload_hash_changes_on_submitter_mutation() {
 
 #[test]
 fn test_parity_with_sdk_signed_payload_hash() {
+    // Audit F-6: digest layout extended with chain_id (1) and oracle_address
+    // (0xabcd1234) committed at fixed positions. xochi-sdk's
+    // test/provider-pedersen.test.ts must regenerate its expected vector with
+    // the matching parameters and update the expected constant below.
     let signals: [u32; 8] = [10, 20, 30, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [50, 30, 20, 0, 0, 0, 0, 0];
     let actual = compute_signed_payload_hash(
+        1,
+        0xabcd1234,
         0xdead,
         signals,
         weights,
         1700000000,
         0xcafe,
     );
-    let expected: Field = 0x236020bca713cd01b0af5c813c8509d28e26c333245db5c70f5c414d58d50a74;
+    // Computed via xochi-sdk's bb.js Pedersen for this exact input set after
+    // the F-6 layout change. If this drifts, regenerate by running
+    // `npx vitest run test/provider-pedersen.test.ts` in xochi-sdk and
+    // copying the printed `[parity] signed_payload_hash` value here.
+    let expected: Field = 0x161ce9164a86defd6b8c44e9923690407bea0488eb15bd91b99ce71438dae106;
     assert(actual == expected, "signed_payload_hash drifted from xochi-sdk pedersen.ts");
 }
 
