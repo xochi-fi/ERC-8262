@@ -652,35 +652,32 @@ describe("E2E on-chain verification", () => {
       ).rejects.toThrow();
     });
 
-    it("submits for different jurisdiction (US)", async () => {
+    it("rejects unsigned compliance for strict jurisdiction (US)", async () => {
+      // US BSA requires provider-signed signals: JurisdictionConfig.requireSignedSignals(1)
+      // returns true, so the unsigned COMPLIANCE proof type is rejected at the
+      // dispatcher with SignedSignalsRequired(1, 1). To submit for US, integrators
+      // must use COMPLIANCE_SIGNED -- exercised in test/integration-signed.test.ts
+      // on the SDK side.
       const { proofHex, publicInputsHex } = await generateProof(
         "compliance",
         { ...COMPLIANCE_INPUTS, jurisdiction_id: 1 },
         api,
       );
 
-      const hash = await aliceClient.writeContract({
-        address: contracts.oracle,
-        abi: contracts.oracleAbi,
-        functionName: "submitCompliance",
-        args: [
-          1, // US
-          PROOF_TYPES.COMPLIANCE,
-          proofHex,
-          publicInputsHex,
-          FIXTURE_HASHES.PROVIDER_SET_HASH,
-        ],
-      });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      expect(receipt.status).toBe("success");
-
-      const [valid] = (await publicClient.readContract({
-        address: contracts.oracle,
-        abi: contracts.oracleAbi,
-        functionName: "checkCompliance",
-        args: [ALICE_ADDRESS, 1],
-      })) as [boolean, unknown];
-      expect(valid).toBe(true);
+      await expect(
+        aliceClient.writeContract({
+          address: contracts.oracle,
+          abi: contracts.oracleAbi,
+          functionName: "submitCompliance",
+          args: [
+            1, // US -- strict mode
+            PROOF_TYPES.COMPLIANCE,
+            proofHex,
+            publicInputsHex,
+            FIXTURE_HASHES.PROVIDER_SET_HASH,
+          ],
+        }),
+      ).rejects.toThrow();
     });
 
     it("rejects proof when submitter != msg.sender (anti-frontrun)", async () => {
