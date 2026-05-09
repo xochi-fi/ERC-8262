@@ -83,82 +83,147 @@ contract Deploy is Script {
         console.log("XochiZKPOracle:", address(oracle));
 
         // 3. Deploy generated UltraHonk verifiers and register them.
-        //    Direct `new` since we import the contract types -- avoids the
-        //    vm.getCode artifact-lookup quirk where `forge script`'s build set
-        //    differs from `forge test`'s.
-        address complianceVerifier =
-            address(new ComplianceVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.COMPLIANCE, complianceVerifier);
-        console.log("  ComplianceVerifier:", complianceVerifier);
-
-        address riskScoreVerifier =
-            address(new RiskScoreVerifier{salt: keccak256(abi.encodePacked(baseSalt, "RiskScoreVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.RISK_SCORE, riskScoreVerifier);
-        console.log("  RiskScoreVerifier:", riskScoreVerifier);
-
-        address patternVerifier =
-            address(new PatternVerifier{salt: keccak256(abi.encodePacked(baseSalt, "PatternVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.PATTERN, patternVerifier);
-        console.log("  PatternVerifier:", patternVerifier);
-
-        address attestationVerifier =
-            address(new AttestationVerifier{salt: keccak256(abi.encodePacked(baseSalt, "AttestationVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.ATTESTATION, attestationVerifier);
-        console.log("  AttestationVerifier:", attestationVerifier);
-
-        address membershipVerifier =
-            address(new MembershipVerifier{salt: keccak256(abi.encodePacked(baseSalt, "MembershipVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.MEMBERSHIP, membershipVerifier);
-        console.log("  MembershipVerifier:", membershipVerifier);
-
-        address nonMembershipVerifier =
-            address(new NonMembershipVerifier{salt: keccak256(abi.encodePacked(baseSalt, "NonMembershipVerifier"))}());
-        verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, nonMembershipVerifier);
-        console.log("  NonMembershipVerifier:", nonMembershipVerifier);
-
-        // Provider-signed variants close audit finding I-1. Strict-mode jurisdictions
-        // (US BSA, Singapore) reject the unsigned siblings; permissive jurisdictions
-        // accept either. See JurisdictionConfig.requireSignedSignals.
-        address complianceSignedVerifier = address(
-            new ComplianceSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceSignedVerifier"))}()
-        );
-        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_SIGNED, complianceSignedVerifier);
-        console.log("  ComplianceSignedVerifier:", complianceSignedVerifier);
-
-        address riskScoreSignedVerifier = address(
-            new RiskScoreSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "RiskScoreSignedVerifier"))}()
-        );
-        verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, riskScoreSignedVerifier);
-        console.log("  RiskScoreSignedVerifier:", riskScoreSignedVerifier);
+        //    Factored into a helper so run()'s local-variable count stays
+        //    inside the EVM stack budget (audit F-1 hardening: previously the
+        //    inline form pushed run() over the limit once post-conditions
+        //    were added).
+        _deployAndRegisterVerifiers(verifier, baseSalt);
 
         // 4. Optional: deploy XochiTimelock and transfer ownership to it.
         //    For production deployments, this is strongly recommended -- the timelock
         //    enforces the 24h / 6h delays documented in docs/THREAT_MODEL.md.
         if (useTimelock) {
-            address proposer = vm.envAddress("TIMELOCK_PROPOSER");
-            address guardian = vm.envOr("TIMELOCK_GUARDIAN", address(0));
-            require(proposer != address(0), "TIMELOCK_PROPOSER must be set when USE_TIMELOCK=true");
-
-            XochiTimelock timelock =
-                new XochiTimelock{salt: keccak256(abi.encodePacked(baseSalt, "timelock"))}(proposer, guardian);
-            console.log("XochiTimelock:", address(timelock));
-            console.log("  proposer:", proposer);
-            console.log("  guardian:", guardian);
-
-            // Begin two-step ownership transfer to the timelock.
-            // The timelock proposer must accept via the standard schedule +
-            // execute path (audit F-5: the convenience acceptOwnership shortcut
-            // was removed). Each accept consumes one HIGH_DELAY slot; the
-            // 48-hour Ownable2Step deadline leaves a 24h margin.
-            verifier.transferOwnership(address(timelock));
-            oracle.transferOwnership(address(timelock));
-            console.log("Ownership transfer initiated. Proposer accepts via timelock schedule+execute:");
-            console.log("  data = abi.encodeWithSignature(\"acceptOwnership()\")");
-            console.log("  - timelock.schedule(verifier, 0, data, salt)  then execute after 24h");
-            console.log("  - timelock.schedule(oracle,   0, data, salt)  then execute after 24h");
-            console.log("Must complete within Ownable2Step's 48h acceptance window.");
+            _setupTimelock(verifier, oracle, baseSalt);
         }
 
         vm.stopBroadcast();
+
+        // ─── Post-condition assertions (audit F-1) ──────────────────────────
+        //
+        // Validate the deployment ended up in the expected state. Forge
+        // scripts halt on revert, so any failed assertion here aborts the
+        // whole run -- preventing a partial-state deployment from being
+        // declared successful. Run before the deployer hands off.
+        _assertPostConditions(verifier, oracle, useTimelock, deployer, providerIds.length);
+    }
+
+    /// @dev Deploy each generated UltraHonk verifier and register it with the
+    ///      router. Direct `new` (not vm.getCode) avoids the artifact-lookup
+    ///      quirk where `forge script`'s build set differs from `forge test`'s.
+    function _deployAndRegisterVerifiers(XochiZKPVerifier verifier, bytes32 baseSalt) internal {
+        address v;
+        v = address(new ComplianceVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE, v);
+        console.log("  ComplianceVerifier:", v);
+
+        v = address(new RiskScoreVerifier{salt: keccak256(abi.encodePacked(baseSalt, "RiskScoreVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.RISK_SCORE, v);
+        console.log("  RiskScoreVerifier:", v);
+
+        v = address(new PatternVerifier{salt: keccak256(abi.encodePacked(baseSalt, "PatternVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.PATTERN, v);
+        console.log("  PatternVerifier:", v);
+
+        v = address(new AttestationVerifier{salt: keccak256(abi.encodePacked(baseSalt, "AttestationVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.ATTESTATION, v);
+        console.log("  AttestationVerifier:", v);
+
+        v = address(new MembershipVerifier{salt: keccak256(abi.encodePacked(baseSalt, "MembershipVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.MEMBERSHIP, v);
+        console.log("  MembershipVerifier:", v);
+
+        v = address(new NonMembershipVerifier{salt: keccak256(abi.encodePacked(baseSalt, "NonMembershipVerifier"))}());
+        verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, v);
+        console.log("  NonMembershipVerifier:", v);
+
+        // Provider-signed variants close audit finding I-1. Strict-mode jurisdictions
+        // (US BSA, Singapore) reject the unsigned siblings; permissive jurisdictions
+        // accept either. See JurisdictionConfig.requireSignedSignals.
+        v = address(
+            new ComplianceSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceSignedVerifier"))}()
+        );
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_SIGNED, v);
+        console.log("  ComplianceSignedVerifier:", v);
+
+        v = address(
+            new RiskScoreSignedVerifier{salt: keccak256(abi.encodePacked(baseSalt, "RiskScoreSignedVerifier"))}()
+        );
+        verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, v);
+        console.log("  RiskScoreSignedVerifier:", v);
+    }
+
+    /// @dev Deploy XochiTimelock and start the two-step ownership transfer.
+    ///      The proposer must accept via the standard schedule + execute path
+    ///      (audit F-5 closure).
+    function _setupTimelock(XochiZKPVerifier verifier, XochiZKPOracle oracle, bytes32 baseSalt) internal {
+        address proposer = vm.envAddress("TIMELOCK_PROPOSER");
+        address guardian = vm.envOr("TIMELOCK_GUARDIAN", address(0));
+        require(proposer != address(0), "TIMELOCK_PROPOSER must be set when USE_TIMELOCK=true");
+
+        XochiTimelock timelock =
+            new XochiTimelock{salt: keccak256(abi.encodePacked(baseSalt, "timelock"))}(proposer, guardian);
+        console.log("XochiTimelock:", address(timelock));
+        console.log("  proposer:", proposer);
+        console.log("  guardian:", guardian);
+
+        verifier.transferOwnership(address(timelock));
+        oracle.transferOwnership(address(timelock));
+        console.log("Ownership transfer initiated. Proposer accepts via timelock schedule+execute:");
+        console.log("  data = abi.encodeWithSignature(\"acceptOwnership()\")");
+        console.log("  - timelock.schedule(verifier, 0, data, salt)  then execute after 24h");
+        console.log("  - timelock.schedule(oracle,   0, data, salt)  then execute after 24h");
+        console.log("Must complete within Ownable2Step's 48h acceptance window.");
+    }
+
+    /// @dev Verifies every invariant the deploy flow is supposed to establish.
+    ///      Reverts with a descriptive message if any check fails.
+    function _assertPostConditions(
+        XochiZKPVerifier verifier,
+        XochiZKPOracle oracle,
+        bool useTimelock,
+        address deployer,
+        uint256 expectedProviderCount
+    ) internal view {
+        // 1. Oracle's immutable verifier reference matches what we deployed.
+        require(address(oracle.verifier()) == address(verifier), "post-deploy: oracle.verifier mismatch");
+
+        // 2. Every proof type 0x01..0x08 has a non-zero verifier registered.
+        uint8[8] memory ptypes = [
+            ProofTypes.COMPLIANCE,
+            ProofTypes.RISK_SCORE,
+            ProofTypes.PATTERN,
+            ProofTypes.ATTESTATION,
+            ProofTypes.MEMBERSHIP,
+            ProofTypes.NON_MEMBERSHIP,
+            ProofTypes.COMPLIANCE_SIGNED,
+            ProofTypes.RISK_SCORE_SIGNED
+        ];
+        for (uint256 i; i < ptypes.length; i++) {
+            address v = verifier.getVerifier(ptypes[i]);
+            require(v != address(0), "post-deploy: verifier not set for some proof type");
+            require(v.code.length > 0, "post-deploy: verifier address has no code");
+        }
+
+        // 3. Initial provider expansion is registered for the active config
+        //    (audit F-2 closure: the constructor wrote it atomically).
+        uint256[] memory expansion = oracle.getProviderConfigExpansion(oracle.providerConfigHash());
+        require(expansion.length == expectedProviderCount, "post-deploy: provider expansion length mismatch");
+
+        // 4. Ownership state matches the requested deployment shape.
+        if (useTimelock) {
+            // After transferOwnership, owner is still the deployer until the
+            // timelock accepts; pendingOwner must be the timelock for both.
+            require(verifier.owner() == deployer, "post-deploy: verifier owner not deployer pre-accept");
+            require(oracle.owner() == deployer, "post-deploy: oracle owner not deployer pre-accept");
+            require(verifier.pendingOwner() != address(0), "post-deploy: verifier pendingOwner unset");
+            require(oracle.pendingOwner() != address(0), "post-deploy: oracle pendingOwner unset");
+        } else {
+            require(verifier.owner() == deployer, "post-deploy: verifier owner mismatch");
+            require(oracle.owner() == deployer, "post-deploy: oracle owner mismatch");
+            require(verifier.pendingOwner() == address(0), "post-deploy: verifier has stray pendingOwner");
+            require(oracle.pendingOwner() == address(0), "post-deploy: oracle has stray pendingOwner");
+        }
+
+        console.log("Post-deploy assertions: PASS");
     }
 }
