@@ -1254,9 +1254,11 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         if (proofSubmitter != msg.sender) revert SubmitterMismatch();
     }
 
-    /// @dev Validate COMPLIANCE_SIGNED public inputs (audit I-1).
-    ///      Identical to _validateComplianceInputs but with an additional
-    ///      `signer_pubkey_hash` slot validated against the on-chain registry.
+    /// @dev Validate COMPLIANCE_SIGNED public inputs (audit I-1 + F-6).
+    ///      Identical to _validateComplianceInputs plus `signer_pubkey_hash`,
+    ///      `chain_id`, and `oracle_address` -- the latter two bind the signed
+    ///      digest to a specific deployment so a provider signature cannot be
+    ///      replayed cross-chain or against an alternate Oracle.
     function _validateComplianceSignedInputs(uint8 jurisdictionId, bytes32 providerSetHash, bytes calldata publicInputs)
         internal
         view
@@ -1269,13 +1271,17 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         //   [3]: timestamp
         //   [4]: meets_threshold
         //   [5]: signer_pubkey_hash
-        //   [6]: submitter
+        //   [6]: chain_id            (audit F-6)
+        //   [7]: oracle_address      (audit F-6)
+        //   [8]: submitter
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
         bytes32 proofMeetsThreshold = bytes32(publicInputs[128:160]);
         bytes32 proofSignerPubkeyHash = bytes32(publicInputs[160:192]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[192:224]))));
+        bytes32 proofChainId = bytes32(publicInputs[192:224]);
+        bytes32 proofOracleAddr = bytes32(publicInputs[224:256]);
+        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[256:288]))));
 
         if (proofJurisdiction != bytes32(uint256(jurisdictionId))) revert PublicInputMismatch();
         if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
@@ -1284,6 +1290,8 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
+        if (proofChainId != bytes32(block.chainid)) revert PublicInputMismatch();
+        if (proofOracleAddr != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
         if (proofSubmitter != msg.sender) revert SubmitterMismatch();
         if (_configContainsDeniedProvider(proofConfigHash)) {
             revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
@@ -1303,15 +1311,17 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         // RISK_SCORE_SIGNED has no proof-internal timestamp; ratchet uses block.timestamp.
         proofTimestamp = block.timestamp;
         // RISK_SCORE_SIGNED public inputs layout (each 32 bytes):
-        //   [0]: proof_type
-        //   [1]: direction
-        //   [2]: bound_lower
-        //   [3]: bound_upper
-        //   [4]: result
-        //   [5]: config_hash
-        //   [6]: provider_set_hash
-        //   [7]: signer_pubkey_hash
-        //   [8]: submitter
+        //   [0]:  proof_type
+        //   [1]:  direction
+        //   [2]:  bound_lower
+        //   [3]:  bound_upper
+        //   [4]:  result
+        //   [5]:  config_hash
+        //   [6]:  provider_set_hash
+        //   [7]:  signer_pubkey_hash
+        //   [8]:  chain_id            (audit F-6)
+        //   [9]:  oracle_address      (audit F-6)
+        //   [10]: submitter
         uint256 proofType = uint256(bytes32(publicInputs[0:32]));
         uint256 direction = uint256(bytes32(publicInputs[32:64]));
         uint256 boundLower = uint256(bytes32(publicInputs[64:96]));
@@ -1319,13 +1329,17 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         bytes32 proofResult = bytes32(publicInputs[128:160]);
         bytes32 proofConfigHash = bytes32(publicInputs[160:192]);
         bytes32 proofSignerPubkeyHash = bytes32(publicInputs[224:256]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[256:288]))));
+        bytes32 proofChainId = bytes32(publicInputs[256:288]);
+        bytes32 proofOracleAddr = bytes32(publicInputs[288:320]);
+        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[320:352]))));
 
         if (proofResult != bytes32(uint256(1))) revert ProofResultNegative();
         if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
+        if (proofChainId != bytes32(block.chainid)) revert PublicInputMismatch();
+        if (proofOracleAddr != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
         if (proofSubmitter != msg.sender) revert SubmitterMismatch();
 
         // Reject trivial / undefined claims (matches unsigned variant).

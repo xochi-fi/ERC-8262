@@ -2889,7 +2889,7 @@ contract XochiZKPOracleTest is Test {
         );
     }
 
-    /// @dev COMPLIANCE_SIGNED public inputs (7 slots: compliance + signer_pubkey_hash)
+    /// @dev COMPLIANCE_SIGNED public inputs (9 slots: compliance + signer_pubkey_hash + chain_id + oracle_address)
     function _complianceSignedInputs(
         uint8 jurisdictionId,
         bytes32 providerSetHash,
@@ -2903,14 +2903,16 @@ contract XochiZKPOracleTest is Test {
             bytes32(block.timestamp), // timestamp
             bytes32(uint256(1)), // meets_threshold
             signerPubkeyHash, // signer_pubkey_hash
+            bytes32(block.chainid), // chain_id (audit F-6)
+            bytes32(uint256(uint160(address(oracle)))), // oracle_address (audit F-6)
             bytes32(uint256(uint160(submitter))) // submitter
         );
     }
 
-    /// @dev RISK_SCORE_SIGNED public inputs (9 slots: risk_score + signer_pubkey_hash)
+    /// @dev RISK_SCORE_SIGNED public inputs (11 slots: risk_score + signer_pubkey_hash + chain_id + oracle_address)
     function _riskScoreSignedInputs(bytes32 configHash, bytes32 signerPubkeyHash, address submitter)
         internal
-        pure
+        view
         returns (bytes memory)
     {
         return abi.encodePacked(
@@ -2922,6 +2924,8 @@ contract XochiZKPOracleTest is Test {
             configHash, // config_hash
             bytes32(uint256(0xeeff)), // provider_set_hash
             signerPubkeyHash, // signer_pubkey_hash
+            bytes32(block.chainid), // chain_id (audit F-6)
+            bytes32(uint256(uint160(address(oracle)))), // oracle_address (audit F-6)
             bytes32(uint256(uint160(submitter))) // submitter
         );
     }

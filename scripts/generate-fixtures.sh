@@ -144,7 +144,9 @@ if [[ $# -gt 0 ]]; then
 else
     for circuit_dir in "$CIRCUITS_DIR"/*/; do
         circuit="$(basename "$circuit_dir")"
+        # Skip the shared lib (no main.nr) and the workspace `target/` build dir.
         [[ "$circuit" == "shared" ]] && continue
+        [[ "$circuit" == "target" ]] && continue
         generate_fixture "$circuit"
     done
 fi

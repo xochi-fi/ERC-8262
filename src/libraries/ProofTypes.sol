@@ -38,10 +38,10 @@ library ProofTypes {
         if (proofType == MEMBERSHIP) return 5;
         // non_membership: merkle_root, set_id, timestamp, is_non_member, submitter
         if (proofType == NON_MEMBERSHIP) return 5;
-        // compliance_signed: compliance fields + signer_pubkey_hash
-        if (proofType == COMPLIANCE_SIGNED) return 7;
-        // risk_score_signed: risk_score fields + signer_pubkey_hash
-        if (proofType == RISK_SCORE_SIGNED) return 9;
+        // compliance_signed: compliance fields + signer_pubkey_hash + chain_id + oracle_address
+        if (proofType == COMPLIANCE_SIGNED) return 9;
+        // risk_score_signed: risk_score fields + signer_pubkey_hash + chain_id + oracle_address
+        if (proofType == RISK_SCORE_SIGNED) return 11;
         revert InvalidProofType(proofType);
     }
 

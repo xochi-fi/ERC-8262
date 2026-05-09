@@ -118,7 +118,7 @@ Any EOA that submits a proof to the Oracle.
 - Submit a proof on behalf of another address. The `submitter` field is a public input, bound to `msg.sender` by the Oracle.
 - Replay a proof on the same chain. Each `(proof, proofType, chainId, oracle)` hash is single-use per deployment.
 - Forge a credential. ATTESTATION proofs require Merkle inclusion in the registered credentials tree; the leaf is bound to (provider, submitter, type, attribute, expiry) and the prover cannot construct an arbitrary leaf without a tree path.
-- Lie about screening signals **for the signed variants**. COMPLIANCE_SIGNED / RISK_SCORE_SIGNED verify a registered provider's secp256k1 signature over `(provider_set_hash, signals, weights, timestamp, submitter)` in-circuit; the prover cannot fabricate signals without forging an ECDSA signature.
+- Lie about screening signals **for the signed variants**. COMPLIANCE_SIGNED / RISK_SCORE_SIGNED verify a registered provider's secp256k1 signature over `(chain_id, oracle_address, provider_set_hash, signals, weights, timestamp, submitter)` in-circuit; the prover cannot fabricate signals without forging an ECDSA signature. Audit F-6: `chain_id` and `oracle_address` bind the digest to a specific deployment so the same signature cannot be replayed across chains or alternate Oracle deployments.
 - Submit unsigned COMPLIANCE / RISK_SCORE in jurisdictions where `JurisdictionConfig.requireSignedSignals` is true (US, Singapore). The Oracle reverts with `SignedSignalsRequired` before any cryptographic work.
 
 In permissive jurisdictions (EU, UK), the unsigned variants accept whatever signals the user supplies. Signal honesty there is the integrator's problem.
@@ -152,7 +152,7 @@ The unsigned COMPLIANCE (0x01) and RISK_SCORE (0x02) circuits accept `signals[]`
 
 **The signed variants close this gap.** COMPLIANCE_SIGNED (0x07) and RISK_SCORE_SIGNED (0x08):
 
-- Verify an in-circuit secp256k1 ECDSA signature over a Pedersen digest of `(provider_set_hash, signals, weights, timestamp, submitter)`. The signer cannot be substituted: `signer_pubkey_hash` is a public input, validated by the Oracle against `_validSignerPubkeyHashes`.
+- Verify an in-circuit secp256k1 ECDSA signature over a Pedersen digest of `(chain_id, oracle_address, provider_set_hash, signals, weights, timestamp, submitter)`. The signer cannot be substituted: `signer_pubkey_hash` is a public input, validated by the Oracle against `_validSignerPubkeyHashes`. The `chain_id` and `oracle_address` fields (audit F-6) anchor the signature to one deployment -- replay across chains or alternate Oracles requires forging a new signature.
 - Bind the submitter into the signed payload. A relayer cannot steal a signed bundle and submit it under a different address; the in-circuit ECDSA verify fails.
 - Are mandatory in strict jurisdictions. `JurisdictionConfig.requireSignedSignals(US) == true` and `requireSignedSignals(SG) == true`; the Oracle reverts with `SignedSignalsRequired` if a caller submits the unsigned variants for those jurisdictions. Permissive jurisdictions (EU, UK) accept either; integrators that care about signal honesty there should pick the signed variant explicitly.
 

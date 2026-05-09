@@ -13,6 +13,8 @@
 ///   - config_hash: hash of published weight configuration
 ///   - provider_set_hash: commitment to which providers were used
 ///   - signer_pubkey_hash: Pedersen commitment to the provider signer pubkey
+///   - chain_id: EVM chain ID, committed in the signed digest (audit F-6)
+///   - oracle_address: deployment address of the consuming Oracle (audit F-6)
 ///   - submitter: address of the authorized proof submitter
 ///
 /// Private inputs:
@@ -58,6 +60,9 @@ fn main(
     config_hash: pub Field,
     provider_set_hash: pub Field,
     signer_pubkey_hash: pub Field,
+    // Audit F-6: bind the signed digest to a specific deployment.
+    chain_id: pub Field,
+    oracle_address: pub Field,
     submitter: pub Field,
 ) {
     // 1. Validate inputs
@@ -115,6 +120,8 @@ fn main(
 
     // 8. *** Provider signature verification (audit I-1 remediation). ***
     let payload_hash = compute_signed_payload_hash(
+        chain_id,
+        oracle_address,
         provider_set_hash,
         signals,
         weights,
@@ -153,6 +160,8 @@ fn test_main_revert_wrong_pubkey_hash() {
         PROOF_THRESHOLD, DIRECTION_GT, 5000, 0, true,
         config, provider_hash,
         0xdeadbeef,
+        1,          // chain_id
+        0xabcd1234, // oracle_address
         0xdead,
     );
 }
@@ -176,6 +185,8 @@ fn test_main_revert_threshold_mismatch() {
         PROOF_THRESHOLD, DIRECTION_GT, 5000, 0, true, // 2000 > 5000 false; claim true
         config, provider_hash,
         0,
+        1,          // chain_id
+        0xabcd1234, // oracle_address
         0xdead,
     );
 }
