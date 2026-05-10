@@ -73,7 +73,7 @@ The verifier routes proof verification to per-proof-type verification contracts.
 ```solidity
 interface IXochiZKPVerifier {
     /// @notice Verify a zero-knowledge compliance proof
-    /// @param proofType The type of proof (0x01-0x06)
+    /// @param proofType The type of proof (0x01-0x08)
     /// @param proof The encoded proof data
     /// @param publicInputs The public inputs to the verification circuit (packed bytes32 values)
     /// @return valid Whether the proof is valid
@@ -95,7 +95,7 @@ interface IXochiZKPVerifier {
     ) external view returns (bool valid);
 
     /// @notice Get the address of the verifier contract for a proof type
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @return verifier The verifier contract address (address(0) if not set)
     function getVerifier(uint8 proofType) external view returns (address verifier);
 }
@@ -141,7 +141,7 @@ interface IXochiZKPOracle {
 
     /// @notice Submit a compliance proof and record the attestation
     /// @param jurisdictionId Target jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
-    /// @param proofType The proof type for verifier routing (0x01-0x06)
+    /// @param proofType The proof type for verifier routing (0x01-0x08)
     /// @param proof The ZK proof data
     /// @param publicInputs Public inputs matching the circuit's pub parameters
     /// @param providerSetHash Hash of provider IDs and weights used for screening
@@ -222,7 +222,7 @@ Provider configuration MUST be versioned. Implementations SHOULD maintain a hist
 
 Implementations MUST maintain a registry mapping each proof type to a per-circuit verifier contract. Each ZK circuit (compiled separately) produces its own verification key and verifier contract. The main verifier contract acts as a router:
 
-1. Caller specifies `proofType` (0x01-0x06)
+1. Caller specifies `proofType` (0x01-0x08)
 2. Router looks up the registered verifier for that type
 3. Public inputs are decoded from packed `bytes` to `bytes32[]`
 4. The per-circuit verifier's `verify(bytes, bytes32[])` is called
@@ -237,14 +237,16 @@ Public inputs MUST be 32-byte aligned. Implementations MUST reject `publicInputs
 
 The following validation MUST be performed per proof type:
 
-| Proof Type     | Validated Fields                                                 | Registry                     |
-| -------------- | ---------------------------------------------------------------- | ---------------------------- |
-| COMPLIANCE     | jurisdiction_id, provider_set_hash, config_hash, meets_threshold | Config hash registry         |
-| RISK_SCORE     | result, config_hash, provider_set_hash                           | Config hash registry         |
-| PATTERN        | result, reporting_threshold, tx_set_hash != 0                    | Reporting threshold registry |
-| ATTESTATION    | is_valid, credential_root, provider_id                           | Credential root registry (per-provider) |
-| MEMBERSHIP     | merkle_root, is_member                                           | Merkle root registry         |
-| NON_MEMBERSHIP | merkle_root, is_non_member                                       | Merkle root registry         |
+| Proof Type        | Validated Fields                                                                                                            | Registry                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| COMPLIANCE        | jurisdiction_id, provider_set_hash, config_hash, meets_threshold                                                            | Config hash registry                    |
+| RISK_SCORE        | result, config_hash, provider_set_hash                                                                                      | Config hash registry                    |
+| PATTERN           | result, reporting_threshold, tx_set_hash != 0                                                                               | Reporting threshold registry            |
+| ATTESTATION       | is_valid, credential_root, provider_id                                                                                      | Credential root registry (per-provider) |
+| MEMBERSHIP        | merkle_root, is_member                                                                                                      | Merkle root registry                    |
+| NON_MEMBERSHIP    | merkle_root, is_non_member                                                                                                  | Merkle root registry                    |
+| COMPLIANCE_SIGNED | jurisdiction_id, provider_set_hash, config_hash, meets_threshold, signer_pubkey_hash, chain_id == block.chainid, oracle_address == address(this) | Config hash + signer-pubkey-hash registries |
+| RISK_SCORE_SIGNED | result, config_hash, provider_set_hash, semantic-bound checks, signer_pubkey_hash, chain_id == block.chainid, oracle_address == address(this) | Config hash + signer-pubkey-hash registries |
 
 ### Proof Result Validation
 
@@ -339,7 +341,7 @@ This enables proof-of-innocence: counterparties to retroactively flagged address
 
 **Why attestation TTL?** Compliance status is not permanent. A user who was compliant yesterday may not be compliant today. Screening providers update their data continuously. The TTL forces periodic re-attestation while keeping the window configurable per deployment context.
 
-**Why six proof types?** Each proof type maps to a separate ZK circuit with distinct constraint logic. Compliance handles the core risk score check. Risk Score provides standalone threshold/range proofs. Pattern detects structuring behaviors. Attestation verifies credentials from authorized providers. Membership proves inclusion in an authorized set (whitelist). Non-membership proves exclusion from a sanctions list via sorted Merkle tree adjacency. This separation keeps individual circuits small and auditable.
+**Why eight proof types?** Each proof type maps to a separate ZK circuit with distinct constraint logic. Compliance handles the core risk score check. Risk Score provides standalone threshold/range proofs. Pattern detects structuring behaviors. Attestation verifies credentials from authorized providers. Membership proves inclusion in an authorized set (whitelist). Non-membership proves exclusion from a sanctions list via sorted Merkle tree adjacency. The two `_signed` variants (Compliance Signed, Risk Score Signed) shadow their unsigned siblings but additionally verify a provider's secp256k1 ECDSA signature over the screening payload in-circuit and bind to (`chain_id`, `oracle_address`). They are separate circuits rather than an oracle-side flag because the signature check materially changes the constraint set: an unsigned proof has no provenance for its `signals[]` private witness, while a signed proof cryptographically attests them. Strict-mode jurisdictions (US BSA, Singapore) accept only the signed forms. This separation keeps individual circuits small and auditable, and lets unsigned-tolerant jurisdictions deploy without paying the signature-verification gas overhead.
 
 ## Backwards Compatibility
 
@@ -353,7 +355,7 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 
 **Privacy Pools (0xbow).** Live on Ethereum mainnet since March 2025. Users prove their withdrawal originates from a "clean" deposit set using ZK proofs, with Association Set Providers (ASPs) maintaining approved deposit lists. The Privacy Pools protocol validates the "prove compliance without revealing data" model. However, set membership is a subset of what regulatory compliance requires. This ERC extends the approach to multi-dimensional compliance: risk scoring, anti-structuring detection, credential verification, and membership/non-membership proofs.
 
-**EIP-7963.** An oracle-permissioned ERC-20 that validates token transfers via ZK proofs against off-chain payment instructions (ISO 20022 format), using RISC Zero as the proof system. EIP-7963 gates a single token's transfers through a single oracle with a single proof type. This ERC provides standalone compliance attestations with six proof types, usable by any contract, and is not gated to token operations.
+**EIP-7963.** An oracle-permissioned ERC-20 that validates token transfers via ZK proofs against off-chain payment instructions (ISO 20022 format), using RISC Zero as the proof system. EIP-7963 gates a single token's transfers through a single oracle with a single proof type. This ERC provides standalone compliance attestations with eight proof types, usable by any contract, and is not gated to token operations.
 
 **VOSA-RWA.** A compliance-gated privacy token for real-world assets (Draft, 2026). Every token operation requires dual ZK proofs: a compliance attestation (Groth16/BN254, Poseidon hashing) and a transaction conservation proof. VOSA-RWA and this ERC share the "ZK proof for compliance, no PII on-chain" design, but VOSA-RWA embeds compliance into a specific token standard. This ERC is a standalone oracle whose attestations are reusable across protocols.
 
@@ -377,7 +379,7 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 
 **Front-running the oracle.** Compliance proofs are generated before settlement. An adversary who observes a proof submission could infer a trade is about to occur. Implementations SHOULD batch proof submissions or submit them as part of the settlement transaction to minimize information leakage.
 
-**Administrative operations.** Verifier contract updates and provider weight changes are privileged operations. Implementations SHOULD use a two-step ownership transfer pattern (transferOwnership + acceptOwnership) to prevent accidental transfer to an incorrect address. Critical operations (verifier replacement, TTL changes) SHOULD be timelocked in production deployments.
+**Administrative operations.** Verifier contract updates and provider weight changes are privileged operations. Implementations SHOULD use a two-step ownership transfer pattern (transferOwnership + acceptOwnership) to prevent accidental transfer to an incorrect address. Critical operations (verifier replacement, TTL changes) SHOULD be timelocked in production deployments. Implementations SHOULD further split administrative authority into role classes with bounded blast radius -- for example, a pause-only "guardian" role distinct from registry-mutating and config-mutating roles -- so that a single compromised key cannot both pause and rewrite registries. The reference implementation uses three roles (GUARDIAN = pause + immediate-revoke, REGISTRAR = registries, CONFIG = configs and verifier upgrades) under a 2-tier (HIGH 24h / LOW 6h) selector-gated timelock.
 
 **Public input validation.** Implementations MUST validate public inputs for every proof type, not just the primary compliance proof. Without validation, a prover can generate a proof for one context (e.g., a lenient jurisdiction's reporting threshold) and submit it for a different context. Specifically:
 
@@ -390,15 +392,17 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 - PATTERN (anti-structuring) proofs MUST validate `reporting_threshold` against a per-jurisdiction registry, enforce `time_window >= MIN_TIME_WINDOW`, and validate that `analysis_type` is one of the supported analyses. Implementations that depend on a specific analysis type (e.g., a settlement registry requiring anti-structuring) MUST verify the `analysis_type` field separately, since the result boolean alone is insufficient.
 - ATTESTATION proofs MUST validate `credential_root` against the per-provider credential root registry AND verify the registry's recorded `providerId` matches the proof's `provider_id` public input. Without this cross-check, a proof for one provider's tree could be replayed against another provider's registration.
 - MEMBERSHIP and NON_MEMBERSHIP proofs MUST validate `merkle_root` against the generic merkle root registry.
-- Unknown proof types (outside 0x01-0x06) MUST be rejected.
+- COMPLIANCE_SIGNED and RISK_SCORE_SIGNED proofs MUST validate `signer_pubkey_hash` against an on-chain registry of authorized provider signing keys, AND MUST validate `chain_id == block.chainid` and `oracle_address == address(this)`. Without the chain/oracle binding, a single provider signature could mint attestations across alternate Oracle deployments (different chain, or a forked Oracle on the same chain).
+- Strict-mode jurisdictions SHOULD reject the unsigned siblings entirely and accept only the signed variants. The reference implementation enforces this for US (BSA) and Singapore via `JurisdictionConfig.requireSignedSignals(uint8)`.
+- Unknown proof types (outside 0x01-0x08) MUST be rejected.
 
-**Proof replay prevention.** Proof hashes MUST be keyed on both the proof bytes and the proof type: `keccak256(abi.encodePacked(proof, proofType))`. Including `proofType` in the hash ensures that proof uniqueness is scoped per proof type: identical proof bytes submitted for different proof types are treated as distinct proofs.
+**Proof replay prevention.** Proof hashes MUST be keyed on the proof bytes, the proof type, and the deployment context: `keccak256(abi.encodePacked(proof, proofType, block.chainid, address(this)))`. Including `proofType` scopes uniqueness per proof type (identical proof bytes submitted for different proof types are treated as distinct proofs); including `block.chainid` and `address(this)` prevents replay-into-storage from a forked or alternate Oracle deployment on the same or different chain, even if the underlying ZK proof is chain-agnostic. Note this is the on-chain replay guard only; see "Cross-chain replay" below for in-circuit chain binding (relevant to the signed variants).
 
 **Config and root revocation.** Provider configuration hashes and merkle roots SHOULD be revocable. Without revocation, a discovered-to-be-flawed configuration or a compromised merkle tree remains accepted forever. Implementations MUST NOT allow revoking the currently active provider configuration. Provider configuration history SHOULD be bounded to prevent unbounded storage growth (e.g., 256 entries).
 
 **Verifier TOCTOU.** Implementations MUST resolve the verifier address once per submission and use it for both proof verification and attestation recording. A time-of-check/time-of-use gap between address resolution and proof verification could allow the recorded `verifierUsed` to diverge from the actual verifier if a verifier upgrade occurs mid-transaction.
 
-**Batch verification limits.** Implementations MUST enforce a maximum batch size for `verifyProofBatch()` to prevent unbounded gas consumption. The reference implementation uses a limit of 100 proofs per batch.
+**Batch verification limits.** Implementations MUST enforce a maximum batch size for `verifyProofBatch()` to prevent unbounded gas consumption. The reference implementation uses a limit of 10 proofs per batch, sized to fit comfortably under a 30M-gas mainnet block ceiling (approximately 24M gas at the maximum batch size, with ~5M gas of headroom). Implementations targeting chains with different block-gas budgets SHOULD recalibrate the limit accordingly.
 
 **Registry idempotency.** Registry operations (registering merkle roots, reporting thresholds) SHOULD be idempotent-safe: re-registering an already-registered value SHOULD revert to prevent accidental double-registration. Similarly, revoking a value that is not registered SHOULD revert.
 
@@ -408,7 +412,9 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 
 **ATTESTATION authority root.** ATTESTATION proofs verify Merkle inclusion of a credential leaf in a per-provider credentials tree. The leaf is `H(DOMAIN_CREDENTIAL, provider_id, submitter, type, attribute, expiry)`, which binds the credential to the submitter cryptographically; a forged credential leaf cannot be constructed without breaking Pedersen preimage resistance. However, the circuit does NOT verify a provider signature over the credential leaf or root in-circuit. Authority resolves to the registered publisher EOA: the Oracle records each `credentialRoot` against `(providerId, publisherEOA)`, with a 48 h root TTL and an owner-rotatable publisher. A compromised publisher EOA can publish a tree containing arbitrary `(submitter, attribute)` pairs until the owner rotates the publisher (`setProviderPublisher`, 6 h timelock) or revokes the root (`revokeCredentialRoot`, instant). Implementations whose threat model includes a compromised publisher key SHOULD layer an in-circuit signature scheme over the credential root or credential leaf; this is tracked as future work and is intentionally NOT required by this draft.
 
-**Cross-chain replay.** Proof public inputs do not include a chain identifier. The same proof bytes may be submitted on multiple chain deployments of the Oracle, producing independent attestations on each chain. Per-chain replay protection (`_usedProofs[proofHash]`) prevents within-chain replay. Implementations that require strict chain-binding MUST add `chainId` to a relevant public input or commit it via the credential issuance process (out-of-band).
+**Cross-chain replay.** The unsigned proof types (COMPLIANCE, RISK_SCORE, PATTERN, ATTESTATION, MEMBERSHIP, NON_MEMBERSHIP) do NOT include a chain identifier as a circuit public input. The same proof bytes may be replayed against the same Oracle on a different chain (or against an alternate Oracle deployment on the same chain), producing independent attestations on each. The on-chain `proofHash = keccak256(proof, proofType, block.chainid, address(this))` and the `_usedProofs[proofHash]` guard prevent replay-into-storage *within* a given (chain, Oracle) pair, but provide no in-circuit binding. Implementations whose threat model includes cross-deployment replay of unsigned proofs MUST add `chainId` and the verifying contract address as circuit public inputs.
+
+The signed variants (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED) close this gap mathematically: their in-circuit Pedersen digest commits to (`chain_id`, `oracle_address`, `provider_set_hash`, `signals`, `weights`, `timestamp`, `submitter`), and the secp256k1 ECDSA verification of the provider's signature happens over that digest. Replaying a signed proof against a different chain or Oracle requires forging a new ECDSA signature over the new (chain_id, oracle_address) pair under the registered provider's key. Implementations MUST validate `chain_id == block.chainid` and `oracle_address == address(this)` on every signed-variant submission.
 
 **Verifier-layer reentrancy.** The `IUltraVerifier.verify(...)` interface MUST be declared `view` so that the EVM uses STATICCALL when invoking the verifier. STATICCALL prevents a malicious or compromised verifier from mutating state in the calling contract via reentrant calls. Implementations MUST NOT call verifiers via interfaces that omit the `view` modifier.
 
@@ -416,14 +422,14 @@ Several existing and emerging standards address compliance, privacy, or on-chain
 
 A reference implementation is provided at [erc-xochi-zkp](https://github.com/xochi-fi/erc-xochi-zkp):
 
-- **Solidity contracts**: `src/XochiZKPVerifier.sol`, `src/XochiZKPOracle.sol` (Foundry, Solidity 0.8.28)
-- **Noir circuits**: `circuits/` (one per proof type, compiled with nargo 1.0)
-- **Generated verifiers**: `src/generated/` (UltraHonk verifiers generated by Barretenberg)
-- **Test suite**: Solidity tests (unit, fuzz, invariant, integration with real proofs for all 6 proof types) and circuit tests
+- **Solidity contracts**: `src/XochiZKPVerifier.sol`, `src/XochiZKPOracle.sol`, `src/SettlementRegistry.sol`, `src/XochiTimelock.sol` (Foundry, Solidity 0.8.28, Cancun EVM)
+- **Noir circuits**: `circuits/` (one per proof type, pinned to nargo 1.0.0-beta.20 via `.tool-versions`)
+- **Generated verifiers**: `src/generated/` (UltraHonk verifiers generated by Barretenberg, pinned to bb 4.0.0-nightly.20260120)
+- **Test suite**: Solidity tests (unit, fuzz, invariant, integration with real proofs for the 6 unsigned proof types) and circuit tests across all 8 circuits. The signed variants (0x07, 0x08) are exercised in the TypeScript SDK consumer tests (`test/sdk/`) which generate a fresh ECDSA witness per run.
 
 ## Test Vectors
 
-The reference implementation includes binary proof fixtures in `test/fixtures/` for all six proof types. Each fixture contains:
+The reference implementation includes binary proof fixtures in `test/fixtures/` for the six unsigned proof types. Static fixtures are not provided for the two signed variants (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED) because each requires a fresh secp256k1 ECDSA witness; those are exercised end-to-end in the TypeScript SDK consumer tests instead. Each unsigned fixture contains:
 
 - `proof`: the raw UltraHonk proof bytes (8640 bytes each)
 - `public_inputs`: the packed bytes32 public inputs
