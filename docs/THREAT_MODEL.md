@@ -168,14 +168,18 @@ If a tree publisher constructs leaves incorrectly (e.g., not binding to `submitt
 
 ### Cross-chain semantic equivalence
 
-The proof itself contains no chain identifier. A proof that verifies on chain A also verifies on chain B if both chains have the same Verifier deployed and the same registry contents (config hash, merkle roots, credential roots, etc.). This is **by design**:
+The chain-binding story splits cleanly along the signed/unsigned axis.
+
+**Unsigned variants (COMPLIANCE, RISK_SCORE, PATTERN, ATTESTATION, MEMBERSHIP, NON_MEMBERSHIP).** The circuit itself contains no chain identifier. A proof that verifies on chain A also verifies on chain B if both chains have the same verifier deployed and the same registry contents (config hash, merkle roots, credential roots, etc.). This is **by design**:
 
 - The fact a proof asserts (compliance, risk, credential) is chain-independent.
-- Each chain has its own `_usedProofs[proofHash]` storage, so per-chain replay protection still applies.
+- Each chain has its own `_usedProofs[proofHash]` storage with `proofHash = keccak256(proof, proofType, block.chainid, address(this))`, so per-(chain, Oracle) replay-into-storage is still blocked.
 - Each chain has its own attestation record; a counterparty on chain B does not see chain A's attestation unless they query chain A directly.
 - Each chain's per-circuit registries gate validity: a proof referencing config hash `H` only validates on chains where `H` is registered.
 
-If an integrator wants strict chain-binding, they must include `chainId` in the credential payload off-chain (out-of-band), or insist on a provider-issued credential with chain-specific scope. Adding `chainId` as a circuit public input would require a redesign and re-generation of all six verifiers; this has not been done because the marginal value over per-chain registry validation is small.
+If an integrator wants strict chain-binding for an unsigned proof type, they must include `chainId` in the credential payload off-chain (out-of-band), or insist on a provider-issued credential with chain-specific scope. The marginal value of in-circuit chain binding over per-chain registry validation was judged small for the unsigned variants and has not been done.
+
+**Signed variants (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED).** Audit F-6 closed the equivalent gap mathematically. The in-circuit Pedersen digest binds (`chain_id`, `oracle_address`, `provider_set_hash`, `signals`, `weights`, `timestamp`, `submitter`), and the secp256k1 ECDSA verification of the provider's signature happens over that digest. The Oracle additionally enforces `chain_id == block.chainid` and `oracle_address == address(this)` on every signed-variant submission. Replaying a signed proof against a different chain or against an alternate Oracle deployment on the same chain therefore requires forging a new ECDSA signature under the registered provider's key.
 
 ### Future credential validity
 
@@ -261,7 +265,7 @@ We are **not engineering for PQ resistance in this draft**. Mainstream estimates
 
 **Impact.** Forged proofs that pass verification.
 
-**Response runbook.**
+**Response runbook.** Codified end-to-end as `test/Incident_VerifierSoundness.t.sol` (audit F-7); the test asserts the full sequence below plus the negative-control cases (`cannotRevokeCurrentVersion`, surgical-pause, global-pause).
 
 1. **Immediately:** `pauseProofType(affectedType)` from the owner. This stops both new `submitCompliance` calls and re-verifications via `verifyProofAtVersion`.
 2. **Within 24 h:** `proposeVerifier(affectedType, fixed)` — schedules the upgrade.
@@ -288,7 +292,7 @@ We are **not engineering for PQ resistance in this draft**. Mainstream estimates
 
 **Mitigation.**
 
-- `bb` and `nargo` versions are pinned in CI (see `Nargo.toml` / `package.json` / build docs).
+- `bb` and `nargo` versions are pinned in `.tool-versions` (read by mise/asdf) and verified by `make check-toolchain`. `make fixtures` depends on `check-toolchain` so a regeneration with mismatched versions fails fast locally; CI runs `scripts/parity-check.py` (audit F-8) on every PR to assert that the circuit's logical public-input arity matches the generated verifier's `NUMBER_OF_PUBLIC_INPUTS - 16` and the Solidity expectation.
 - Generated verifier files are committed to the repo and reviewed manually on each regeneration.
 - `VK_HASH` is recorded in each verifier and emitted by `bb`; it can be cross-validated against the compiled circuit JSON.
 - Aztec security advisories are tracked.
@@ -387,5 +391,4 @@ These do not block deployment but should be tracked:
 - Provider Issuance Protocol HTTP spec + reference SDK (UX work, separate stream).
 - TS `CredentialClient` SDK for path resolution and root rotation handling.
 - Per-provider revocation Merkle tree (currently revocation requires republishing the credentials tree without the bad leaf; a non-membership-based revocation tree would allow per-credential revocation without rebuilding).
-- Deployment scripts (`script/`) updated to set up provider publishers as part of bootstrap.
-- Toolchain version pinning enforcement in CI.
+- Toolchain version pinning enforced as a dedicated CI step (`make check-toolchain` is not currently a stand-alone CI gate; it runs transitively when `make fixtures` is invoked locally).
