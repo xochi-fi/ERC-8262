@@ -21,7 +21,11 @@ This is distinct from view keys (Railgun, Panther) where you trade privately and
 | Compliance (signed) | 0x07 | Compliance + provider sig         | Signals, score, sig | compliance_signed |
 | Risk Score (signed) | 0x08 | Risk Score + provider sig         | Exact score, sig    | risk_score_signed |
 
-The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values. Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA) and Singapore require signed; EU (AMLD6) and UK (MLR) accept either. The `signer_pubkey_hash` public input is validated against an on-chain registry (`registerSignerPubkeyHash`) so a compromised provider can be rotated without redeploying circuits.
+The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values.
+
+Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA) and Singapore require signed; EU (AMLD6) and UK (MLR) accept either.
+
+The `signer_pubkey_hash` public input is validated against an on-chain registry (`registerSignerPubkeyHash`), so a compromised provider can be rotated without redeploying circuits.
 
 ## How it works
 
@@ -42,27 +46,30 @@ The proof also commits to a timestamp and the screening providers used, enabling
 ## Architecture
 
 ```solidity
-                  +------------------+
-                  | XochiZKPOracle   |  <-
-                  | (attestation     |  // submitCompliance(), checkCompliance(),
-                  |  storage +       |  // getHistoricalProof()
-                  |  input validation|  // validates config hashes, merkle roots,
-                  |  + registries)   |  // reporting thresholds per proof type
-                  +--------+---------+
-                           |
-                           | IUltraVerifier.verify() (view, direct call)
-                           v
-     +---------+---------+---------+---------+---------+---------+
-     |         |         |         |         |         |         |
-     v         v         v         v         v         v         v
-     +-------+ +-------+ +-------+ +-------+ +-------+ +-------+ +--------+
-     |Compli-| |Risk   | |Pattern| |Attest.| |Member | |Non-   | |Verifier|
-     |ance   | |Score  | |       | |       | |ship   | |member | |Router  |
-     +-------+ +-------+ +-------+ +-------+ +-------+ +-------+ +--------+
-     Generated UltraHonk verifiers (bb write_solidity_verifier)
+                +-------------------------+
+                |  XochiZKPOracle         |  submitCompliance / checkCompliance
+                |  attestation storage,   |  getHistoricalProof, 8 registries,
+                |  input validation,      |  ratchet, replay protection,
+                |  jurisdiction policy    |  signed-signals enforcement
+                +------------+------------+
+                             |
+                             | verify(proofType, proof, publicInputs)  (view)
+                             v
+                +-------------------------+
+                |  XochiZKPVerifier       |  routes proofType -> UltraHonk verifier
+                +------------+------------+
+                             |
+   +----+-----+-----+-----+--+--+-----+-----+--------+
+   v    v     v     v     v     v     v     v
+  0x01 0x02  0x03  0x04  0x05  0x06  0x07   0x08
+  comp risk  patt  attst memb  non-  comp_  risk_
+  lian _scor ern   ation rship membr signed _signed
+  ce   e                       ship
+
+  Generated UltraHonk verifiers (one per proof type, via bb write_solidity_verifier)
 ```
 
-Each of the 6 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`).
+Each of the 8 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`).
 
 ## SettlementRegistry
 
@@ -71,7 +78,7 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 - No admin, no pause, no upgradability. Fully immutable.
 - References the Oracle via `getHistoricalProof()` to validate proof existence
 - Interface: `ISettlementRegistry`
-- Test: `forge test --match-contract SettlementRegistry` (40 tests)
+- Test: `forge test --match-contract SettlementRegistry` (45 tests)
 
 ## Repository structure
 
@@ -89,19 +96,30 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
     libraries/
       ProofTypes.sol              # Proof type definitions and encoding
       JurisdictionConfig.sol      # Threshold configurations per jurisdiction
-    XochiZKPVerifier.sol          # Reference verifier (routes to UltraHonk)
-    XochiZKPOracle.sol            # Reference oracle (attestation storage)
+    XochiZKPVerifier.sol          # Verifier router (proofType -> generated UltraHonk verifier)
+    XochiZKPOracle.sol            # Oracle: attestation storage, 8 registries, ratchet, replay
     SettlementRegistry.sol        # Immutable registry linking split settlement proofs to a tradeId
+    XochiTimelock.sol             # 2-tier (24h HIGH / 6h LOW) selector-gated admin delay
+    libraries/
+      ProofTypes.sol              # Proof type IDs + public-input encoding/validation
+      JurisdictionConfig.sol      # Per-jurisdiction thresholds + signed-signals policy
+      AccessControl.sol           # GUARDIAN / REGISTRAR / CONFIG role split
+      EIP712Attestation.sol       # EIP-712 typed data hashing for attestations
+      EIP712CredentialRoot.sol    # EIP-712 typed data hashing for credential roots
+      Ownable2Step.sol            # Two-step ownership transfer
+      Pausable.sol                # Global + per-proof-type pause
     generated/                    # Auto-generated UltraHonk verifiers (do not edit)
-  test/
-    XochiZKPVerifier.t.sol        # Verifier unit tests
-    XochiZKPOracle.t.sol          # Oracle unit + fuzz + invariant tests
-    SettlementRegistry.t.sol      # Settlement registry tests (40 tests)
+  test/                           # Foundry tests (unit, fuzz, invariant, integration)
     Integration.t.sol             # End-to-end tests with real proofs
+    Incident_VerifierSoundness.t.sol  # Soundness-bug runbook-as-code (audit F-7)
     fixtures/                     # Test proof fixtures (generated by scripts/generate-fixtures.sh)
     sdk/                          # TypeScript consumer SDK tests (noir_js + bb.js + anvil)
   script/
-    Deploy.s.sol                  # Deployment script
+    Deploy.s.sol                  # Deployment script (verifier + oracle + 8 verifiers + optional timelock)
+    Bootstrap.s.sol               # Post-deploy registry seeding (publishers, thresholds, merkle roots)
+  scripts/
+    generate-fixtures.sh          # Recompiles circuits + regenerates verifiers + proof fixtures
+    parity-check.py               # CI gate: circuit pub-input arity == Solidity expectations
   circuits/
     Nargo.toml                    # Workspace config (nargo compile/test --workspace)
     shared/                       # Shared Noir library
@@ -215,12 +233,13 @@ cd circuits/compliance && nargo execute
 
 ### Deployment
 
-`script/Deploy.s.sol` deploys the verifier router, oracle, all six generated UltraHonk verifiers, and (optionally) the timelock; it registers each verifier with the router.
+`script/Deploy.s.sol` deploys the verifier router, oracle, all eight generated UltraHonk verifiers, and (optionally) the timelock; it registers each verifier with the router and asserts post-conditions before exiting.
 
 ```bash
 # 1. Required environment variables
 export PRIVATE_KEY=0x...
 export INITIAL_CONFIG_HASH=0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405
+export INITIAL_PROVIDER_IDS=1,2,3   # comma-separated uint256s; weights for these IDs are committed to in INITIAL_CONFIG_HASH
 
 # 2. Optional: deploy XochiTimelock and transfer ownership to it (recommended for prod)
 export USE_TIMELOCK=true
@@ -232,12 +251,21 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
     --disable-code-size-limit --sender $DEPLOYER_ADDRESS
 ```
 
-**Why `--disable-code-size-limit`?** The bb-generated UltraHonk verifiers are ~24,640 bytes — a hair over EIP-170's 24,576-byte deployment limit. Forge enforces this by default at script time. Most production chains (Ethereum mainnet, Base, Optimism) accept oversized contracts up to ~49KB via EIP-3860/EIP-7702 settings, but a few strictly enforce EIP-170. Verify your target chain accepts the deploy size before broadcasting.
+**Why `--disable-code-size-limit`?** The bb-generated UltraHonk verifiers are 24,640-24,641 bytes -- 64-65 bytes over EIP-170's 24,576-byte runtime contract limit. EIP-170 is enforced on Ethereum mainnet and on the major OP-Stack L2s (Base, Optimism), so these verifiers will not deploy there as-is. The flag bypasses Foundry's local check; it does NOT bypass on-chain enforcement. Target either a chain that does not enforce EIP-170 (some app-chains, devnets) or wait for an upstream `bb` size reduction. Verify with `forge build --sizes` against the chain's policy before broadcasting.
 
-**Post-deployment.** If `USE_TIMELOCK=true`, the proposer multisig must call `XochiTimelock.acceptOwnership(target)` for both the verifier and oracle within 48 hours (Ownable2Step deadline). Then run the post-deploy bootstrap to seed registries:
+**Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
+
+```text
+timelock.schedule(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)
+# wait 24h (HIGH-tier delay)
+timelock.execute(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)
+```
+
+Both schedules must be issued and executed within Ownable2Step's 48-hour acceptance window -- effectively a 24-hour scheduling window once the HIGH-tier delay is subtracted. Miss it and the deploy must be re-run.
+
+**Post-deployment bootstrap.** Once ownership is on the timelock, seed the registries via `script/Bootstrap.s.sol`:
 
 ```bash
-# Register provider publishers, reporting thresholds, merkle roots
 export ORACLE_ADDRESS=0x...      # from Deploy output
 export REPORTING_THRESHOLDS=10000,5000
 export MERKLE_ROOTS=0xabcd...,0x1234...
@@ -246,7 +274,7 @@ export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
 forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS
 ```
 
-If timelock-owned, the admin must instead schedule each registry op through `XochiTimelock.schedule(...)` and `execute(...)`.
+If timelock-owned, the admin must schedule each registry op through `XochiTimelock.schedule(...)` and `execute(...)` rather than calling Bootstrap directly.
 
 ## Client-side proof generation
 
@@ -385,7 +413,7 @@ honest. Honesty either comes from somewhere else, or it is a gap you accept.
   who need user-identity privacy must layer ERC-5564 stealth addresses,
   mixers, or trusted relayers on top.
 
-Four proof types, four different trust assumptions. They do not compose
+Four trust models across the eight proof types. They do not compose
 into a single "is this user compliant" answer. The signed variants close
 signal honesty when a provider opts in. PATTERN remains self-attested.
 ATTESTATION trusts a publisher EOA. Identity privacy is a separate layer
