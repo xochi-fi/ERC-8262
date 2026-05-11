@@ -1039,6 +1039,54 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (diff > MAX_PROOF_AGE) revert ProofTimestampStale(proofTimestamp, block.timestamp);
     }
 
+    /// @dev Assert that the encoded submitter equals msg.sender.
+    function _assertSubmitter(bytes32 raw) internal view {
+        if (address(uint160(uint256(raw))) != msg.sender) revert SubmitterMismatch();
+    }
+
+    /// @dev Assert that the encoded boolean result is canonical true.
+    function _assertResultPositive(bytes32 raw) internal pure {
+        if (raw != bytes32(uint256(1))) revert ProofResultNegative();
+    }
+
+    /// @dev Assert that `configHash` is a registered (non-revoked) provider configuration.
+    function _assertValidConfig(bytes32 configHash) internal view {
+        if (!_validConfigs[configHash]) revert InvalidConfigHash(configHash);
+    }
+
+    /// @dev Validate RISK_SCORE / RISK_SCORE_SIGNED bound semantics. Rejects trivially-true
+    ///      claims (`score > 0`, full-domain ranges, etc.) and ill-formed proof_type / direction.
+    function _validateRiskBounds(uint256 proofType, uint256 direction, uint256 boundLower, uint256 boundUpper)
+        internal
+        pure
+    {
+        if (proofType == RISK_PROOF_THRESHOLD) {
+            if (direction == RISK_DIRECTION_GT) {
+                // "score > 0" is trivially true for any nonzero score; "score > 10000+" is impossible
+                if (boundLower == 0 || boundLower >= MAX_RISK_SCORE_BPS) {
+                    revert TrivialRiskBound(boundLower, boundUpper);
+                }
+            } else if (direction == RISK_DIRECTION_LT) {
+                // "score < 0" impossible; "score < 10001+" trivially true
+                if (boundLower == 0 || boundLower > MAX_RISK_SCORE_BPS) {
+                    revert TrivialRiskBound(boundLower, boundUpper);
+                }
+            } else {
+                revert InvalidRiskDirection(direction);
+            }
+        } else if (proofType == RISK_PROOF_RANGE) {
+            if (boundLower >= boundUpper || boundUpper > MAX_RISK_SCORE_BPS) {
+                revert InvalidRiskBound(boundLower, boundUpper);
+            }
+            // Reject the full-domain range [0, 10000] which any score satisfies
+            if (boundLower == 0 && boundUpper == MAX_RISK_SCORE_BPS) {
+                revert TrivialRiskBound(boundLower, boundUpper);
+            }
+        } else {
+            revert InvalidRiskProofType(proofType);
+        }
+    }
+
     /// @dev Validate that caller-supplied jurisdiction and providerSetHash match
     ///      the corresponding fields in the COMPLIANCE proof's public inputs,
     ///      and that the config_hash is a known (current or historical) config.
@@ -1057,14 +1105,12 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
-        bytes32 proofMeetsThreshold = bytes32(publicInputs[128:160]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[160:192]))));
 
         if (proofJurisdiction != bytes32(uint256(jurisdictionId))) revert PublicInputMismatch();
         if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
-        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
-        if (proofMeetsThreshold != bytes32(uint256(1))) revert ProofResultNegative();
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        _assertValidConfig(proofConfigHash);
+        _assertResultPositive(bytes32(publicInputs[128:160]));
+        _assertSubmitter(bytes32(publicInputs[160:192]));
         if (_configContainsDeniedProvider(proofConfigHash)) {
             revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
         }
@@ -1102,45 +1148,15 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         //   [5]: config_hash
         //   [6]: provider_set_hash
         //   [7]: submitter
-        uint256 proofType = uint256(bytes32(publicInputs[0:32]));
-        uint256 direction = uint256(bytes32(publicInputs[32:64]));
-        uint256 boundLower = uint256(bytes32(publicInputs[64:96]));
-        uint256 boundUpper = uint256(bytes32(publicInputs[96:128]));
-        bytes32 proofResult = bytes32(publicInputs[128:160]);
-        bytes32 proofConfigHash = bytes32(publicInputs[160:192]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[224:256]))));
-
-        if (proofResult != bytes32(uint256(1))) revert ProofResultNegative();
-        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
-
-        // Reject trivial / undefined claims that would otherwise produce an attestation
-        // marked meetsThreshold=true with no real semantic content.
-        if (proofType == RISK_PROOF_THRESHOLD) {
-            if (direction == RISK_DIRECTION_GT) {
-                // "score > 0" is trivially true for any nonzero score; "score > 10000+" is impossible
-                if (boundLower == 0 || boundLower >= MAX_RISK_SCORE_BPS) {
-                    revert TrivialRiskBound(boundLower, boundUpper);
-                }
-            } else if (direction == RISK_DIRECTION_LT) {
-                // "score < 0" impossible; "score < 10001+" trivially true
-                if (boundLower == 0 || boundLower > MAX_RISK_SCORE_BPS) {
-                    revert TrivialRiskBound(boundLower, boundUpper);
-                }
-            } else {
-                revert InvalidRiskDirection(direction);
-            }
-        } else if (proofType == RISK_PROOF_RANGE) {
-            if (boundLower >= boundUpper || boundUpper > MAX_RISK_SCORE_BPS) {
-                revert InvalidRiskBound(boundLower, boundUpper);
-            }
-            // Reject the full-domain range [0, 10000] which any score satisfies
-            if (boundLower == 0 && boundUpper == MAX_RISK_SCORE_BPS) {
-                revert TrivialRiskBound(boundLower, boundUpper);
-            }
-        } else {
-            revert InvalidRiskProofType(proofType);
-        }
+        _assertResultPositive(bytes32(publicInputs[128:160]));
+        _assertValidConfig(bytes32(publicInputs[160:192]));
+        _assertSubmitter(bytes32(publicInputs[224:256]));
+        _validateRiskBounds(
+            uint256(bytes32(publicInputs[0:32])),
+            uint256(bytes32(publicInputs[32:64])),
+            uint256(bytes32(publicInputs[64:96])),
+            uint256(bytes32(publicInputs[96:128]))
+        );
     }
 
     /// @dev Validate PATTERN public inputs.
@@ -1168,18 +1184,15 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         ) {
             revert InvalidAnalysisType(analysisType);
         }
-        bytes32 proofResult = bytes32(publicInputs[32:64]);
-        if (proofResult != bytes32(uint256(1))) revert ProofResultNegative();
+        _assertResultPositive(bytes32(publicInputs[32:64]));
         bytes32 reportingThreshold = bytes32(publicInputs[64:96]);
         if (!_validReportingThresholds[reportingThreshold]) {
             revert InvalidReportingThreshold(reportingThreshold);
         }
         uint256 timeWindow = uint256(bytes32(publicInputs[96:128]));
         if (timeWindow < MIN_TIME_WINDOW) revert TimeWindowTooSmall(timeWindow, MIN_TIME_WINDOW);
-        bytes32 txSetHash = bytes32(publicInputs[128:160]);
-        if (txSetHash == bytes32(0)) revert PublicInputMismatch();
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[160:192]))));
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        if (bytes32(publicInputs[128:160]) == bytes32(0)) revert PublicInputMismatch();
+        _assertSubmitter(bytes32(publicInputs[160:192]));
     }
 
     /// @dev Validate ATTESTATION public inputs (post C-1 redesign).
@@ -1197,8 +1210,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         uint256 providerId = uint256(bytes32(publicInputs[0:32]));
         if (providerId == 0) revert InvalidProviderId();
 
-        bytes32 proofIsValid = bytes32(publicInputs[64:96]);
-        if (proofIsValid != bytes32(uint256(1))) revert ProofResultNegative();
+        _assertResultPositive(bytes32(publicInputs[64:96]));
 
         bytes32 credentialRoot = bytes32(publicInputs[96:128]);
         CredentialRootInfo memory rootInfo = _credentialRoots[credentialRoot];
@@ -1213,8 +1225,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
 
         proofTimestamp = uint256(bytes32(publicInputs[128:160]));
         _validateProofTimestamp(proofTimestamp);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[160:192]))));
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        _assertSubmitter(bytes32(publicInputs[160:192]));
     }
 
     /// @dev Validate MEMBERSHIP public inputs.
@@ -1230,10 +1241,8 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (!_validMerkleRoots[merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
         proofTimestamp = uint256(bytes32(publicInputs[64:96]));
         _validateProofTimestamp(proofTimestamp);
-        bytes32 proofIsMember = bytes32(publicInputs[96:128]);
-        if (proofIsMember != bytes32(uint256(1))) revert ProofResultNegative();
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[128:160]))));
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        _assertResultPositive(bytes32(publicInputs[96:128]));
+        _assertSubmitter(bytes32(publicInputs[128:160]));
     }
 
     /// @dev Validate NON_MEMBERSHIP public inputs.
@@ -1249,10 +1258,8 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (!_validMerkleRoots[merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
         proofTimestamp = uint256(bytes32(publicInputs[64:96]));
         _validateProofTimestamp(proofTimestamp);
-        bytes32 proofIsNonMember = bytes32(publicInputs[96:128]);
-        if (proofIsNonMember != bytes32(uint256(1))) revert ProofResultNegative();
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[128:160]))));
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        _assertResultPositive(bytes32(publicInputs[96:128]));
+        _assertSubmitter(bytes32(publicInputs[128:160]));
     }
 
     /// @dev Validate COMPLIANCE_SIGNED public inputs (audit I-1 + F-6).
@@ -1278,22 +1285,18 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
-        bytes32 proofMeetsThreshold = bytes32(publicInputs[128:160]);
         bytes32 proofSignerPubkeyHash = bytes32(publicInputs[160:192]);
-        bytes32 proofChainId = bytes32(publicInputs[192:224]);
-        bytes32 proofOracleAddr = bytes32(publicInputs[224:256]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[256:288]))));
 
         if (proofJurisdiction != bytes32(uint256(jurisdictionId))) revert PublicInputMismatch();
         if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
-        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
-        if (proofMeetsThreshold != bytes32(uint256(1))) revert ProofResultNegative();
+        _assertValidConfig(proofConfigHash);
+        _assertResultPositive(bytes32(publicInputs[128:160]));
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
-        if (proofChainId != bytes32(block.chainid)) revert PublicInputMismatch();
-        if (proofOracleAddr != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
+        if (bytes32(publicInputs[192:224]) != bytes32(block.chainid)) revert PublicInputMismatch();
+        if (bytes32(publicInputs[224:256]) != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
+        _assertSubmitter(bytes32(publicInputs[256:288]));
         if (_configContainsDeniedProvider(proofConfigHash)) {
             revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
         }
@@ -1323,49 +1326,22 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         //   [8]:  chain_id            (audit F-6)
         //   [9]:  oracle_address      (audit F-6)
         //   [10]: submitter
-        uint256 proofType = uint256(bytes32(publicInputs[0:32]));
-        uint256 direction = uint256(bytes32(publicInputs[32:64]));
-        uint256 boundLower = uint256(bytes32(publicInputs[64:96]));
-        uint256 boundUpper = uint256(bytes32(publicInputs[96:128]));
-        bytes32 proofResult = bytes32(publicInputs[128:160]);
-        bytes32 proofConfigHash = bytes32(publicInputs[160:192]);
         bytes32 proofSignerPubkeyHash = bytes32(publicInputs[224:256]);
-        bytes32 proofChainId = bytes32(publicInputs[256:288]);
-        bytes32 proofOracleAddr = bytes32(publicInputs[288:320]);
-        address proofSubmitter = address(uint160(uint256(bytes32(publicInputs[320:352]))));
 
-        if (proofResult != bytes32(uint256(1))) revert ProofResultNegative();
-        if (!_validConfigs[proofConfigHash]) revert InvalidConfigHash(proofConfigHash);
+        _assertResultPositive(bytes32(publicInputs[128:160]));
+        _assertValidConfig(bytes32(publicInputs[160:192]));
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
-        if (proofChainId != bytes32(block.chainid)) revert PublicInputMismatch();
-        if (proofOracleAddr != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
-        if (proofSubmitter != msg.sender) revert SubmitterMismatch();
-
-        // Reject trivial / undefined claims (matches unsigned variant).
-        if (proofType == RISK_PROOF_THRESHOLD) {
-            if (direction == RISK_DIRECTION_GT) {
-                if (boundLower == 0 || boundLower >= MAX_RISK_SCORE_BPS) {
-                    revert TrivialRiskBound(boundLower, boundUpper);
-                }
-            } else if (direction == RISK_DIRECTION_LT) {
-                if (boundLower == 0 || boundLower > MAX_RISK_SCORE_BPS) {
-                    revert TrivialRiskBound(boundLower, boundUpper);
-                }
-            } else {
-                revert InvalidRiskDirection(direction);
-            }
-        } else if (proofType == RISK_PROOF_RANGE) {
-            if (boundLower >= boundUpper || boundUpper > MAX_RISK_SCORE_BPS) {
-                revert InvalidRiskBound(boundLower, boundUpper);
-            }
-            if (boundLower == 0 && boundUpper == MAX_RISK_SCORE_BPS) {
-                revert TrivialRiskBound(boundLower, boundUpper);
-            }
-        } else {
-            revert InvalidRiskProofType(proofType);
-        }
+        if (bytes32(publicInputs[256:288]) != bytes32(block.chainid)) revert PublicInputMismatch();
+        if (bytes32(publicInputs[288:320]) != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
+        _assertSubmitter(bytes32(publicInputs[320:352]));
+        _validateRiskBounds(
+            uint256(bytes32(publicInputs[0:32])),
+            uint256(bytes32(publicInputs[32:64])),
+            uint256(bytes32(publicInputs[64:96])),
+            uint256(bytes32(publicInputs[96:128]))
+        );
     }
 
     // -------------------------------------------------------------------------
