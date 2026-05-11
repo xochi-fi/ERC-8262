@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IXochiZKPOracle} from "./interfaces/IXochiZKPOracle.sol";
 import {IXochiZKPVerifier} from "./interfaces/IXochiZKPVerifier.sol";
 import {IUltraVerifier} from "./interfaces/IUltraVerifier.sol";
+import {IERC165} from "./interfaces/IERC165.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
 import {JurisdictionConfig} from "./libraries/JurisdictionConfig.sol";
 import {AccessControl} from "./libraries/AccessControl.sol";
@@ -20,7 +21,7 @@ import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 ///      - CONFIG: updateProviderConfig (atomic with provider expansion),
 ///        updateAttestationTTL, compactConfigHistory
 ///      - owner: grant/revoke roles, transfer ownership
-contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
+contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     /// @notice The verifier contract used to validate proofs
     IXochiZKPVerifier public immutable verifier;
 
@@ -864,7 +865,7 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     }
 
     /// @notice Pause submissions for a single proof type (surgical response)
-    /// @param proofType The proof type to pause (0x01-0x06)
+    /// @param proofType The proof type to pause (0x01-0x08)
     function pauseProofType(uint8 proofType) external onlyRole(GUARDIAN_ROLE) {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
@@ -873,7 +874,7 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
     }
 
     /// @notice Unpause submissions for a single proof type
-    /// @param proofType The proof type to unpause (0x01-0x06)
+    /// @param proofType The proof type to unpause (0x01-0x08)
     function unpauseProofType(uint8 proofType) external onlyRole(GUARDIAN_ROLE) {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
         if (!_proofTypePaused[proofType]) revert ProofTypeNotPaused(proofType);
@@ -1365,5 +1366,14 @@ contract XochiZKPOracle is IXochiZKPOracle, AccessControl, Pausable {
         } else {
             revert InvalidRiskProofType(proofType);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // IERC165
+    // -------------------------------------------------------------------------
+
+    /// @inheritdoc IERC165
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IXochiZKPOracle).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 }

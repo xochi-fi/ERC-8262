@@ -12,6 +12,7 @@ import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
 import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
+import {IERC165} from "../src/interfaces/IERC165.sol";
 
 contract AlwaysPassVerifier is IUltraVerifier {
     function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
@@ -2824,6 +2825,26 @@ contract XochiZKPOracleTest is Test {
         IXochiZKPOracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.jurisdictionId, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // EIP-165
+    // -------------------------------------------------------------------------
+
+    function test_supportsInterface_self() public view {
+        assertTrue(oracle.supportsInterface(type(IXochiZKPOracle).interfaceId));
+    }
+
+    function test_supportsInterface_erc165() public view {
+        assertTrue(oracle.supportsInterface(type(IERC165).interfaceId));
+    }
+
+    function test_supportsInterface_invalidSelector_returnsFalse() public view {
+        assertFalse(oracle.supportsInterface(0xffffffff));
+    }
+
+    function test_supportsInterface_unknownSelector_returnsFalse() public view {
+        assertFalse(oracle.supportsInterface(0xdeadbeef));
     }
 
     // -------------------------------------------------------------------------

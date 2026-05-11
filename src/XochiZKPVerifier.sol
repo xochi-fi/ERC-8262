@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IXochiZKPVerifier} from "./interfaces/IXochiZKPVerifier.sol";
 import {IUltraVerifier} from "./interfaces/IUltraVerifier.sol";
+import {IERC165} from "./interfaces/IERC165.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
 import {AccessControl} from "./libraries/AccessControl.sol";
 import {Pausable} from "./libraries/Pausable.sol";
@@ -16,7 +17,7 @@ import {Pausable} from "./libraries/Pausable.sol";
 ///      - GUARDIAN: pause/unpause (global + per-proof-type), immediate version revocation
 ///      - CONFIG: propose/execute verifier upgrades, schedule version revocations
 ///      - owner: setVerifierInitial (deploy-time only), grant/revoke roles
-contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
+contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable {
     /// @notice Mapping from proof type ID to its UltraHonk verifier contract
     mapping(uint8 proofType => address verifier) internal _verifiers;
 
@@ -161,7 +162,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     /// @notice Set verifier for initial deployment only (no timelock)
     /// @dev Reverts if a verifier is already set for this proof type.
     ///      Use proposeVerifier + executeVerifierUpdate for subsequent changes.
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @param verifier The UltraHonk verifier contract address
     function setVerifierInitial(uint8 proofType, address verifier) external onlyOwner {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
@@ -175,7 +176,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     }
 
     /// @notice Propose a new verifier for a proof type (starts timelock)
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @param newVerifier The proposed UltraHonk verifier contract address
     function proposeVerifier(uint8 proofType, address newVerifier) external onlyRole(CONFIG_ROLE) {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
@@ -190,7 +191,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     }
 
     /// @notice Execute a pending verifier update after the timelock has elapsed
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     function executeVerifierUpdate(uint8 proofType) external onlyRole(CONFIG_ROLE) {
         VerifierProposal memory proposal = _pendingVerifiers[proofType];
         if (proposal.proposedAt == 0) revert NoPendingProposal(proofType);
@@ -208,7 +209,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
 
     /// @notice Cancel a pending verifier proposal
     /// @dev GUARDIAN may cancel for emergency revert; CONFIG cancels through normal path.
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     function cancelVerifierProposal(uint8 proofType) external {
         if (!_hasRole(CONFIG_ROLE, msg.sender) && !_hasRole(GUARDIAN_ROLE, msg.sender)) {
             revert NotRole(CONFIG_ROLE, msg.sender);
@@ -237,7 +238,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     ///      when you have already paused the proof type via pauseProofType and
     ///      need to lock in the revocation without waiting. Cannot revoke the
     ///      current (latest) version; use proposeVerifier instead.
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @param version The version to revoke (1-indexed)
     function revokeVerifierVersion(uint8 proofType, uint256 version) external onlyRole(GUARDIAN_ROLE) {
         _doRevokeVersion(proofType, version);
@@ -247,7 +248,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     /// @dev Routine path: protects against owner-compromise mass-revocation. Multiple
     ///      versions of the same proof type may be in flight simultaneously, but each
     ///      (proofType, version) pair allows only one pending proposal at a time.
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @param version The version to revoke (1-indexed)
     function proposeVersionRevocation(uint8 proofType, uint256 version) external onlyRole(CONFIG_ROLE) {
         address[] storage history = _verifierHistory[proofType];
@@ -307,7 +308,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     }
 
     /// @notice Check if a verifier version has been revoked
-    /// @param proofType The proof type (0x01-0x06)
+    /// @param proofType The proof type (0x01-0x08)
     /// @param version The version to check (1-indexed)
     /// @return revoked Whether the version has been revoked
     function isVersionRevoked(uint8 proofType, uint256 version) external view returns (bool revoked) {
@@ -329,7 +330,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     }
 
     /// @notice Pause a single proof type (surgical response)
-    /// @param proofType The proof type to pause (0x01-0x06)
+    /// @param proofType The proof type to pause (0x01-0x08)
     function pauseProofType(uint8 proofType) external onlyRole(GUARDIAN_ROLE) {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
@@ -338,7 +339,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
     }
 
     /// @notice Unpause a single proof type
-    /// @param proofType The proof type to unpause (0x01-0x06)
+    /// @param proofType The proof type to unpause (0x01-0x08)
     function unpauseProofType(uint8 proofType) external onlyRole(GUARDIAN_ROLE) {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
         if (!_proofTypePaused[proofType]) revert ProofTypeNotPaused(proofType);
@@ -382,5 +383,14 @@ contract XochiZKPVerifier is IXochiZKPVerifier, AccessControl, Pausable {
             revert InvalidVersion(proofType, version);
         }
         return history[version - 1];
+    }
+
+    // -------------------------------------------------------------------------
+    // IERC165
+    // -------------------------------------------------------------------------
+
+    /// @inheritdoc IERC165
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IXochiZKPVerifier).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 }

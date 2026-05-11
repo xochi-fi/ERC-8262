@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
+import {IXochiZKPVerifier} from "../src/interfaces/IXochiZKPVerifier.sol";
+import {IERC165} from "../src/interfaces/IERC165.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
@@ -990,6 +992,26 @@ contract XochiZKPVerifierTest is Test {
         emit Ownable2Step.OwnershipTransferCancelled(alice);
         verifier.transferOwnership(bob);
         vm.stopPrank();
+    }
+
+    // -------------------------------------------------------------------------
+    // EIP-165
+    // -------------------------------------------------------------------------
+
+    function test_supportsInterface_self() public view {
+        assertTrue(verifier.supportsInterface(type(IXochiZKPVerifier).interfaceId));
+    }
+
+    function test_supportsInterface_erc165() public view {
+        assertTrue(verifier.supportsInterface(type(IERC165).interfaceId));
+    }
+
+    function test_supportsInterface_invalidSelector_returnsFalse() public view {
+        assertFalse(verifier.supportsInterface(0xffffffff));
+    }
+
+    function test_supportsInterface_unknownSelector_returnsFalse() public view {
+        assertFalse(verifier.supportsInterface(0xdeadbeef));
     }
 
     // -------------------------------------------------------------------------
