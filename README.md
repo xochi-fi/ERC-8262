@@ -21,6 +21,8 @@ This is distinct from view keys (Railgun, Panther) where you trade privately and
 | Compliance (signed) | 0x07 | Compliance + provider sig         | Signals, score, sig | compliance_signed |
 | Risk Score (signed) | 0x08 | Risk Score + provider sig         | Exact score, sig    | risk_score_signed |
 
+Normative spec for each row (public/private inputs, validation rules, gas cost): [eip-draft_xochi-zkp.md §Proof Types](eip-draft_xochi-zkp.md#proof-types).
+
 The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values.
 
 Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA) and Singapore require signed; EU (AMLD6) and UK (MLR) accept either.
@@ -151,14 +153,11 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 
 ## Jurisdiction thresholds
 
-Risk scores are in basis points (0-10000 = 0.00%-100.00%). Thresholds are published on-chain.
-
-| Jurisdiction | Low        | Medium    | High (filing trigger) |
-| ------------ | ---------- | --------- | --------------------- |
-| EU (AMLD6)   | 0-3099 bps | 3100-7099 | >=7100                |
-| US (BSA)     | 0-2599 bps | 2600-6599 | >=6600                |
-| UK (MLR)     | 0-3099 bps | 3100-7099 | >=7100                |
-| Singapore    | 0-3599 bps | 3600-7599 | >=7600                |
+Risk scores are in basis points (0-10000 = 0.00%-100.00%). Filing triggers
+range from 6600 bps (US BSA, strictest) to 7600 bps (Singapore). See the EIP
+[§Jurisdiction Configuration](eip-draft_xochi-zkp.md#jurisdiction-configuration)
+for the normative table; the on-chain source of truth is
+[`src/libraries/JurisdictionConfig.sol`](src/libraries/JurisdictionConfig.sol).
 
 ## Development
 

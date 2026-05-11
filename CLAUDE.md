@@ -15,7 +15,7 @@ ERC Xochi ZKP: a standard for zero-knowledge compliance proofs on Ethereum. User
 
 ```bash
 make build                     # compile contracts + circuits
-make test                      # run Solidity tests (438)
+make test                      # run Solidity tests (480)
 make test-noir                 # run Noir circuit tests (89, workspace)
 make test-sdk                  # run TS consumer SDK tests (in test/sdk/)
 make test-all                  # run all tests
@@ -65,15 +65,15 @@ Nargo workspace at `circuits/Nargo.toml`. Each proof type is a separate Noir pro
 
 Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts are _logical_ inputs (what the circuit's `main()` declares as `pub`). The generated UltraHonk verifiers see 16 more inputs per type because Noir flattens arrays into individual field elements (`NUMBER_OF_PUBLIC_INPUTS - 16 == logical count`).
 
-| ID   | ProofType         | Circuit           | Logical Public Inputs               |
-| ---- | ----------------- | ----------------- | ----------------------------------- |
-| 0x01 | COMPLIANCE        | compliance        | 6                                   |
-| 0x02 | RISK_SCORE        | risk_score        | 8                                   |
-| 0x03 | PATTERN           | pattern           | 6                                   |
-| 0x04 | ATTESTATION       | attestation       | 6                                   |
-| 0x05 | MEMBERSHIP        | membership        | 5                                   |
-| 0x06 | NON_MEMBERSHIP    | non_membership    | 5                                   |
-| 0x07 | COMPLIANCE_SIGNED | compliance_signed | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address) |
+| ID   | ProofType         | Circuit           | Logical Public Inputs                                            |
+| ---- | ----------------- | ----------------- | ---------------------------------------------------------------- |
+| 0x01 | COMPLIANCE        | compliance        | 6                                                                |
+| 0x02 | RISK_SCORE        | risk_score        | 8                                                                |
+| 0x03 | PATTERN           | pattern           | 6                                                                |
+| 0x04 | ATTESTATION       | attestation       | 6                                                                |
+| 0x05 | MEMBERSHIP        | membership        | 5                                                                |
+| 0x06 | NON_MEMBERSHIP    | non_membership    | 5                                                                |
+| 0x07 | COMPLIANCE_SIGNED | compliance_signed | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address)  |
 | 0x08 | RISK_SCORE_SIGNED | risk_score_signed | 11 (risk_score + signer_pubkey_hash + chain_id + oracle_address) |
 
 ## Conventions

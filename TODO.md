@@ -30,6 +30,7 @@
 - **F-9** -- documented (no code change). `getAttestationHistory` is unbounded by design; integrators should use `getAttestationHistoryPaginated`.
 
 Methodology side-effect: drafted the `zk-x-ray` skill (https://github.com/DROOdotFOO/agent-skills/pull/1) -- a pashov-inspired pre-audit briefing generator for ZK + EVM hybrid protocols. The parity-check gate above is one of its outputs.
+
 </details>
 
 <details>
@@ -138,6 +139,6 @@ Signed-variant verifiers add ~30% to the verify cost from in-circuit ECDSA.
 - **TTL boundary inclusive**: `checkCompliance` uses `<=` for `expiresAt`; attestation valid for exactly TTL seconds.
 - **verifier immutable on Oracle**: the router address is immutable; per-type verifiers behind it are upgradable via `proposeVerifier` + `executeVerifierUpdate`.
 - **Circuit names match ProofTypes**: directories (pattern, attestation, compliance_signed, etc.) match Solidity constants 1:1.
-- **compliance vs risk_score (vs *_signed)**: both unsigned circuits use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof; risk_score is a raw scoring primitive (GT/LT/range, no jurisdiction). Signed variants add an in-circuit secp256k1 verify; same authority anchor (`signer_pubkey_hash` registered on the Oracle) regardless of whether jurisdiction policy requires them.
+- **compliance vs risk_score (vs \*\_signed)**: both unsigned circuits use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof; risk_score is a raw scoring primitive (GT/LT/range, no jurisdiction). Signed variants add an in-circuit secp256k1 verify; same authority anchor (`signer_pubkey_hash` registered on the Oracle) regardless of whether jurisdiction policy requires them.
 - **Double timelock for verifier updates**: external `XochiTimelock` (24h) + internal verifier timelock (24h) = 48h total. Defense-in-depth. Emergency bypass via `revokeVerifierVersion` and `pauseProofType` (no timelock).
 - **Per-jurisdiction signed-signals (US/SG strict, EU/UK permissive)**: stricter regimes require provider-signed signals; permissive regimes keep the cheaper unsigned path. Permissive jurisdictions accept signed proofs voluntarily; the policy sets a floor, not a cap.
