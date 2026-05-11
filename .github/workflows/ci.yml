@@ -26,6 +26,9 @@ jobs:
       - name: Check formatting
         run: forge fmt --check
 
+      - name: EIP draft <-> src/interfaces drift check
+        run: python3 scripts/eip-interface-drift.py .
+
       - name: Build contracts
         run: |
           forge build --sizes 2>&1 | tee /tmp/sizes.txt || true
