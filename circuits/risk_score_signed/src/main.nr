@@ -23,11 +23,11 @@
 ///   - pubkey_x, pubkey_y: 32-byte big-endian secp256k1 pubkey coordinates
 
 use xochi_shared::{
-    MAX_PROVIDERS,
     compute_risk_score,
     verify_weight_sum,
     compute_config_hash,
     compute_provider_set_hash,
+    validate_provider_slots,
     compute_signed_payload_hash,
     verify_provider_signed_signals,
 };
@@ -66,26 +66,14 @@ fn main(
     submitter: pub Field,
 ) {
     // 1. Validate inputs
-    assert(num_providers >= 1, "At least one provider required");
-    assert(num_providers <= MAX_PROVIDERS, "Too many providers");
     assert(weight_sum > 0, "Weight sum must be positive");
     assert(
         (proof_type == PROOF_THRESHOLD) | (proof_type == PROOF_RANGE),
         "Invalid proof type",
     );
 
-    // 2. Validate signals and provider slots
-    for i in 0..8 {
-        if (i as u32) < num_providers {
-            assert(signals[i] <= 100, "Signal out of range");
-            assert(weights[i] > 0, "Active provider weight must be positive");
-            assert(provider_ids[i] != 0, "Active provider ID must be non-zero");
-        } else {
-            assert(signals[i] == 0, "Inactive signal must be zero");
-            assert(weights[i] == 0, "Inactive weight must be zero");
-            assert(provider_ids[i] == 0, "Inactive provider ID must be zero");
-        }
-    }
+    // 2. Validate provider count + slot invariants
+    validate_provider_slots(signals, weights, provider_ids, num_providers);
 
     verify_weight_sum(weights, weight_sum);
 

@@ -21,13 +21,13 @@
 ///   - provider_ids: identifiers for each provider
 
 use xochi_shared::{
-    MAX_PROVIDERS,
     compute_risk_score,
     get_high_threshold,
     compute_provider_set_hash,
     verify_weight_sum,
     compute_config_hash,
     validate_timestamp,
+    validate_provider_slots,
 };
 
 fn main(
@@ -46,29 +46,11 @@ fn main(
     meets_threshold: pub bool,   // the compliance result
     submitter: pub Field,        // authorized submitter address (oracle enforces == msg.sender)
 ) {
-    // 1. Validate provider count
-    assert(num_providers >= 1, "At least one provider required");
-    assert(num_providers <= MAX_PROVIDERS, "Too many providers");
-
-    // 2. Validate weight_sum is positive
+    // 1. Validate weight_sum is positive
     assert(weight_sum > 0, "Weight sum must be positive");
 
-    // 3. Validate signals and provider slots
-    for i in 0..8 {
-        if (i as u32) < num_providers {
-            assert(signals[i] <= 100, "Signal must be 0-100");
-            assert(weights[i] > 0, "Active provider weight must be positive");
-            // Active providers must have non-zero IDs to prevent confusion
-            // with inactive (zeroed) slots: a provider with ID=0 and weight=0
-            // would be indistinguishable from an inactive slot in the hash.
-            assert(provider_ids[i] != 0, "Active provider ID must be non-zero");
-        } else {
-            // Inactive provider slots must be zeroed
-            assert(signals[i] == 0, "Inactive signal must be zero");
-            assert(weights[i] == 0, "Inactive weight must be zero");
-            assert(provider_ids[i] == 0, "Inactive provider ID must be zero");
-        }
-    }
+    // 2. Validate provider count + slot invariants (active vs inactive layout)
+    validate_provider_slots(signals, weights, provider_ids, num_providers);
 
     // 4. Verify weight_sum matches active weights
     verify_weight_sum(weights, weight_sum);

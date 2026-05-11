@@ -22,4 +22,4 @@ pub use merkle::{compute_merkle_root, internal_hash, leaf_hash_set, leaf_hash_su
 pub use risk::{MAX_WEIGHT, compute_risk_score, get_high_threshold, verify_weight_sum, weights_to_fields, compute_config_hash};
 pub use providers::compute_provider_set_hash;
 pub use sig::{compute_signed_payload_hash, compute_signer_pubkey_hash, verify_provider_signed_signals};
-pub use validation::{validate_timestamp, compute_tx_set_hash};
+pub use validation::{validate_timestamp, compute_tx_set_hash, validate_provider_slots};
