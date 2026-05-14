@@ -9,6 +9,7 @@ pub mod merkle;
 pub mod risk;
 pub mod providers;
 pub mod sig;
+pub mod multi_sig;
 pub mod validation;
 
 // Re-export everything at the crate root for backwards compatibility.
@@ -22,4 +23,5 @@ pub use merkle::{compute_merkle_root, internal_hash, leaf_hash_set, leaf_hash_su
 pub use risk::{MAX_WEIGHT, compute_risk_score, get_high_threshold, verify_weight_sum, weights_to_fields, compute_config_hash};
 pub use providers::compute_provider_set_hash;
 pub use sig::{compute_signed_payload_hash, compute_signer_pubkey_hash, verify_provider_signed_signals};
+pub use multi_sig::{MAX_PROVIDERS_MULTI, DOMAIN_MULTI_SIGNED_SIGNALS, compute_slot_payload_hash, verify_slot_or_skip, assert_distinct_signers, count_active_signers};
 pub use validation::{validate_timestamp, compute_tx_set_hash, validate_provider_slots};

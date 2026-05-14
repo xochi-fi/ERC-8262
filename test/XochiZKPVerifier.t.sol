@@ -1,70 +1,26 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
 import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {IXochiZKPVerifier} from "../src/interfaces/IXochiZKPVerifier.sol";
 import {IERC165} from "../src/interfaces/IERC165.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
+import {XochiTestBase} from "./utils/XochiTestBase.sol";
+import {StubVerifier, MutatingVerifier} from "./utils/TestStubs.sol";
 
-/// @dev Stub verifier that always returns true (for unit testing the router logic)
-contract StubVerifier is IUltraVerifier {
-    bool public shouldPass;
-
-    constructor(bool _shouldPass) {
-        shouldPass = _shouldPass;
-    }
-
-    function verify(bytes calldata, bytes32[] calldata) external view returns (bool) {
-        return shouldPass;
-    }
-}
-
-/// @dev Regression: malicious verifier that attempts to mutate state from inside verify().
-///      The IUltraVerifier interface declares verify() as `view`, so Solidity emits a
-///      STATICCALL at the CALLER (XochiZKPVerifier) when invoking it. STATICCALL halts
-///      on any SSTORE, LOG, CREATE, SELFDESTRUCT, or CALL with non-zero value -- the
-///      EVM-level guarantee that protects the router from a malicious verifier.
-///
-///      Note: this contract intentionally does NOT inherit IUltraVerifier. Its verify()
-///      function is declared non-view (writes to `counter`) so the compiler is happy.
-///      The selector matches IUltraVerifier.verify, so the router can cast and call it.
-///      At runtime the call is STATICCALL (per the interface used at the call site),
-///      so the SSTORE fails and the entire call reverts.
-contract MutatingVerifier {
-    uint256 public counter;
-
-    function verify(bytes calldata, bytes32[] calldata) external returns (bool) {
-        counter += 1; // SSTORE under STATICCALL must revert
-        return true;
-    }
-}
-
-contract XochiZKPVerifierTest is Test {
+contract XochiZKPVerifierTest is XochiTestBase {
     XochiZKPVerifier internal verifier;
     StubVerifier internal passingVerifier;
     StubVerifier internal failingVerifier;
-
-    address internal owner = makeAddr("owner");
-    address internal alice = makeAddr("alice");
 
     function setUp() public {
         verifier = new XochiZKPVerifier(owner);
         passingVerifier = new StubVerifier(true);
         failingVerifier = new StubVerifier(false);
-
-        vm.startPrank(owner);
-        verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(passingVerifier));
-        verifier.setVerifierInitial(ProofTypes.RISK_SCORE, address(passingVerifier));
-        verifier.setVerifierInitial(ProofTypes.PATTERN, address(passingVerifier));
-        verifier.setVerifierInitial(ProofTypes.ATTESTATION, address(passingVerifier));
-        verifier.setVerifierInitial(ProofTypes.MEMBERSHIP, address(passingVerifier));
-        verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, address(passingVerifier));
-        vm.stopPrank();
+        _registerAllVerifiers(verifier, address(passingVerifier), false);
     }
 
     /// @dev Deploy a fresh StubVerifier (passes code existence check)
@@ -75,7 +31,7 @@ contract XochiZKPVerifierTest is Test {
     /// @dev Upgrade a verifier via the timelock: propose, warp, execute
     function _upgradeVerifier(uint8 proofType, address newVerifier) internal {
         vm.prank(owner);
-        verifier.proposeVerifier(proofType, newVerifier);
+        verifier.proposeVerifier(proofType, newVerifier, newVerifier.codehash);
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
         verifier.executeVerifierUpdate(proofType);
@@ -126,10 +82,10 @@ contract XochiZKPVerifierTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x00));
         verifier.verifyProof(0x00, _dummyProof(), _complianceInputs());
 
-        // 0x07 (COMPLIANCE_SIGNED) and 0x08 (RISK_SCORE_SIGNED) are valid;
-        // 0x09 is the next out-of-range type.
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
-        verifier.verifyProof(0x09, _dummyProof(), _complianceInputs());
+        // 0x01..0x09 are valid (incl. COMPLIANCE_MULTI_SIGNED); 0x0a is the
+        // next out-of-range type.
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        verifier.verifyProof(0x0a, _dummyProof(), _complianceInputs());
     }
 
     function test_verifyProof_revert_verifierNotSet() public {
@@ -251,8 +207,8 @@ contract XochiZKPVerifierTest is Test {
 
     function test_setVerifierInitial_revert_invalidProofType() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
-        verifier.setVerifierInitial(0x09, address(passingVerifier));
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        verifier.setVerifierInitial(0x0a, address(passingVerifier));
     }
 
     function test_setVerifierInitial_revert_notAContract() public {
@@ -267,7 +223,61 @@ contract XochiZKPVerifierTest is Test {
         address eoa = makeAddr("eoa");
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NotAContract.selector, eoa));
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, eoa);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, eoa, bytes32(0));
+    }
+
+    // -------------------------------------------------------------------------
+    // Codehash pinning (audit follow-up)
+    // -------------------------------------------------------------------------
+
+    function test_proposeVerifier_revert_codehashMismatch_atPropose() public {
+        address newVerifier = _newStub();
+        bytes32 wrongCodehash = keccak256("not-the-real-codehash");
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                XochiZKPVerifier.CodehashMismatch.selector, newVerifier, wrongCodehash, newVerifier.codehash
+            )
+        );
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, wrongCodehash);
+    }
+
+    function test_executeVerifierUpdate_revert_codehashChangedMidWindow() public {
+        // Propose against the real codehash. Mid-window, simulate a CREATE2
+        // redeploy-with-different-bytecode at the same address by overwriting
+        // the deployed code with vm.etch. Execute must revert.
+        address newVerifier = _newStub();
+        bytes32 originalCodehash = newVerifier.codehash;
+        vm.prank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, originalCodehash);
+
+        bytes memory swappedCode = hex"600160005260206000f3"; // returns 1; nothing the router would accept
+        vm.etch(newVerifier, swappedCode);
+        bytes32 newCodehash = keccak256(swappedCode);
+        assertEq(newVerifier.codehash, newCodehash);
+        assertTrue(newCodehash != originalCodehash);
+
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                XochiZKPVerifier.CodehashMismatch.selector, newVerifier, originalCodehash, newCodehash
+            )
+        );
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+    }
+
+    function test_proposeAndExecute_succeeds_whenCodehashMatches() public {
+        address newVerifier = _newStub();
+        bytes32 ch = newVerifier.codehash;
+
+        vm.prank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, ch);
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(owner);
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+
+        assertEq(verifier.getVerifier(ProofTypes.COMPLIANCE), newVerifier);
     }
 
     // -------------------------------------------------------------------------
@@ -276,12 +286,14 @@ contract XochiZKPVerifierTest is Test {
 
     function test_proposeVerifier_setsProposal() public {
         address newVerifier = _newStub();
+        bytes32 ch = newVerifier.codehash;
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, ch);
 
-        (address proposed, uint256 readyAt) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
+        (address proposed, uint256 readyAt, bytes32 pinned) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
         assertEq(proposed, newVerifier);
         assertEq(readyAt, block.timestamp + 24 hours);
+        assertEq(pinned, ch);
     }
 
     function test_executeVerifierUpdate_afterTimelock() public {
@@ -293,7 +305,7 @@ contract XochiZKPVerifierTest is Test {
     function test_executeVerifierUpdate_revert_beforeTimelock() public {
         address newVerifier = _newStub();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, newVerifier.codehash);
 
         vm.warp(block.timestamp + 24 hours - 1);
         vm.prank(owner);
@@ -309,7 +321,7 @@ contract XochiZKPVerifierTest is Test {
         address newVerifier = _newStub();
         uint256 proposeTime = block.timestamp;
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, newVerifier.codehash);
 
         vm.warp(proposeTime + 24 hours);
         vm.prank(owner);
@@ -320,14 +332,15 @@ contract XochiZKPVerifierTest is Test {
     function test_cancelVerifierProposal() public {
         address newVerifier = _newStub();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, newVerifier.codehash);
 
         vm.prank(owner);
         verifier.cancelVerifierProposal(ProofTypes.COMPLIANCE);
 
-        (address proposed, uint256 readyAt) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
+        (address proposed, uint256 readyAt, bytes32 pinned) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
         assertEq(proposed, address(0));
         assertEq(readyAt, 0);
+        assertEq(pinned, bytes32(0));
     }
 
     function test_cancelVerifierProposal_revert_noPending() public {
@@ -340,11 +353,11 @@ contract XochiZKPVerifierTest is Test {
         address v1 = _newStub();
         address v2 = _newStub();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v1);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v1, v1.codehash);
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2, v2.codehash);
     }
 
     function test_executeVerifierUpdate_revert_noPending() public {
@@ -356,7 +369,7 @@ contract XochiZKPVerifierTest is Test {
     function test_executeVerifierUpdate_emitsEvent() public {
         address newVerifier = _newStub();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, newVerifier.codehash);
 
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
@@ -367,17 +380,19 @@ contract XochiZKPVerifierTest is Test {
 
     function test_proposeVerifier_emitsEvent() public {
         address newVerifier = _newStub();
+        bytes32 ch = newVerifier.codehash;
         uint256 readyAt = block.timestamp + 24 hours;
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPVerifier.VerifierProposed(ProofTypes.COMPLIANCE, newVerifier, readyAt);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier);
+        emit XochiZKPVerifier.VerifierProposed(ProofTypes.COMPLIANCE, newVerifier, ch, readyAt);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, ch);
     }
 
     function test_getPendingVerifier_noPending() public view {
-        (address proposed, uint256 readyAt) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
+        (address proposed, uint256 readyAt, bytes32 pinned) = verifier.getPendingVerifier(ProofTypes.COMPLIANCE);
         assertEq(proposed, address(0));
         assertEq(readyAt, 0);
+        assertEq(pinned, bytes32(0));
     }
 
     // -------------------------------------------------------------------------
@@ -764,17 +779,17 @@ contract XochiZKPVerifierTest is Test {
     // -------------------------------------------------------------------------
 
     function testFuzz_verifyProof_revert_invalidProofType(uint8 proofType) public {
-        // 0x07 (COMPLIANCE_SIGNED) and 0x08 (RISK_SCORE_SIGNED) are valid; 0x09+ are not.
-        vm.assume(proofType == 0 || proofType > 8);
+        // 0x01..0x09 are valid (incl. COMPLIANCE_MULTI_SIGNED); 0x0a+ are not.
+        vm.assume(proofType == 0 || proofType > 9);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
         verifier.verifyProof(proofType, _dummyProof(), _complianceInputs());
     }
 
     function testFuzz_proposeVerifier_revert_invalidProofType(uint8 proofType) public {
-        vm.assume(proofType == 0 || proofType > 8);
+        vm.assume(proofType == 0 || proofType > 9);
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
-        verifier.proposeVerifier(proofType, address(passingVerifier));
+        verifier.proposeVerifier(proofType, address(passingVerifier), address(passingVerifier).codehash);
     }
 
     // -------------------------------------------------------------------------
@@ -951,8 +966,8 @@ contract XochiZKPVerifierTest is Test {
 
     function test_pauseProofType_revert_invalidProofType() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
-        verifier.pauseProofType(0x09);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        verifier.pauseProofType(0x0a);
     }
 
     function test_isProofTypePaused() public {
@@ -1017,10 +1032,6 @@ contract XochiZKPVerifierTest is Test {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    function _dummyProof() internal pure returns (bytes memory) {
-        return new bytes(2144);
-    }
 
     /// @dev 6 public inputs: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
     function _complianceInputs() internal pure returns (bytes memory) {

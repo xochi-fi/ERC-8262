@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""EIP draft <-> src/interfaces drift check.
+"""ERC draft <-> src/interfaces drift check.
 
-The EIP draft (`eip-draft_xochi-zkp.md`) embeds Solidity interface listings for
+The ERC draft (`erc-draft_xochi-zkp.md`) embeds Solidity interface listings for
 `IXochiZKPVerifier` and `IXochiZKPOracle`. Those listings are hand-maintained
 and have drifted from the source twice already. This script extracts the
 function signatures from both sides and fails CI when they diverge.
@@ -171,9 +171,9 @@ def compare(name: str, eip_sigs: list[Signature], src_sigs: list[Signature]) -> 
 
 def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
-    eip_path = root / "eip-draft_xochi-zkp.md"
+    eip_path = root / "erc-draft_xochi-zkp.md"
     if not eip_path.is_file():
-        print(f"error: EIP draft not found at {eip_path}", file=sys.stderr)
+        print(f"error: ERC draft not found at {eip_path}", file=sys.stderr)
         return 2
 
     interfaces = {
@@ -201,16 +201,16 @@ def main(argv: list[str]) -> int:
         drift.extend(compare(name, eip_sigs, src_sigs))
 
     if drift:
-        print("EIP interface drift detected:\n")
+        print("ERC interface drift detected:\n")
         for line in drift:
             print(f"  {line}")
         print(
-            "\nThe Solidity interface listings in eip-draft_xochi-zkp.md must match "
-            "src/interfaces/*.sol. Update the EIP draft or the source so they agree."
+            "\nThe Solidity interface listings in erc-draft_xochi-zkp.md must match "
+            "src/interfaces/*.sol. Update the ERC draft or the source so they agree."
         )
         return 1
 
-    print("EIP interface listings match src/interfaces/*.sol.")
+    print("ERC interface listings match src/interfaces/*.sol.")
     return 0
 
 

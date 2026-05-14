@@ -10,6 +10,7 @@ import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 // `forge script` only builds files reachable from the script's imports.
 import {ComplianceVerifier} from "../src/generated/compliance_verifier.sol";
 import {ComplianceSignedVerifier} from "../src/generated/compliance_signed_verifier.sol";
+import {ComplianceMultiSignedVerifier} from "../src/generated/compliance_multi_signed_verifier.sol";
 import {RiskScoreVerifier} from "../src/generated/risk_score_verifier.sol";
 import {RiskScoreSignedVerifier} from "../src/generated/risk_score_signed_verifier.sol";
 import {PatternVerifier} from "../src/generated/pattern_verifier.sol";
@@ -150,6 +151,16 @@ contract Deploy is Script {
         );
         verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, v);
         console.log("  RiskScoreSignedVerifier:", v);
+
+        // Multi-provider signed variant: M-of-N quorum across up to 5 registered signers.
+        // Stricter jurisdictions (US, SG) require minMultiProviderThreshold >= 2.
+        v = address(
+            new ComplianceMultiSignedVerifier{
+                salt: keccak256(abi.encodePacked(baseSalt, "ComplianceMultiSignedVerifier"))
+            }()
+        );
+        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_MULTI_SIGNED, v);
+        console.log("  ComplianceMultiSignedVerifier:", v);
     }
 
     /// @dev Deploy XochiTimelock and start the two-step ownership transfer.
@@ -187,8 +198,8 @@ contract Deploy is Script {
         // 1. Oracle's immutable verifier reference matches what we deployed.
         require(address(oracle.verifier()) == address(verifier), "post-deploy: oracle.verifier mismatch");
 
-        // 2. Every proof type 0x01..0x08 has a non-zero verifier registered.
-        uint8[8] memory ptypes = [
+        // 2. Every proof type 0x01..0x09 has a non-zero verifier registered.
+        uint8[9] memory ptypes = [
             ProofTypes.COMPLIANCE,
             ProofTypes.RISK_SCORE,
             ProofTypes.PATTERN,
@@ -196,7 +207,8 @@ contract Deploy is Script {
             ProofTypes.MEMBERSHIP,
             ProofTypes.NON_MEMBERSHIP,
             ProofTypes.COMPLIANCE_SIGNED,
-            ProofTypes.RISK_SCORE_SIGNED
+            ProofTypes.RISK_SCORE_SIGNED,
+            ProofTypes.COMPLIANCE_MULTI_SIGNED
         ];
         for (uint256 i; i < ptypes.length; i++) {
             address v = verifier.getVerifier(ptypes[i]);

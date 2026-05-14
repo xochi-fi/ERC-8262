@@ -103,11 +103,13 @@ contract IncidentVerifierSoundnessTest is Test {
         replacementVerifier = new IncidentStub(true);
 
         // (4) Propose replacement (CONFIG-equivalent via owner).
+        bytes32 replacementCodehash = address(replacementVerifier).codehash;
         vm.prank(owner);
-        verifier.proposeVerifier(PROOF_TYPE, address(replacementVerifier));
-        (address pending, uint256 readyAt) = verifier.getPendingVerifier(PROOF_TYPE);
+        verifier.proposeVerifier(PROOF_TYPE, address(replacementVerifier), replacementCodehash);
+        (address pending, uint256 readyAt, bytes32 pinnedCodehash) = verifier.getPendingVerifier(PROOF_TYPE);
         assertEq(pending, address(replacementVerifier));
         assertEq(readyAt, block.timestamp + 24 hours);
+        assertEq(pinnedCodehash, replacementCodehash);
 
         // (5) Cannot execute before timelock elapses
         vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, PROOF_TYPE, readyAt));

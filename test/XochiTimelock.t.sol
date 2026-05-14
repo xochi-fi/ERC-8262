@@ -109,8 +109,9 @@ contract XochiTimelockTest is Test {
     function test_schedule_execute_highDelay() public {
         // Propose a new verifier (high delay)
         StubVerifier newStub = new StubVerifier();
-        bytes memory data =
-            abi.encodeWithSignature("proposeVerifier(uint8,address)", ProofTypes.RISK_SCORE, address(newStub));
+        bytes memory data = abi.encodeWithSignature(
+            "proposeVerifier(uint8,address,bytes32)", ProofTypes.RISK_SCORE, address(newStub), address(newStub).codehash
+        );
         bytes32 salt = bytes32(uint256(2));
 
         vm.prank(multisig);
@@ -126,7 +127,7 @@ contract XochiTimelockTest is Test {
         vm.warp(block.timestamp + 18 hours);
         timelock.execute(address(verifier), 0, data, salt);
 
-        (address proposed,) = verifier.getPendingVerifier(ProofTypes.RISK_SCORE);
+        (address proposed,,) = verifier.getPendingVerifier(ProofTypes.RISK_SCORE);
         assertEq(proposed, address(newStub));
     }
 
@@ -148,7 +149,7 @@ contract XochiTimelockTest is Test {
     }
 
     function test_delay_highDelay_verifierOps() public view {
-        assertEq(timelock.getDelay(bytes4(keccak256("proposeVerifier(uint8,address)"))), 24 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("proposeVerifier(uint8,address,bytes32)"))), 24 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("setVerifierInitial(uint8,address)"))), 24 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("transferOwnership(address)"))), 24 hours);
     }

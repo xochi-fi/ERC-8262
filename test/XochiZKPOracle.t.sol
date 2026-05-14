@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Test.sol";
 import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
 import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
 import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
@@ -13,26 +13,14 @@ import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
 import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 import {IERC165} from "../src/interfaces/IERC165.sol";
+import {XochiTestBase} from "./utils/XochiTestBase.sol";
+import {PassingVerifier, FailingVerifier} from "./utils/TestStubs.sol";
 
-contract AlwaysPassVerifier is IUltraVerifier {
-    function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract AlwaysFailVerifier is IUltraVerifier {
-    function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
-        return false;
-    }
-}
-
-contract XochiZKPOracleTest is Test {
+contract XochiZKPOracleTest is XochiTestBase {
     XochiZKPOracle internal oracle;
     XochiZKPVerifier internal verifier;
-    AlwaysPassVerifier internal stubVerifier;
+    PassingVerifier internal stubVerifier;
 
-    address internal owner = makeAddr("owner");
-    address internal alice = makeAddr("alice");
     address internal publisher = makeAddr("publisher");
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
@@ -61,18 +49,10 @@ contract XochiZKPOracleTest is Test {
         verifier = new XochiZKPVerifier(owner);
         oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
-        stubVerifier = new AlwaysPassVerifier();
+        stubVerifier = new PassingVerifier();
+        _registerAllVerifiers(verifier, address(stubVerifier), true);
+
         vm.startPrank(owner);
-        // Register a stub verifier for every valid proof type, including the signed
-        // variants (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED).
-        verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.RISK_SCORE, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.PATTERN, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.ATTESTATION, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.MEMBERSHIP, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.NON_MEMBERSHIP, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.COMPLIANCE_SIGNED, address(stubVerifier));
-        verifier.setVerifierInitial(ProofTypes.RISK_SCORE_SIGNED, address(stubVerifier));
         // Register default reporting threshold for PATTERN tests
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
         // Register the default attestation provider's publisher and credential
@@ -569,9 +549,9 @@ contract XochiZKPOracleTest is Test {
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof1, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Upgrade verifier via timelock
-        AlwaysPassVerifier newStub = new AlwaysPassVerifier();
+        PassingVerifier newStub = new PassingVerifier();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(newStub));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(newStub), address(newStub).codehash);
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
@@ -1747,9 +1727,9 @@ contract XochiZKPOracleTest is Test {
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof1, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Upgrade verifier mid-session via timelock
-        AlwaysPassVerifier newStub = new AlwaysPassVerifier();
+        PassingVerifier newStub = new PassingVerifier();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(newStub));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(newStub), address(newStub).codehash);
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
@@ -2170,10 +2150,10 @@ contract XochiZKPOracleTest is Test {
         oracle.submitCompliance(0, 0x00, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
-    function test_submitCompliance_revert_unknownProofType_nine() public {
+    function test_submitCompliance_revert_unknownProofType_outOfRange() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x09));
-        oracle.submitCompliance(0, 0x09, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        oracle.submitCompliance(0, 0x0a, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
     // -------------------------------------------------------------------------
@@ -2289,8 +2269,8 @@ contract XochiZKPOracleTest is Test {
     }
 
     function testFuzz_submitCompliance_revert_unknownProofType(uint8 proofType) public {
-        // 0x07/0x08 are valid (signed variants); 0x09+ are out of range.
-        vm.assume(proofType == 0 || proofType > 8);
+        // 0x01..0x09 are valid; 0x0a+ are out of range.
+        vm.assume(proofType == 0 || proofType > 9);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, proofType));
         oracle.submitCompliance(0, proofType, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
@@ -2340,10 +2320,10 @@ contract XochiZKPOracleTest is Test {
         proof[corruptionOffset] = bytes1(corruptionByte);
 
         // Submit -- should either revert or return (verifier will decide).
-        // With AlwaysPassVerifier stub, this actually passes. Use AlwaysFailVerifier instead.
-        AlwaysFailVerifier failVerifier = new AlwaysFailVerifier();
+        // With PassingVerifier stub, this actually passes. Use FailingVerifier instead.
+        FailingVerifier failVerifier = new FailingVerifier();
         vm.startPrank(owner);
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(failVerifier));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(failVerifier), address(failVerifier).codehash);
         vm.warp(block.timestamp + 24 hours);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         vm.stopPrank();
@@ -2537,9 +2517,9 @@ contract XochiZKPOracleTest is Test {
 
     function test_submitComplianceBatch_revert_anyProofFails() public {
         // Deploy a verifier that always fails, upgrade via timelock
-        AlwaysFailVerifier failVerifier = new AlwaysFailVerifier();
+        FailingVerifier failVerifier = new FailingVerifier();
         vm.prank(owner);
-        verifier.proposeVerifier(ProofTypes.RISK_SCORE, address(failVerifier));
+        verifier.proposeVerifier(ProofTypes.RISK_SCORE, address(failVerifier), address(failVerifier).codehash);
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
         verifier.executeVerifierUpdate(ProofTypes.RISK_SCORE);
@@ -2828,6 +2808,232 @@ contract XochiZKPOracleTest is Test {
     }
 
     // -------------------------------------------------------------------------
+    // COMPLIANCE_MULTI_SIGNED submission paths (M-of-N quorum, up to 5 signers)
+    // -------------------------------------------------------------------------
+
+    bytes32 internal constant SIGNER_HASH_A = bytes32(uint256(0x5AAA));
+    bytes32 internal constant SIGNER_HASH_B = bytes32(uint256(0x5BBB));
+    bytes32 internal constant SIGNER_HASH_C = bytes32(uint256(0x5CCC));
+    bytes32 internal constant SIGNER_HASH_D = bytes32(uint256(0x5DDD));
+    bytes32 internal constant SIGNER_HASH_E = bytes32(uint256(0x5EEE));
+
+    function _registerThreeSigners() internal {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_A);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_B);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_C);
+        vm.stopPrank();
+    }
+
+    function _registerFiveSigners() internal {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_A);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_B);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_C);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_D);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_E);
+        vm.stopPrank();
+    }
+
+    function test_submitCompliance_multiSigned_happy_2of3() public {
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_C, bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+        assertEq(att.proofType, ProofTypes.COMPLIANCE_MULTI_SIGNED);
+        assertEq(att.providerSetHash, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.jurisdictionId, 0);
+    }
+
+    function test_submitCompliance_multiSigned_happy_3of5() public {
+        _registerFiveSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_C, SIGNER_HASH_D, SIGNER_HASH_E];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 3, hashes, alice);
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+        assertEq(att.proofType, ProofTypes.COMPLIANCE_MULTI_SIGNED);
+    }
+
+    function test_submitCompliance_multiSigned_revert_insufficientSigners() public {
+        _registerThreeSigners();
+        // Only 2 active slots but threshold_m requires 3.
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 3, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InsufficientSigners.selector, 2, 3));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_oneSignerRevoked() public {
+        _registerThreeSigners();
+        vm.prank(owner);
+        oracle.revokeSignerPubkeyHash(SIGNER_HASH_B);
+
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_C, bytes32(0), bytes32(0)];
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, SIGNER_HASH_B));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_duplicateSigner() public {
+        _registerThreeSigners();
+        // SIGNER_HASH_A appears twice in active slots.
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_A, bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.DuplicateSigner.selector, SIGNER_HASH_A));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_invalidThresholdM_zero() public {
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 0, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidThresholdM.selector, 0));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_invalidThresholdM_tooHigh() public {
+        _registerFiveSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_C, SIGNER_HASH_D, SIGNER_HASH_E];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 6, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidThresholdM.selector, 6));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_belowJurisdictionFloor_US() public {
+        // US requires minMultiProviderThreshold >= 2; M=1 must be rejected.
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, bytes32(0), bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, 1, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.BelowJurisdictionMinProviders.selector, 1, 1, 2));
+        oracle.submitCompliance(
+            1, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_belowJurisdictionFloor_SG() public {
+        // SG also requires M >= 2.
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, bytes32(0), bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(3, DEFAULT_PROVIDER_SET_HASH, 1, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.BelowJurisdictionMinProviders.selector, 3, 1, 2));
+        oracle.submitCompliance(
+            3, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_strictJurisdiction_acceptsMultiSigned_USwithM2() public {
+        // US accepts M=2 (matches the jurisdiction floor).
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        vm.prank(alice);
+        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            1, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+        assertEq(att.jurisdictionId, 1);
+    }
+
+    function test_submitCompliance_multiSigned_revert_chainIdMismatch() public {
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        // Tamper chain_id (slot [11]) with a wrong value.
+        bytes memory inputs = abi.encodePacked(
+            bytes32(uint256(0)), // [0] jurisdiction_id
+            DEFAULT_PROVIDER_SET_HASH, // [1]
+            INITIAL_CONFIG, // [2]
+            bytes32(block.timestamp), // [3]
+            bytes32(uint256(1)), // [4] meets_threshold
+            bytes32(uint256(2)), // [5] threshold_m
+            hashes[0],
+            hashes[1],
+            hashes[2],
+            hashes[3],
+            hashes[4],
+            bytes32(uint256(0xdeadbeef)), // [11] wrong chain_id
+            bytes32(uint256(uint160(address(oracle)))), // [12]
+            bytes32(uint256(uint160(alice))) // [13]
+        );
+        vm.prank(alice);
+        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_oracleAddressMismatch() public {
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = abi.encodePacked(
+            bytes32(uint256(0)),
+            DEFAULT_PROVIDER_SET_HASH,
+            INITIAL_CONFIG,
+            bytes32(block.timestamp),
+            bytes32(uint256(1)),
+            bytes32(uint256(2)),
+            hashes[0],
+            hashes[1],
+            hashes[2],
+            hashes[3],
+            hashes[4],
+            bytes32(block.chainid),
+            bytes32(uint256(uint160(address(0xdead)))), // [12] wrong oracle_address
+            bytes32(uint256(uint160(alice)))
+        );
+        vm.prank(alice);
+        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_submitCompliance_multiSigned_revert_submitterMismatch() public {
+        _registerThreeSigners();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        // Inputs claim alice; caller is bob.
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        address bob = makeAddr("bob");
+        vm.prank(bob);
+        vm.expectRevert(XochiZKPOracle.SubmitterMismatch.selector);
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // EIP-165
     // -------------------------------------------------------------------------
 
@@ -2877,10 +3083,6 @@ contract XochiZKPOracleTest is Test {
         return proof;
     }
 
-    function _dummyProof() internal pure returns (bytes memory) {
-        return new bytes(2144);
-    }
-
     /// @dev Default provider set hash used in tests (must match public inputs)
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
 
@@ -2907,6 +3109,33 @@ contract XochiZKPOracleTest is Test {
             bytes32(block.timestamp), // timestamp
             bytes32(uint256(1)), // meets_threshold
             bytes32(uint256(uint160(submitter))) // submitter
+        );
+    }
+
+    /// @dev COMPLIANCE_MULTI_SIGNED public inputs (14 slots: compliance + threshold_m
+    ///      + 5 signer_pubkey_hash slots + chain_id + oracle_address)
+    function _complianceMultiSignedInputs(
+        uint8 jurisdictionId,
+        bytes32 providerSetHash,
+        uint8 thresholdM,
+        bytes32[5] memory signerHashes,
+        address submitter
+    ) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            bytes32(uint256(jurisdictionId)), // [0] jurisdiction_id
+            providerSetHash, // [1] provider_set_hash
+            INITIAL_CONFIG, // [2] config_hash
+            bytes32(block.timestamp), // [3] timestamp
+            bytes32(uint256(1)), // [4] meets_threshold = true
+            bytes32(uint256(thresholdM)), // [5] threshold_m
+            signerHashes[0], // [6..11) signer_pubkey_hash_0..4
+            signerHashes[1],
+            signerHashes[2],
+            signerHashes[3],
+            signerHashes[4],
+            bytes32(block.chainid), // [11] chain_id  (audit F-6)
+            bytes32(uint256(uint160(address(oracle)))), // [12] oracle_address  (audit F-6)
+            bytes32(uint256(uint160(submitter))) // [13] submitter
         );
     }
 

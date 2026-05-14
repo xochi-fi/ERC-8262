@@ -40,6 +40,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     struct VerifierProposal {
         address newVerifier;
         uint256 proposedAt;
+        bytes32 expectedCodehash;
     }
 
     error VerifierNotSet(uint8 proofType);
@@ -57,6 +58,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     error BatchLengthMismatch();
     error EmptyBatch();
     error BatchTooLarge();
+    error CodehashMismatch(address verifier, bytes32 expected, bytes32 actual);
 
     /// @notice Maximum number of proofs in a single batch verification.
     /// @dev Calibrated against the per-proof gas baseline in `.gas-snapshot`
@@ -74,7 +76,9 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     uint256 public constant REVOCATION_TIMELOCK = 6 hours;
 
     event VerifierUpdated(uint8 indexed proofType, address indexed oldVerifier, address indexed newVerifier);
-    event VerifierProposed(uint8 indexed proofType, address indexed newVerifier, uint256 readyAt);
+    event VerifierProposed(
+        uint8 indexed proofType, address indexed newVerifier, bytes32 expectedCodehash, uint256 readyAt
+    );
     event VerifierProposalCancelled(uint8 indexed proofType, address indexed cancelledVerifier);
     event VerifierVersionRevoked(uint8 indexed proofType, uint256 indexed version, address indexed verifier);
     event VersionRevocationProposed(uint8 indexed proofType, uint256 indexed version, uint256 readyAt);
@@ -176,21 +180,36 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     }
 
     /// @notice Propose a new verifier for a proof type (starts timelock)
+    /// @dev `expectedCodehash` is pinned at proposal time and re-checked at execute time.
+    ///      This blocks a compromised CONFIG_ROLE from swapping the bytecode at the proposed
+    ///      address during the 24h window (e.g. CREATE2 redeploy after SELFDESTRUCT in the
+    ///      same factory tx). Caller must obtain the codehash off-chain (`extcodehash`).
     /// @param proofType The proof type (0x01-0x08)
     /// @param newVerifier The proposed UltraHonk verifier contract address
-    function proposeVerifier(uint8 proofType, address newVerifier) external onlyRole(CONFIG_ROLE) {
+    /// @param expectedCodehash The EXTCODEHASH the proposer commits to; must equal newVerifier's current codehash
+    function proposeVerifier(uint8 proofType, address newVerifier, bytes32 expectedCodehash)
+        external
+        onlyRole(CONFIG_ROLE)
+    {
         if (!ProofTypes.isValidProofType(proofType)) revert ProofTypes.InvalidProofType(proofType);
         if (newVerifier == address(0)) revert ZeroAddress();
         if (newVerifier.code.length == 0) revert NotAContract(newVerifier);
+        bytes32 actual = newVerifier.codehash;
+        if (actual != expectedCodehash) revert CodehashMismatch(newVerifier, expectedCodehash, actual);
         if (_pendingVerifiers[proofType].proposedAt != 0) revert ProposalAlreadyPending(proofType);
 
-        _pendingVerifiers[proofType] = VerifierProposal({newVerifier: newVerifier, proposedAt: block.timestamp});
+        _pendingVerifiers[proofType] = VerifierProposal({
+            newVerifier: newVerifier, proposedAt: block.timestamp, expectedCodehash: expectedCodehash
+        });
 
         uint256 readyAt = block.timestamp + VERIFIER_TIMELOCK;
-        emit VerifierProposed(proofType, newVerifier, readyAt);
+        emit VerifierProposed(proofType, newVerifier, expectedCodehash, readyAt);
     }
 
     /// @notice Execute a pending verifier update after the timelock has elapsed
+    /// @dev Re-checks the codehash pinned at proposal time. A mid-window redeploy
+    ///      (CREATE2 same-address with different bytecode) reverts here even if the
+    ///      proposed address is unchanged.
     /// @param proofType The proof type (0x01-0x08)
     function executeVerifierUpdate(uint8 proofType) external onlyRole(CONFIG_ROLE) {
         VerifierProposal memory proposal = _pendingVerifiers[proofType];
@@ -198,6 +217,11 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
 
         uint256 readyAt = proposal.proposedAt + VERIFIER_TIMELOCK;
         if (block.timestamp < readyAt) revert TimelockNotElapsed(proofType, readyAt);
+
+        bytes32 actual = proposal.newVerifier.codehash;
+        if (actual != proposal.expectedCodehash) {
+            revert CodehashMismatch(proposal.newVerifier, proposal.expectedCodehash, actual);
+        }
 
         address old = _verifiers[proofType];
         _verifiers[proofType] = proposal.newVerifier;
@@ -225,10 +249,15 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     /// @param proofType The proof type
     /// @return newVerifier The proposed verifier address (address(0) if none)
     /// @return readyAt The timestamp when the proposal can be executed (0 if none)
-    function getPendingVerifier(uint8 proofType) external view returns (address newVerifier, uint256 readyAt) {
+    /// @return expectedCodehash The codehash pinned at proposal time (bytes32(0) if none)
+    function getPendingVerifier(uint8 proofType)
+        external
+        view
+        returns (address newVerifier, uint256 readyAt, bytes32 expectedCodehash)
+    {
         VerifierProposal memory proposal = _pendingVerifiers[proofType];
-        if (proposal.proposedAt == 0) return (address(0), 0);
-        return (proposal.newVerifier, proposal.proposedAt + VERIFIER_TIMELOCK);
+        if (proposal.proposedAt == 0) return (address(0), 0, bytes32(0));
+        return (proposal.newVerifier, proposal.proposedAt + VERIFIER_TIMELOCK, proposal.expectedCodehash);
     }
 
     /// @notice Revoke a historical verifier version IMMEDIATELY, with no delay.

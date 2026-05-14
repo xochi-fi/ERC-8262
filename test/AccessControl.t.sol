@@ -207,7 +207,7 @@ contract AccessControlTest is Test {
 
         vm.startPrank(owner);
         verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(v1));
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2), address(v2).codehash);
         vm.warp(block.timestamp + 24 hours);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         verifier.grantRole(GUARDIAN, guardian);
@@ -226,7 +226,7 @@ contract AccessControlTest is Test {
 
         vm.startPrank(owner);
         verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(v1));
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2), address(v2).codehash);
         vm.warp(block.timestamp + 24 hours);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         verifier.grantRole(CONFIG, config);
@@ -243,7 +243,7 @@ contract AccessControlTest is Test {
 
         vm.startPrank(owner);
         verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(v1));
-        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2));
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(v2), address(v2).codehash);
         vm.warp(block.timestamp + 24 hours);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         verifier.grantRole(CONFIG, config);

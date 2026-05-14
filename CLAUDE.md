@@ -15,7 +15,7 @@ ERC Xochi ZKP: a standard for zero-knowledge compliance proofs on Ethereum. User
 
 ```bash
 make build                     # compile contracts + circuits
-make test                      # run Solidity tests (480)
+make test                      # run Solidity tests (499)
 make test-noir                 # run Noir circuit tests (89, workspace)
 make test-sdk                  # run TS consumer SDK tests (in test/sdk/)
 make test-all                  # run all tests
@@ -54,6 +54,7 @@ Nargo workspace at `circuits/Nargo.toml`. Each proof type is a separate Noir pro
 - `circuits/compliance_signed/`: same plus an in-circuit provider signature over the screening payload
 - `circuits/risk_score/`: raw risk-score proof (threshold GT/LT, range)
 - `circuits/risk_score_signed/`: signed variant of risk_score
+- `circuits/compliance_multi_signed/`: M-of-N quorum across up to 5 registered signers
 - `circuits/pattern/`: pattern detection (anti-structuring, velocity, round amounts)
 - `circuits/attestation/`: credential verification (KYC tier, accreditation)
 - `circuits/membership/`: Merkle inclusion proof
@@ -61,20 +62,23 @@ Nargo workspace at `circuits/Nargo.toml`. Each proof type is a separate Noir pro
 
 `compliance` and `risk_score` both use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof (provider-committed, timestamp-bound). Risk score is a raw scoring primitive for custom integrations (no jurisdiction, supports GT/LT/range). The `_signed` variants add a secp256k1 ECDSA verify in-circuit over a Pedersen digest of `(chain_id, oracle_address, provider_set_hash, signals, weights, timestamp, submitter)`. Same semantics as their unsigned siblings; three extra public inputs -- `signer_pubkey_hash` (validated against the Oracle's signer registry), `chain_id` (must equal `block.chainid`), and `oracle_address` (must equal the consuming Oracle's `address(this)`). The chain/oracle binding (audit F-6) ensures a provider signature cannot be replayed across chains or against alternate Oracle deployments.
 
+`compliance_multi_signed` (0x09) extends the signed model to M-of-N: up to `MAX_PROVIDERS_MULTI = 5` parallel signer slots, with a runtime `threshold_m`. A slot is active iff its public `signer_pubkey_hash` is non-zero; each active slot's signature, distinctness, and individual risk-floor compliance are enforced in-circuit. The Oracle additionally enforces the per-jurisdiction `minMultiProviderThreshold` (US/SG require M ≥ 2). Trust model: from "one trusted provider" to "M of N independent providers all agree".
+
 ## Proof Types
 
 Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts are _logical_ inputs (what the circuit's `main()` declares as `pub`). The generated UltraHonk verifiers see 16 more inputs per type because Noir flattens arrays into individual field elements (`NUMBER_OF_PUBLIC_INPUTS - 16 == logical count`).
 
-| ID   | ProofType         | Circuit           | Logical Public Inputs                                            |
-| ---- | ----------------- | ----------------- | ---------------------------------------------------------------- |
-| 0x01 | COMPLIANCE        | compliance        | 6                                                                |
-| 0x02 | RISK_SCORE        | risk_score        | 8                                                                |
-| 0x03 | PATTERN           | pattern           | 6                                                                |
-| 0x04 | ATTESTATION       | attestation       | 6                                                                |
-| 0x05 | MEMBERSHIP        | membership        | 5                                                                |
-| 0x06 | NON_MEMBERSHIP    | non_membership    | 5                                                                |
-| 0x07 | COMPLIANCE_SIGNED | compliance_signed | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address)  |
-| 0x08 | RISK_SCORE_SIGNED | risk_score_signed | 11 (risk_score + signer_pubkey_hash + chain_id + oracle_address) |
+| ID   | ProofType               | Circuit                 | Logical Public Inputs                                                            |
+| ---- | ----------------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| 0x01 | COMPLIANCE              | compliance              | 6                                                                                |
+| 0x02 | RISK_SCORE              | risk_score              | 8                                                                                |
+| 0x03 | PATTERN                 | pattern                 | 6                                                                                |
+| 0x04 | ATTESTATION             | attestation             | 6                                                                                |
+| 0x05 | MEMBERSHIP              | membership              | 5                                                                                |
+| 0x06 | NON_MEMBERSHIP          | non_membership          | 5                                                                                |
+| 0x07 | COMPLIANCE_SIGNED       | compliance_signed       | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address)                  |
+| 0x08 | RISK_SCORE_SIGNED       | risk_score_signed       | 11 (risk_score + signer_pubkey_hash + chain_id + oracle_address)                 |
+| 0x09 | COMPLIANCE_MULTI_SIGNED | compliance_multi_signed | 14 (compliance + threshold_m + 5 signer_pubkey_hash + chain_id + oracle_address) |
 
 ## Conventions
 
@@ -95,7 +99,7 @@ The Oracle validates public inputs for every proof type via on-chain registries:
 - `_validMerkleRoots`: merkle roots for MEMBERSHIP / NON_MEMBERSHIP proofs
 - `_validReportingThresholds`: reporting thresholds for PATTERN proofs
 - `_credentialRoots`: per-provider credentials trees for ATTESTATION (48h TTL, publisher-EOA gated)
-- `_validSignerPubkeyHashes`: secp256k1 signer pubkey commitments for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED
+- `_validSignerPubkeyHashes`: secp256k1 signer pubkey commitments for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED / COMPLIANCE_MULTI_SIGNED (each non-zero slot in 0x09 must be registered here)
 - `_credentialSigner`: per-provider credential-root signing key for ATTESTATION (separate from publisher EOA)
 
 Per-jurisdiction policy: `JurisdictionConfig.requireSignedSignals(uint8)` returns true for US (BSA) and Singapore. The Oracle's submission dispatcher rejects unsigned COMPLIANCE / RISK_SCORE for those jurisdictions with `SignedSignalsRequired`.

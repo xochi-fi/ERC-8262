@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 /// @title ProofTypes -- Proof type definitions for Xochi ZKP compliance oracle
-/// @notice Defines the six proof types and their public input schemas.
+/// @notice Defines the nine proof types and their public input schemas.
 ///         Each proof type corresponds to a separate Noir circuit.
 library ProofTypes {
     /// @notice Proof type identifiers (one per circuit)
@@ -17,13 +17,17 @@ library ProofTypes {
     ///      signature of the screening-signal payload by an Oracle-registered signer.
     uint8 internal constant COMPLIANCE_SIGNED = 0x07; // compliance_signed circuit
     uint8 internal constant RISK_SCORE_SIGNED = 0x08; // risk_score_signed circuit
+    /// @dev Multi-provider signed compliance. M of N (max 5) registered signers must
+    ///      each individually attest the subject is below the jurisdiction's high-risk
+    ///      floor. Reduces single-provider trust to M-of-N quorum.
+    uint8 internal constant COMPLIANCE_MULTI_SIGNED = 0x09; // compliance_multi_signed circuit
 
     error InvalidProofType(uint8 proofType);
     error InvalidPublicInputLength(uint8 proofType, uint256 expected, uint256 actual);
 
     /// @notice Expected number of public inputs per proof type
     /// @dev Must match the `pub` parameters in each Noir circuit's main() function
-    /// @param proofType The proof type identifier (0x01-0x08)
+    /// @param proofType The proof type identifier (0x01-0x09)
     /// @return count Number of bytes32 public inputs expected
     function expectedPublicInputCount(uint8 proofType) internal pure returns (uint256 count) {
         // compliance: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
@@ -42,6 +46,8 @@ library ProofTypes {
         if (proofType == COMPLIANCE_SIGNED) return 9;
         // risk_score_signed: risk_score fields + signer_pubkey_hash + chain_id + oracle_address
         if (proofType == RISK_SCORE_SIGNED) return 11;
+        // compliance_multi_signed: compliance fields + threshold_m + 5 signer_pubkey_hash slots + chain_id + oracle_address
+        if (proofType == COMPLIANCE_MULTI_SIGNED) return 14;
         revert InvalidProofType(proofType);
     }
 
@@ -71,13 +77,13 @@ library ProofTypes {
 
     /// @notice Check if a proof type is valid
     function isValidProofType(uint8 proofType) internal pure returns (bool valid) {
-        return proofType >= COMPLIANCE && proofType <= RISK_SCORE_SIGNED;
+        return proofType >= COMPLIANCE && proofType <= COMPLIANCE_MULTI_SIGNED;
     }
 
     /// @notice Whether a proof type is a provider-signed-signals variant.
     /// @dev Used by the Oracle to enforce per-jurisdiction signed-signals policy.
     function isSignedVariant(uint8 proofType) internal pure returns (bool isSigned) {
-        return proofType == COMPLIANCE_SIGNED || proofType == RISK_SCORE_SIGNED;
+        return proofType == COMPLIANCE_SIGNED || proofType == RISK_SCORE_SIGNED || proofType == COMPLIANCE_MULTI_SIGNED;
     }
 
     /// @notice Whether a proof type is the unsigned compliance/risk_score sibling

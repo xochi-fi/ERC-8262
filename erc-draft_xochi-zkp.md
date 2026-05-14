@@ -128,7 +128,7 @@ interface IXochiZKPVerifier {
 }
 ```
 
-Implementations MUST also implement [ERC-165](./eip-165.md). `supportsInterface(bytes4)` MUST return `true` for `type(IXochiZKPVerifier).interfaceId` and for `type(IERC165).interfaceId`, and `false` for `0xffffffff`.
+Implementations MUST also implement [ERC-165](https://eips.ethereum.org/EIPS/eip-165). `supportsInterface(bytes4)` MUST return `true` for `type(IXochiZKPVerifier).interfaceId` and for `type(IERC165).interfaceId`, and `false` for `0xffffffff`.
 
 ### Oracle Interface
 
@@ -262,7 +262,7 @@ interface IXochiZKPOracle {
 }
 ```
 
-Implementations MUST also implement [ERC-165](./eip-165.md). `supportsInterface(bytes4)` MUST return `true` for `type(IXochiZKPOracle).interfaceId` and for `type(IERC165).interfaceId`, and `false` for `0xffffffff`.
+Implementations MUST also implement [ERC-165](https://eips.ethereum.org/EIPS/eip-165). `supportsInterface(bytes4)` MUST return `true` for `type(IXochiZKPOracle).interfaceId` and for `type(IERC165).interfaceId`, and `false` for `0xffffffff`.
 
 ### Jurisdiction Configuration
 

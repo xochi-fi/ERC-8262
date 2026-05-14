@@ -165,6 +165,10 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     error ProofTimestampNotMonotonic(uint256 proofTimestamp, uint256 lastTimestamp);
     error SignedSignalsRequired(uint8 jurisdictionId, uint8 proofType);
     error InvalidSignerPubkeyHash(bytes32 signerPubkeyHash);
+    error InsufficientSigners(uint8 active, uint8 required);
+    error BelowJurisdictionMinProviders(uint8 jurisdictionId, uint8 m, uint8 floor);
+    error DuplicateSigner(bytes32 signerPubkeyHash);
+    error InvalidThresholdM(uint8 thresholdM);
     error CredentialSignerNotSet(uint256 providerId);
     error InvalidCredentialSignature();
     error CredentialSignatureOutOfWindow(uint64 notBefore, uint64 notAfter);
@@ -277,7 +281,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
 
         // Build and store attestation (providerSetHash only meaningful for COMPLIANCE proofs)
         bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
-                || proofType == ProofTypes.COMPLIANCE_SIGNED)
+                || proofType == ProofTypes.COMPLIANCE_SIGNED || proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED)
             ? providerSetHash
             : bytes32(0);
         attestation = _buildAttestation(
@@ -620,19 +624,31 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         return false;
     }
 
+    /// @dev Toggle a `bytes32 => bool` registry entry on. Reverts if already set --
+    ///      every register* admin call funnels through here so the duplicate state +
+    ///      revert pattern lives in one place.
+    function _addBoolEntry(mapping(bytes32 => bool) storage set, bytes32 key) internal {
+        if (set[key]) revert AlreadyRegistered();
+        set[key] = true;
+    }
+
+    /// @dev Toggle a `bytes32 => bool` registry entry off. Reverts if not currently set.
+    function _removeBoolEntry(mapping(bytes32 => bool) storage set, bytes32 key) internal {
+        if (!set[key]) revert NotRegistered();
+        set[key] = false;
+    }
+
     /// @notice Register a merkle root as valid for MEMBERSHIP/NON_MEMBERSHIP/ATTESTATION proofs
     /// @param merkleRoot The merkle root to register
     function registerMerkleRoot(bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
-        if (_validMerkleRoots[merkleRoot]) revert AlreadyRegistered();
-        _validMerkleRoots[merkleRoot] = true;
+        _addBoolEntry(_validMerkleRoots, merkleRoot);
         emit MerkleRootRegistered(merkleRoot);
     }
 
     /// @notice Revoke a merkle root so proofs using it are no longer accepted
     /// @param merkleRoot The merkle root to revoke
     function revokeMerkleRoot(bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
-        if (!_validMerkleRoots[merkleRoot]) revert NotRegistered();
-        _validMerkleRoots[merkleRoot] = false;
+        _removeBoolEntry(_validMerkleRoots, merkleRoot);
         emit MerkleRootRevoked(merkleRoot);
     }
 
@@ -810,15 +826,13 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     ///      moment its hash is revoked.
     function registerSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
         if (signerPubkeyHash == bytes32(0)) revert InvalidSignerPubkeyHash(signerPubkeyHash);
-        if (_validSignerPubkeyHashes[signerPubkeyHash]) revert AlreadyRegistered();
-        _validSignerPubkeyHashes[signerPubkeyHash] = true;
+        _addBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
         emit SignerPubkeyHashRegistered(signerPubkeyHash);
     }
 
     /// @notice Revoke a previously-authorized signer pubkey hash.
     function revokeSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
-        if (!_validSignerPubkeyHashes[signerPubkeyHash]) revert NotRegistered();
-        _validSignerPubkeyHashes[signerPubkeyHash] = false;
+        _removeBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
         emit SignerPubkeyHashRevoked(signerPubkeyHash);
     }
 
@@ -830,16 +844,14 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     /// @notice Register a reporting threshold for PATTERN (anti-structuring) proofs
     /// @param threshold The threshold value (as bytes32-encoded u64)
     function registerReportingThreshold(bytes32 threshold) external onlyRole(REGISTRAR_ROLE) {
-        if (_validReportingThresholds[threshold]) revert AlreadyRegistered();
-        _validReportingThresholds[threshold] = true;
+        _addBoolEntry(_validReportingThresholds, threshold);
         emit ReportingThresholdRegistered(threshold);
     }
 
     /// @notice Revoke a reporting threshold
     /// @param threshold The threshold to revoke
     function revokeReportingThreshold(bytes32 threshold) external onlyRole(REGISTRAR_ROLE) {
-        if (!_validReportingThresholds[threshold]) revert NotRegistered();
-        _validReportingThresholds[threshold] = false;
+        _removeBoolEntry(_validReportingThresholds, threshold);
         emit ReportingThresholdRevoked(threshold);
     }
 
@@ -912,7 +924,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, inputs);
 
         bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
-                || proofType == ProofTypes.COMPLIANCE_SIGNED)
+                || proofType == ProofTypes.COMPLIANCE_SIGNED || proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED)
             ? providerSetHash
             : bytes32(0);
         attestation = _buildAttestation(
@@ -1005,6 +1017,8 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
             return _validateComplianceSignedInputs(jurisdictionId, providerSetHash, publicInputs);
         } else if (proofType == ProofTypes.RISK_SCORE_SIGNED) {
             return _validateRiskScoreSignedInputs(publicInputs);
+        } else if (proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED) {
+            return _validateComplianceMultiSignedInputs(jurisdictionId, providerSetHash, publicInputs);
         } else {
             revert ProofTypes.InvalidProofType(proofType);
         }
@@ -1052,6 +1066,25 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     /// @dev Assert that `configHash` is a registered (non-revoked) provider configuration.
     function _assertValidConfig(bytes32 configHash) internal view {
         if (!_validConfigs[configHash]) revert InvalidConfigHash(configHash);
+    }
+
+    /// @dev Assert that none of the providers expanded from `configHash` have been denied.
+    ///      Centralizes the `_configContainsDeniedProvider` -> `_firstDeniedProviderInConfig`
+    ///      revert pattern shared by every compliance validator.
+    function _assertConfigNotDenied(bytes32 configHash) internal view {
+        if (_configContainsDeniedProvider(configHash)) {
+            revert ProviderDenied(_firstDeniedProviderInConfig(configHash));
+        }
+    }
+
+    /// @dev Assert that the two 32-byte words at `publicInputs[offset:offset+64]` are
+    ///      (chain_id, oracle_address) matching this deployment. Used by every signed
+    ///      validator to enforce audit F-6 cross-chain / cross-Oracle replay protection.
+    function _assertChainAndOracleBinding(bytes calldata publicInputs, uint256 offset) internal view {
+        if (bytes32(publicInputs[offset:offset + 32]) != bytes32(block.chainid)) revert PublicInputMismatch();
+        if (bytes32(publicInputs[offset + 32:offset + 64]) != bytes32(uint256(uint160(address(this))))) {
+            revert PublicInputMismatch();
+        }
     }
 
     /// @dev Validate RISK_SCORE / RISK_SCORE_SIGNED bound semantics. Rejects trivially-true
@@ -1111,9 +1144,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         _assertValidConfig(proofConfigHash);
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertSubmitter(bytes32(publicInputs[160:192]));
-        if (_configContainsDeniedProvider(proofConfigHash)) {
-            revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
-        }
+        _assertConfigNotDenied(proofConfigHash);
         proofTimestamp = uint256(bytes32(publicInputs[96:128]));
         _validateProofTimestamp(proofTimestamp);
     }
@@ -1294,12 +1325,77 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
-        if (bytes32(publicInputs[192:224]) != bytes32(block.chainid)) revert PublicInputMismatch();
-        if (bytes32(publicInputs[224:256]) != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
+        _assertChainAndOracleBinding(publicInputs, 192);
         _assertSubmitter(bytes32(publicInputs[256:288]));
-        if (_configContainsDeniedProvider(proofConfigHash)) {
-            revert ProviderDenied(_firstDeniedProviderInConfig(proofConfigHash));
+        _assertConfigNotDenied(proofConfigHash);
+        proofTimestamp = uint256(bytes32(publicInputs[96:128]));
+        _validateProofTimestamp(proofTimestamp);
+    }
+
+    /// @dev Validate COMPLIANCE_MULTI_SIGNED public inputs.
+    ///      Verifies that at least `threshold_m` of the (up to 5) provided
+    ///      `signer_pubkey_hash` slots are registered and distinct, and that
+    ///      `threshold_m` meets the jurisdiction-specific multi-provider floor.
+    ///      The Noir circuit has already verified that each active slot's
+    ///      signature is valid and that each active slot's score is below the
+    ///      jurisdiction high-risk threshold; the on-chain validator handles
+    ///      registry authorization, jurisdiction policy, and deployment binding.
+    function _validateComplianceMultiSignedInputs(
+        uint8 jurisdictionId,
+        bytes32 providerSetHash,
+        bytes calldata publicInputs
+    ) internal view returns (uint256 proofTimestamp) {
+        // COMPLIANCE_MULTI_SIGNED public inputs layout (each 32 bytes):
+        //   [0]:  jurisdiction_id
+        //   [1]:  provider_set_hash
+        //   [2]:  config_hash
+        //   [3]:  timestamp
+        //   [4]:  meets_threshold
+        //   [5]:  threshold_m
+        //   [6..11): signer_pubkey_hash_0..4
+        //   [11]: chain_id            (audit F-6)
+        //   [12]: oracle_address      (audit F-6)
+        //   [13]: submitter
+        bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
+        bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
+        bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
+
+        if (proofJurisdiction != bytes32(uint256(jurisdictionId))) revert PublicInputMismatch();
+        if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
+        _assertValidConfig(proofConfigHash);
+        _assertResultPositive(bytes32(publicInputs[128:160]));
+
+        uint256 thresholdMRaw = uint256(bytes32(publicInputs[160:192]));
+        if (thresholdMRaw == 0 || thresholdMRaw > 5) revert InvalidThresholdM(uint8(thresholdMRaw));
+        uint8 thresholdM = uint8(thresholdMRaw);
+
+        // Authorize each non-zero signer slot and assert distinctness.
+        bytes32[5] memory signerHashes = [
+            bytes32(publicInputs[192:224]),
+            bytes32(publicInputs[224:256]),
+            bytes32(publicInputs[256:288]),
+            bytes32(publicInputs[288:320]),
+            bytes32(publicInputs[320:352])
+        ];
+        uint8 activeCount;
+        for (uint256 i; i < 5; ++i) {
+            bytes32 h = signerHashes[i];
+            if (h == bytes32(0)) continue;
+            if (!_validSignerPubkeyHashes[h]) revert InvalidSignerPubkeyHash(h);
+            for (uint256 j; j < i; ++j) {
+                if (signerHashes[j] == h) revert DuplicateSigner(h);
+            }
+            unchecked {
+                ++activeCount;
+            }
         }
+        if (activeCount < thresholdM) revert InsufficientSigners(activeCount, thresholdM);
+        uint8 floor = JurisdictionConfig.minMultiProviderThreshold(jurisdictionId);
+        if (thresholdM < floor) revert BelowJurisdictionMinProviders(jurisdictionId, thresholdM, floor);
+
+        _assertChainAndOracleBinding(publicInputs, 352);
+        _assertSubmitter(bytes32(publicInputs[416:448]));
+        _assertConfigNotDenied(proofConfigHash);
         proofTimestamp = uint256(bytes32(publicInputs[96:128]));
         _validateProofTimestamp(proofTimestamp);
     }
@@ -1333,8 +1429,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
             revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
         }
-        if (bytes32(publicInputs[256:288]) != bytes32(block.chainid)) revert PublicInputMismatch();
-        if (bytes32(publicInputs[288:320]) != bytes32(uint256(uint160(address(this))))) revert PublicInputMismatch();
+        _assertChainAndOracleBinding(publicInputs, 256);
         _assertSubmitter(bytes32(publicInputs[320:352]));
         _validateRiskBounds(
             uint256(bytes32(publicInputs[0:32])),

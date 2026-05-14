@@ -99,4 +99,22 @@ library JurisdictionConfig {
         if (jurisdictionId == SINGAPORE) return true;
         revert InvalidJurisdiction(jurisdictionId);
     }
+
+    /// @notice Minimum number of distinct providers required for a multi-signed
+    ///         compliance proof (proof type 0x09) in this jurisdiction.
+    /// @dev 1 means single-signer attestation is sufficient (the proof is then
+    ///      operationally equivalent to 0x07). Values >= 2 force genuine M-of-N
+    ///      corroboration. Stricter regimes (US BSA, Singapore MAS) demand >= 2
+    ///      independent providers; permissive regimes (EU AMLD6, UK MLR) accept 1.
+    ///      Like `requireSignedSignals`, this is a regulatory parameter compiled
+    ///      into the contract by design.
+    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
+    /// @return floor Minimum M (1..MAX) required for multi-signed proofs
+    function minMultiProviderThreshold(uint8 jurisdictionId) internal pure returns (uint8 floor) {
+        if (jurisdictionId == EU) return 1;
+        if (jurisdictionId == US) return 2;
+        if (jurisdictionId == UK) return 1;
+        if (jurisdictionId == SINGAPORE) return 2;
+        revert InvalidJurisdiction(jurisdictionId);
+    }
 }

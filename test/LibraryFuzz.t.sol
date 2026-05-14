@@ -93,6 +93,8 @@ contract LibraryFuzzTest is Test {
         // to their unsigned siblings -- 3 extra slots each.
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 9);
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 11);
+        // Multi-signed: compliance fields + threshold_m + 5 signer slots + chain_id + oracle_address = 14
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_MULTI_SIGNED), 14);
     }
 
     // -------------------------------------------------------------------------

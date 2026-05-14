@@ -127,15 +127,16 @@ generate_fixture() {
 
 _contract_name() {
     case "$1" in
-        compliance)         echo "ComplianceVerifier" ;;
-        compliance_signed)  echo "ComplianceSignedVerifier" ;;
-        risk_score)         echo "RiskScoreVerifier" ;;
-        risk_score_signed)  echo "RiskScoreSignedVerifier" ;;
-        pattern)            echo "PatternVerifier" ;;
-        attestation)        echo "AttestationVerifier" ;;
-        membership)         echo "MembershipVerifier" ;;
-        non_membership)     echo "NonMembershipVerifier" ;;
-        *)                  echo "HonkVerifier" ;;
+        compliance)              echo "ComplianceVerifier" ;;
+        compliance_signed)       echo "ComplianceSignedVerifier" ;;
+        compliance_multi_signed) echo "ComplianceMultiSignedVerifier" ;;
+        risk_score)              echo "RiskScoreVerifier" ;;
+        risk_score_signed)       echo "RiskScoreSignedVerifier" ;;
+        pattern)                 echo "PatternVerifier" ;;
+        attestation)             echo "AttestationVerifier" ;;
+        membership)              echo "MembershipVerifier" ;;
+        non_membership)          echo "NonMembershipVerifier" ;;
+        *)                       echo "HonkVerifier" ;;
     esac
 }
 

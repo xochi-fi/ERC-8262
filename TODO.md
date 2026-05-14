@@ -2,17 +2,61 @@
 
 ## Current Status
 
-- 472/472 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration, Gas, Invariant, EIP712, ThresholdCrossValidation, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths)
-- 89/89 Noir tests pass (9 workspace packages incl. compliance_signed, risk_score_signed, shared sig parity vectors with chain_id + oracle_address binding)
+- 499/499 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration, Gas, Invariant, EIP712, ThresholdCrossValidation, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths, verifier codehash pinning, Oracle state-machine invariants, COMPLIANCE_MULTI_SIGNED)
+- 105/105 Noir tests pass (10 workspace packages incl. compliance_signed, risk_score_signed, compliance_multi_signed, shared sig + multi_sig parity vectors with chain_id + oracle_address binding)
 - xochi-sdk: signed-variant API extended with `chainId` + `oracleAddress` (paired with circuit revision; SDK side on `fix/f-6-bind-chain-oracle-in-digest`)
 - EIP draft aligned with implementation (signed-variant rows include the F-6 chain/oracle binding contract)
 - Tooling: nargo 1.0.0-beta.20, forge 1.5.1, bb 4.0.0-nightly.20260120
-- CI green; Slither: 0 findings on hand-written code; `make parity-check` is now a CI gate (F-8) -- 8/8 circuits in parity
+- CI green; Slither: 0 findings on hand-written code; `make parity-check` is now a CI gate (F-8) -- 9/9 circuits in parity
 - Gas: ~2.43M verify, ~2.85M submit; `MAX_BATCH_SIZE = 10` (audit F-3, ~24M at cap, fits 30M mainnet block)
 - Pre-EIP audit: see [`audit/PRE_EIP_AUDIT.md`](audit/PRE_EIP_AUDIT.md). All 9 findings closed on `fix/f-2-atomic-provider-expansion`.
 - Client SDK: `../xochi-sdk` (also published as `@xochi/sdk@^0.2.0`)
 
 ## Completed
+
+<details>
+<summary>M-of-N multi-provider compliance proof (2026-05-14)</summary>
+
+New proof type `COMPLIANCE_MULTI_SIGNED = 0x09` reduces the single-provider trust assumption to M-of-N. A single proof bundles up to `MAX_PROVIDERS_MULTI = 5` parallel signer slots; each active slot independently verifies a secp256k1 ECDSA signature and asserts its risk score is below the jurisdiction floor. Forging an attestation now requires compromising M of N independent signing keys, not just one.
+
+- New shared Noir module `circuits/shared/src/multi_sig.nr` (`DOMAIN_MULTI_SIGNED_SIGNALS`, `compute_slot_payload_hash`, `verify_slot_or_skip` gated wrapper, `assert_distinct_signers`, `count_active_signers`).
+- New circuit `circuits/compliance_multi_signed/` with 14 logical public inputs: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, threshold_m, 5 × signer_pubkey_hash, chain_id, oracle_address, submitter. Each signature commits to a slot-specific Pedersen digest (distinct domain tag + `slot_index`) so a 0x07 signature cannot satisfy a 0x09 slot and the same signature cannot be replayed across slots.
+- Solidity: `ProofTypes.COMPLIANCE_MULTI_SIGNED` constant + 14-input arity, `JurisdictionConfig.minMultiProviderThreshold(US=2, SG=2, EU=1, UK=1)`, new Oracle validator `_validateComplianceMultiSignedInputs` (signer-registry authorization, on-chain distinctness, threshold enforcement, jurisdiction floor, F-6 chain/oracle binding, denylist, ratchet). New errors: `InsufficientSigners`, `BelowJurisdictionMinProviders`, `DuplicateSigner`, `InvalidThresholdM`.
+- Deploy script registers the new verifier; CI parity gate reports 9/9 in parity (compliance_multi_signed: 14/14/14/30).
+- Tests: 12 new Foundry tests covering happy 2-of-3 / 3-of-5, insufficient-signer revert, signer revocation mid-flight, duplicate-signer revert, threshold_m bounds, US/SG jurisdiction-floor enforcement, F-6 chain/oracle mismatches, submitter mismatch. Plus 6 inline Noir tests for structural failure modes.
+
+Off-chain orchestration (M coordinated signing daemons producing per-slot signatures) is out of scope for this in-repo work; tracked separately on `xochi-sdk` once this circuit lands. A future `_large` variant for N > 5 will be added if institutional demand emerges (see plan note); slot 0x0a is reserved.
+
+</details>
+
+<details>
+<summary>Oracle state-machine invariants (2026-05-14)</summary>
+
+Foundry invariants now exercise the Oracle's state machine with a working handler (previously every submission reverted on `MAX_PROOF_AGE` because the fixed `proofTimestamp=1700000` was outside the 1h window; existing invariants were vacuously true). Handler now submits with `block.timestamp`, restricts jurisdictions to EU/UK (unsigned-compliance eligible), and exercises config + merkle root admin paths.
+
+Three new invariants (256 runs × 500 calls each):
+
+- **`invariant_ratchetMatchesMaxSubmitted`**: for every `(handler, jurisdiction)` pair the handler ever submitted under, `oracle.lastProofTimestamp(handler, jId)` equals the max successful `proofTimestamp`. Catches any code path that lets an older proof overwrite a newer attestation.
+- **`invariant_revokedConfigsStayRevoked`**: every config in the handler's revoked-list returns `isValidConfig(c) == false`. Verifies the permanent-revocation contract.
+- **`invariant_merkleRootStateMachine`**: handler-tracked merkle roots are valid iff they were registered and not subsequently revoked.
+
+All 256 × 500 = 128k call sequences pass with 0 reverts across 8 invariants. Total Solidity: 486 tests passing.
+
+</details>
+
+<details>
+<summary>Verifier codehash pinning (2026-05-14)</summary>
+
+`proposeVerifier(uint8, address, bytes32)` now pins the expected EXTCODEHASH at proposal time, re-checked at execute time. Belt-and-suspenders on the existing 24h timelock: a CONFIG-role compromise that swaps bytecode at the proposed address (CREATE2 redeploy + same-tx SELFDESTRUCT factory, alt-EVM chains pre-EIP-6780, or simple "wrong contract pasted at execute" social engineering) is now caught.
+
+- `VerifierProposal` gains `expectedCodehash`; new `CodehashMismatch(address, bytes32 expected, bytes32 actual)` error fires at both propose and execute.
+- `VerifierProposed` event extended with `expectedCodehash`. `getPendingVerifier` now returns `(address, uint256, bytes32)`.
+- `XochiTimelock.getDelay` unchanged: the new selector falls through to the `HIGH_DELAY` default (24h), same as before.
+- Regression: `test_proposeVerifier_revert_codehashMismatch_atPropose`, `test_executeVerifierUpdate_revert_codehashChangedMidWindow` (uses `vm.etch` to simulate mid-window bytecode swap), `test_proposeAndExecute_succeeds_whenCodehashMatches`.
+
+Breaking change for any off-chain caller of `proposeVerifier`. SDK + deploy script side: none today; the SDK and `script/*.s.sol` do not call `proposeVerifier`.
+
+</details>
 
 <details>
 <summary>Pre-EIP audit fix-first sweep (2026-05-09)</summary>
@@ -72,14 +116,12 @@ Two new proof types (`COMPLIANCE_SIGNED = 0x07`, `RISK_SCORE_SIGNED = 0x08`) ver
 
 ## Medium-priority hardening
 
-- [ ] **Verifier codehash pinning**: `proposeVerifier(uint8 proofType, address newVerifier, bytes32 expectedCodehash)` rejects when `address(newVerifier).codehash != expectedCodehash`. Belt-and-suspenders on top of the 24h timelock; blocks SELFDESTRUCT-and-redeploy bait-and-switch by a compromised owner.
 - [ ] **Jurisdiction threshold timelock**: route `JurisdictionConfig` updates through `XochiTimelock LOW_DELAY` (6h). Today the thresholds and `requireSignedSignals` flag are compile-time constants; relevant only if/when these become governed.
 
 ## Lower-priority hardening
 
 - [ ] FROST-secp256k1 threshold signing for the provider daemon (V2). Requires Schnorr-secp256k1 verifier in the circuit (not in Noir 1.0-beta stdlib); ~5-8 days of focused work plus a coordinator/participant gRPC protocol.
 - [ ] Mythril in CI alongside Slither.
-- [ ] Foundry invariant tests for Oracle state machine (attestation monotonicity, no orphaned roots, denied-provider configs always reject).
 - [ ] Persistent replay DB for the signing daemon (sqlite/redis); the in-memory default is fine for short-lived processes only.
 - [ ] KMS / HSM `KeyLoader` implementations; the daemon ships with HEX-only loaders for dev.
 - [ ] Exhaustive cross-type proof routing rejection (all permutations across 8 proof types).
