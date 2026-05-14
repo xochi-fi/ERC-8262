@@ -635,7 +635,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root (audit H-1)
         );
         vm.prank(alice);
         IXochiZKPOracle.ComplianceAttestation memory att =
@@ -765,7 +766,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0)), // tx_set_hash = 0 (invalid)
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
@@ -816,7 +818,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
@@ -897,7 +900,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, patternInputs, bytes32(0));
@@ -1502,7 +1506,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(99999)), // reporting_threshold (not registered)
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         vm.expectRevert(
@@ -1518,7 +1523,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(1)), // time_window = 1 second (too small)
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TimeWindowTooSmall.selector, 1, 3600));
@@ -1532,7 +1538,8 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(3600)), // time_window = exactly MIN_TIME_WINDOW
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         IXochiZKPOracle.ComplianceAttestation memory att =
@@ -1567,13 +1574,13 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(0)),
             DEFAULT_PROVIDER_SET_HASH,
             INITIAL_CONFIG,
-            bytes32(uint256(1700000000 + 3601)), // timestamp: future, past MAX_PROOF_AGE
+            bytes32(uint256(1700000000 + 1)), // timestamp: any future is rejected (audit M-1)
             bytes32(uint256(1)),
             bytes32(uint256(uint160(alice)))
         );
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampStale.selector, 1700000000 + 3601, 1700000000)
+            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampInFuture.selector, 1700000000 + 1, 1700000000)
         );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
@@ -1732,7 +1739,8 @@ contract XochiZKPOracleTest is OracleTestBase {
                 bytes32(uint256(10000)),
                 bytes32(uint256(86400)),
                 bytes32(uint256(0xabcd)),
-                bytes32(uint256(uint160(alice)))
+                bytes32(uint256(uint160(alice))),
+                bytes32(0) // settlement_root
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));
@@ -2135,7 +2143,8 @@ contract XochiZKPOracleTest is OracleTestBase {
                 bytes32(uint256(10000)),
                 bytes32(uint256(86400)),
                 bytes32(uint256(0xabcd)),
-                bytes32(uint256(uint160(alice))) // submitter
+                bytes32(uint256(uint160(alice))), // submitter
+                bytes32(0) // settlement_root
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));

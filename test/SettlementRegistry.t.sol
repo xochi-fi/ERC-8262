@@ -279,6 +279,47 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 0, proofHash);
     }
 
+    /// @notice Sub-settlements MUST be one of the compliance variants.
+    /// @dev Without the proof-type guard, a MEMBERSHIP proof (subject in some
+    ///      registered set) satisfies `subject` + `jurisdictionId` matching and
+    ///      silently substitutes for an AML compliance attestation. The registry
+    ///      advertises "verified compliance attestation" semantics, so any other
+    ///      proof type must be rejected at record time.
+    function test_recordSubSettlement_revert_membershipProofRejected() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitMembershipForAlice(0);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.NonComplianceProofType.selector, proofHash, ProofTypes.MEMBERSHIP
+            )
+        );
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+    }
+
+    /// @dev A PATTERN proof (anti-structuring), although issued by the same
+    ///      subject/jurisdiction, attests to transaction-pattern cleanliness, not
+    ///      to risk-score compliance, and is reserved for `finalizeTrade`.
+    function test_recordSubSettlement_revert_patternProofRejected() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        (bytes32 patternProofHash,) = _submitPatternForAlice();
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.NonComplianceProofType.selector, patternProofHash, ProofTypes.PATTERN
+            )
+        );
+        registry.recordSubSettlement(tradeId, 0, patternProofHash);
+    }
+
     // -------------------------------------------------------------------------
     // finalizeTrade
     // -------------------------------------------------------------------------
@@ -296,8 +337,8 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 1, proof2);
         vm.stopPrank();
 
-        // Submit pattern proof
-        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
+        // Submit pattern proof bound to this trade (audit H-1)
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
@@ -527,21 +568,141 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 1, proof2);
         vm.stopPrank();
 
-        (bytes32 patternProof,) = _submitPatternForAlice();
+        (bytes32 patternProof,) = _submitPatternBoundTo(tradeId);
 
-        // Tampered inputs: substitute analysis_type 1 for 1 but change tx_set_hash
+        // Tampered inputs: keep all other fields equal but change tx_set_hash
         bytes memory tamperedInputs = abi.encodePacked(
             bytes32(uint256(1)), // analysis_type
             bytes32(uint256(1)), // result
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xbeef)), // tx_set_hash (different from original 0xabcd)
-            bytes32(uint256(uint160(alice)))
+            bytes32(uint256(uint160(alice))),
+            registry.computeSettlementRoot(tradeId) // settlement_root
         );
 
         vm.prank(alice);
         vm.expectRevert(); // PatternPublicInputsMismatch with hash data
         registry.finalizeTrade(tradeId, patternProof, tamperedInputs);
+    }
+
+    // -------------------------------------------------------------------------
+    // H-1: PATTERN proof must bind to the trade's sub-settlement set
+    // -------------------------------------------------------------------------
+
+    /// @notice A PATTERN proof generated against a DIFFERENT settlement set's
+    ///         proofHashes cannot be used to finalize this trade.
+    function test_finalizeTrade_revert_settlementRootMismatch() public {
+        // Trade A: alice's bound trade
+        bytes32 tradeIdA = keccak256("trade-A");
+        vm.prank(alice);
+        registry.registerTrade(tradeIdA, 0, 2);
+        bytes32 a1 = _submitComplianceForAlice(0);
+        bytes32 a2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeIdA, 0, a1);
+        registry.recordSubSettlement(tradeIdA, 1, a2);
+        vm.stopPrank();
+
+        // Trade B: alice's second trade with different sub-settlements
+        bytes32 tradeIdB = keccak256("trade-B");
+        vm.prank(alice);
+        registry.registerTrade(tradeIdB, 0, 2);
+        bytes32 b1 = _submitComplianceForAlice(0);
+        bytes32 b2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeIdB, 0, b1);
+        registry.recordSubSettlement(tradeIdB, 1, b2);
+        vm.stopPrank();
+
+        // Pattern proof bound to TRADE B's settlement root
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeIdB);
+
+        // Attempt to finalize TRADE A with TRADE B's pattern proof
+        bytes32 expectedRootA = registry.computeSettlementRoot(tradeIdA);
+        bytes32 actualRootB = bytes32(_slice(patternInputs, 192, 32));
+        assertTrue(expectedRootA != actualRootB, "test setup: roots should differ");
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.SettlementRootMismatch.selector, expectedRootA, actualRootB)
+        );
+        registry.finalizeTrade(tradeIdA, patternProof, patternInputs);
+    }
+
+    /// @notice A standalone (unbound, settlement_root = 0) PATTERN proof cannot
+    ///         be used to finalize any trade that has at least one sub-settlement.
+    function test_finalizeTrade_revert_unboundPatternProofRejected() public {
+        bytes32 tradeId = keccak256("trade-unbound");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        registry.recordSubSettlement(tradeId, 1, p2);
+        vm.stopPrank();
+
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice(); // unbound (root = 0)
+        bytes32 expectedRoot = registry.computeSettlementRoot(tradeId);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.SettlementRootMismatch.selector, expectedRoot, bytes32(0))
+        );
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    /// @notice A single PATTERN proof cannot finalize two distinct trades.
+    /// @dev Setup: record the SAME two compliance proofHashes in two distinct
+    ///      trades A and B (same order). `recordSubSettlement` only validates
+    ///      that the attestation exists in the Oracle -- it has no per-trade
+    ///      "used" flag -- so the same `proofHash` can legitimately appear in
+    ///      multiple trades. Both trades therefore compute identical
+    ///      `settlement_root`s, which means a single PATTERN proof bound to
+    ///      A's root also matches B's. The reuse-prevention flag fires on the
+    ///      second finalize.
+    function test_finalizeTrade_revert_patternProofReuse() public {
+        bytes32 tradeA = keccak256("reuse-A");
+        bytes32 tradeB = keccak256("reuse-B");
+        vm.prank(alice);
+        registry.registerTrade(tradeA, 0, 2);
+        vm.prank(alice);
+        registry.registerTrade(tradeB, 0, 2);
+
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeA, 0, p1);
+        registry.recordSubSettlement(tradeA, 1, p2);
+        registry.recordSubSettlement(tradeB, 0, p1);
+        registry.recordSubSettlement(tradeB, 1, p2);
+        vm.stopPrank();
+
+        // Both trades have the same expected settlement root.
+        assertEq(registry.computeSettlementRoot(tradeA), registry.computeSettlementRoot(tradeB));
+
+        // Single pattern proof bound to both (since the root is identical).
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeA);
+
+        // Finalize tradeA first -- pattern proof is consumed.
+        vm.prank(alice);
+        registry.finalizeTrade(tradeA, patternProof, patternInputs);
+        assertTrue(registry.isPatternProofUsed(patternProof));
+
+        // Attempting to reuse the same pattern proof for tradeB must revert.
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofAlreadyUsed.selector, patternProof));
+        registry.finalizeTrade(tradeB, patternProof, patternInputs);
+    }
+
+    /// @dev Slice helper for byte-array indexing in tests
+    function _slice(bytes memory data, uint256 start, uint256 length) internal pure returns (bytes memory out) {
+        out = new bytes(length);
+        for (uint256 i; i < length; i++) {
+            out[i] = data[start + i];
+        }
     }
 
     function test_submitCompliance_revert_pattern_invalidAnalysisType() public {
@@ -553,7 +714,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(alice)))
+            bytes32(uint256(uint160(alice))),
+            bytes32(0) // settlement_root
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidAnalysisType.selector, 99));
@@ -728,19 +890,47 @@ contract SettlementRegistryTest is Test {
         proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
     }
 
-    /// @dev Submit a STRUCTURING pattern proof to the oracle as alice, return hash + inputs
+    /// @dev Submit a STRUCTURING pattern proof to the oracle as alice with
+    ///      settlement_root = 0 (no downstream binding). Suitable for tests that
+    ///      check reverts firing before the binding check.
     function _submitPatternForAlice() internal returns (bytes32 proofHash, bytes memory publicInputs) {
-        return _submitPatternFor(alice, 1);
+        return _submitPatternFor(alice, 1, bytes32(0));
     }
 
-    /// @dev Back-compat helper for tests that only need the hash
-    function _submitPatternForAliceHash() internal returns (bytes32 proofHash) {
-        (proofHash,) = _submitPatternFor(alice, 1);
+    /// @dev Submit a MEMBERSHIP proof to the oracle as alice under `jurisdictionId`.
+    ///      Used by the proof-type-guard regression tests to confirm `recordSubSettlement`
+    ///      rejects non-compliance variants even when subject + jurisdiction match.
+    function _submitMembershipForAlice(uint8 jurisdictionId) internal returns (bytes32 proofHash) {
+        bytes32 merkleRoot = keccak256(abi.encodePacked("test-merkle-root-", _proofNonce));
+        vm.prank(owner);
+        oracle.registerMerkleRoot(merkleRoot);
+
+        bytes memory proof = _uniqueProof();
+        bytes memory publicInputs = abi.encodePacked(
+            merkleRoot, // merkle_root
+            bytes32(uint256(0xabcd)), // set_id
+            bytes32(block.timestamp), // timestamp
+            bytes32(uint256(1)), // is_member
+            bytes32(uint256(uint160(alice))) // submitter
+        );
+        vm.prank(alice);
+        oracle.submitCompliance(jurisdictionId, ProofTypes.MEMBERSHIP, proof, publicInputs, bytes32(0));
+        proofHash = oracle.computeProofHash(proof, ProofTypes.MEMBERSHIP);
+    }
+
+    /// @dev Submit a pattern proof to the oracle as `who` with `settlement_root = 0`.
+    function _submitPatternFor(address who, uint256 analysisType)
+        internal
+        returns (bytes32 proofHash, bytes memory publicInputs)
+    {
+        return _submitPatternFor(who, analysisType, bytes32(0));
     }
 
     /// @dev Submit a pattern proof to the oracle as `who`, return the proofHash + inputs.
     ///      `analysisType` controls the pattern analysis (1=structuring, 2=velocity, 3=round-amounts).
-    function _submitPatternFor(address who, uint256 analysisType)
+    ///      `settlementRoot` is the audit H-1 binding -- pass `registry.computeSettlementRoot(tradeId)`
+    ///      to bind, or `bytes32(0)` for unbound / negative tests.
+    function _submitPatternFor(address who, uint256 analysisType, bytes32 settlementRoot)
         internal
         returns (bytes32 proofHash, bytes memory publicInputs)
     {
@@ -751,11 +941,18 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(who))) // submitter
+            bytes32(uint256(uint160(who))), // submitter
+            settlementRoot // audit H-1 binding (0 for standalone)
         );
         vm.prank(who);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
         proofHash = oracle.computeProofHash(proof, ProofTypes.PATTERN);
+    }
+
+    /// @dev Submit a STRUCTURING pattern proof bound to `tradeId`'s sub-settlements.
+    ///      The trade must already have all sub-settlements recorded.
+    function _submitPatternBoundTo(bytes32 tradeId) internal returns (bytes32 proofHash, bytes memory publicInputs) {
+        return _submitPatternFor(alice, 1, registry.computeSettlementRoot(tradeId));
     }
 
     /// @dev Full helper: register trade with 2 sub-trades, settle both, finalize
@@ -771,7 +968,7 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 1, proof2);
         vm.stopPrank();
 
-        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
 
         vm.prank(alice);
         registry.finalizeTrade(tradeId, patternProof, patternInputs);

@@ -8,3 +8,6 @@ reporting_threshold = 10000
 time_window = 3600
 tx_set_hash = "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad"
 submitter = "0xdead"
+# settlement_root = 0 means "no downstream binding"; SettlementRegistry overrides this
+# off-chain when binding a pattern proof to a specific trade.
+settlement_root = "0x0"

@@ -146,6 +146,12 @@ contract XochiTimelockTest is Test {
         // Audit I-3: revokeVerifierVersion is housekeeping (pauseProofType is the
         // emergency lever); LOW_DELAY protects against compromised-owner DoS.
         assertEq(timelock.getDelay(bytes4(keccak256("revokeVerifierVersion(uint8,uint256)"))), 6 hours);
+        // Audit M-2: the timelocked propose/execute path mirrors the immediate path,
+        // so it carries LOW_DELAY (not 24h via default) and composes with the Verifier's
+        // own internal 6h delay between propose and execute.
+        assertEq(timelock.getDelay(bytes4(keccak256("proposeVersionRevocation(uint8,uint256)"))), 6 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("executeVersionRevocation(uint8,uint256)"))), 6 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("cancelVersionRevocation(uint8,uint256)"))), 6 hours);
     }
 
     function test_delay_highDelay_verifierOps() public view {

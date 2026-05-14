@@ -64,6 +64,20 @@ interface ISettlementRegistry {
     error InvalidSubTradeCount(uint8 count);
     error PatternPublicInputsMismatch(bytes32 expected, bytes32 actual);
     error PatternAnalysisTypeMismatch(uint256 expected, uint256 actual);
+    /// @notice Raised when the pattern proof's `settlement_root` public input does
+    ///         not match the keccak commitment over this trade's recorded
+    ///         sub-settlement proof hashes (audit H-1).
+    error SettlementRootMismatch(bytes32 expected, bytes32 actual);
+    /// @notice Raised when the same pattern proof is presented to finalize more
+    ///         than one trade (audit H-1 reuse-prevention).
+    error PatternProofAlreadyUsed(bytes32 patternProofHash);
+    /// @notice Raised when a sub-settlement proof is not one of the compliance
+    ///         variants (COMPLIANCE / COMPLIANCE_SIGNED / COMPLIANCE_MULTI_SIGNED).
+    /// @dev The registry advertises "verified compliance attestation" semantics; a
+    ///      MEMBERSHIP/RISK_SCORE/PATTERN/etc. proof for the same subject and
+    ///      jurisdiction would otherwise satisfy `recordSubSettlement` and silently
+    ///      substitute a non-AML guarantee.
+    error NonComplianceProofType(bytes32 proofHash, uint8 proofType);
 
     // -------------------------------------------------------------------------
     // Functions

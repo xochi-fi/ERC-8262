@@ -108,29 +108,31 @@ contract AttestationRatchetTest is Test {
 
     function test_ratchet_rejectsOlderProof() public {
         uint256 t0 = block.timestamp;
+        // First proof at now: ratchet records t0
         vm.startPrank(alice);
-        oracle.submitCompliance(
-            0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0 + 100), PROVIDER_SET_HASH
-        );
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0), PROVIDER_SET_HASH);
 
         vm.warp(t0 + 200);
-        // Submit older proof (timestamp t0+100 already recorded; re-using t0 is older)
-        bytes memory olderInputs = _complianceInputs(0, alice, t0);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofTimestampNotMonotonic.selector, t0, t0 + 100));
+        // Submit older proof (timestamp t0 - 50 is older than the recorded ratchet)
+        bytes memory olderInputs = _complianceInputs(0, alice, t0 - 50);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofTimestampNotMonotonic.selector, t0 - 50, t0));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _proof(2), olderInputs, PROVIDER_SET_HASH);
         vm.stopPrank();
     }
 
     function test_ratchet_rejectsBackwardEvenWithinMaxAge() public {
         // MAX_PROOF_AGE is 1h. Ratchet must reject proofs that are older than the last one
-        // even if they're still within the absolute MAX_PROOF_AGE window.
+        // even if both are still within the absolute MAX_PROOF_AGE window from now.
         uint256 t0 = block.timestamp;
+        vm.warp(t0 + 1800);
         vm.startPrank(alice);
+        // Record ratchet at t0 + 1800 (== now)
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0 + 1800), PROVIDER_SET_HASH
         );
 
         vm.warp(t0 + 1900);
+        // Older proof at t0 + 1700 is in the past (within MAX_PROOF_AGE) but behind the ratchet.
         bytes memory olderInputs = _complianceInputs(0, alice, t0 + 1700);
         vm.expectRevert(
             abi.encodeWithSelector(XochiZKPOracle.ProofTimestampNotMonotonic.selector, t0 + 1700, t0 + 1800)
@@ -147,6 +149,7 @@ contract AttestationRatchetTest is Test {
         // Use EU (0) and UK (2), both permissive jurisdictions; the ratchet test is
         // about per-jurisdiction state isolation and is orthogonal to signed-signals.
         uint256 t0 = block.timestamp;
+        vm.warp(t0 + 100);
         vm.startPrank(alice);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0 + 100), PROVIDER_SET_HASH
@@ -161,6 +164,7 @@ contract AttestationRatchetTest is Test {
 
     function test_ratchet_separateUsers_independent() public {
         uint256 t0 = block.timestamp;
+        vm.warp(t0 + 100);
         vm.prank(alice);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _proof(1), _complianceInputs(0, alice, t0 + 100), PROVIDER_SET_HASH

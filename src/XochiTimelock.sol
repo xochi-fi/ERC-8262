@@ -136,6 +136,13 @@ contract XochiTimelock {
     /// @notice Get the required delay for a function selector
     /// @dev HIGH_DELAY for verifier/ownership changes, LOW_DELAY for config operations.
     ///      Unknown selectors default to HIGH_DELAY (fail-safe).
+    /// @dev Audit M-2: `proposeVersionRevocation` / `executeVersionRevocation` are
+    ///      classified LOW alongside the immediate `revokeVerifierVersion` path so
+    ///      the routine (non-emergency) revocation workflow is not artificially
+    ///      slower than the GUARDIAN emergency path when both flow through this
+    ///      timelock. The Verifier already imposes its own internal 6h delay
+    ///      between propose and execute, so the LOW_DELAY tier composes with that
+    ///      internal delay rather than stacking redundant 24h windows.
     function getDelay(bytes4 selector) public pure returns (uint256) {
         // LOW_DELAY (6h): config, TTL, merkle roots, reporting thresholds, revocations.
         // revokeVerifierVersion lives here (not HIGH) because the emergency response to
@@ -151,6 +158,9 @@ contract XochiTimelock {
                 || selector == bytes4(keccak256("revokeReportingThreshold(bytes32)"))
                 || selector == bytes4(keccak256("revokeConfig(bytes32)"))
                 || selector == bytes4(keccak256("revokeVerifierVersion(uint8,uint256)"))
+                || selector == bytes4(keccak256("proposeVersionRevocation(uint8,uint256)"))
+                || selector == bytes4(keccak256("executeVersionRevocation(uint8,uint256)"))
+                || selector == bytes4(keccak256("cancelVersionRevocation(uint8,uint256)"))
         ) {
             return LOW_DELAY;
         }

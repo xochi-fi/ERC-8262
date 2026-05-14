@@ -16,6 +16,11 @@
 ///   - time_window: the analysis window in seconds
 ///   - tx_set_hash: commitment to the transaction set analyzed
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
+///   - settlement_root: opaque, prover-declared binding to a downstream consumer's
+///                      settlement set (audit H-1). The circuit treats this as
+///                      opaque; consumers (e.g. SettlementRegistry) recompute the
+///                      expected value from their own state and assert equality.
+///                      Set to 0 for standalone use (no downstream binding).
 ///
 /// Private inputs:
 ///   - amounts: transaction amounts
@@ -56,8 +61,14 @@ fn main(
     reporting_threshold: pub u64,  // jurisdiction reporting threshold
     time_window: pub u64,          // analysis window in seconds
     tx_set_hash: pub Field,        // commitment to the analyzed set
-    submitter: pub Field,           // authorized submitter address (oracle enforces == msg.sender)
+    submitter: pub Field,          // authorized submitter address (oracle enforces == msg.sender)
+    settlement_root: pub Field,    // audit H-1: opaque declarative binding to a downstream
+                                   // settlement set; consumers verify off-circuit (0 = unbound)
 ) {
+    // Reference settlement_root so the compiler keeps it as a public input.
+    // Intentionally unconstrained: the circuit makes no claim about the value;
+    // verification of binding (or unboundedness) is the downstream consumer's job.
+    let _ = settlement_root;
     // Validate inputs
     assert(num_transactions >= 1, "At least one transaction required");
     assert(num_transactions <= MAX_TRANSACTIONS, "Too many transactions");
@@ -211,7 +222,7 @@ fn test_main_structuring_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -221,7 +232,7 @@ fn test_main_velocity_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -231,7 +242,7 @@ fn test_main_round_amounts_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -242,7 +253,7 @@ fn test_main_structuring_detected() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -253,7 +264,7 @@ fn test_structuring_threshold_boundary() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -263,7 +274,7 @@ fn test_velocity_exactly_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -273,7 +284,7 @@ fn test_velocity_exceeds_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -284,7 +295,7 @@ fn test_round_amounts_all_round() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -297,7 +308,7 @@ fn test_structuring_max_threshold_single_tx() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0);
 }
 
 #[test]
@@ -311,5 +322,5 @@ fn test_structuring_max_threshold_single_tx_suspicious() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead);
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0);
 }

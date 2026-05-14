@@ -59,6 +59,10 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     error EmptyBatch();
     error BatchTooLarge();
     error CodehashMismatch(address verifier, bytes32 expected, bytes32 actual);
+    /// @notice Raised when a caller of `cancelVerifierProposal` / `cancelVersionRevocation`
+    ///         holds neither CONFIG_ROLE nor GUARDIAN_ROLE. Distinct from `NotRole` so
+    ///         decoders surface the "either role accepted" semantics.
+    error NotCancelAuthorized(address account);
 
     /// @notice Maximum number of proofs in a single batch verification.
     /// @dev Calibrated against the per-proof gas baseline in `.gas-snapshot`
@@ -107,6 +111,11 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     }
 
     /// @inheritdoc IXochiZKPVerifier
+    /// @dev This is a CRYPTOGRAPHIC primitive: it verifies UltraHonk proofs but performs
+    ///      no replay protection, jurisdiction enforcement, or context binding. Downstream
+    ///      protocols MUST use `XochiZKPOracle.submitCompliance` /
+    ///      `submitComplianceBatch` for any path that needs replay-keyed proofs,
+    ///      timestamp ratcheting, signed-signals policy, or attestation issuance.
     function verifyProofBatch(uint8[] calldata proofTypes, bytes[] calldata proofs, bytes[] calldata publicInputs)
         external
         view
@@ -236,7 +245,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     /// @param proofType The proof type (0x01-0x08)
     function cancelVerifierProposal(uint8 proofType) external {
         if (!_hasRole(CONFIG_ROLE, msg.sender) && !_hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert NotRole(CONFIG_ROLE, msg.sender);
+            revert NotCancelAuthorized(msg.sender);
         }
         VerifierProposal memory proposal = _pendingVerifiers[proofType];
         if (proposal.proposedAt == 0) revert NoPendingProposal(proofType);
@@ -310,7 +319,7 @@ contract XochiZKPVerifier is IXochiZKPVerifier, IERC165, AccessControl, Pausable
     /// @param version The version whose revocation should be cancelled
     function cancelVersionRevocation(uint8 proofType, uint256 version) external {
         if (!_hasRole(CONFIG_ROLE, msg.sender) && !_hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert NotRole(CONFIG_ROLE, msg.sender);
+            revert NotCancelAuthorized(msg.sender);
         }
         if (_pendingRevocations[proofType][version] == 0) revert NoPendingProposal(proofType);
         delete _pendingRevocations[proofType][version];

@@ -145,6 +145,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     error BatchTooLarge();
     error TimeWindowTooSmall(uint256 timeWindow, uint256 minimum);
     error ProofTimestampStale(uint256 proofTimestamp, uint256 blockTimestamp);
+    error ProofTimestampInFuture(uint256 proofTimestamp, uint256 blockTimestamp);
     error ProofTypePaused(uint8 proofType);
     error ProofTypeNotPaused(uint8 proofType);
     error InvalidRiskProofType(uint256 proofType);
@@ -173,6 +174,10 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     error InvalidCredentialSignature();
     error CredentialSignatureOutOfWindow(uint64 notBefore, uint64 notAfter);
     error InvalidSignatureLength(uint256 length);
+    /// @notice Raised when revoking a credential root that has already been revoked.
+    ///         Distinct from `AlreadyRegistered` so consumers can distinguish
+    ///         "double-revoke" from "duplicate registration".
+    error CredentialRootAlreadyRevoked(bytes32 root);
 
     event ConfigHistoryCompacted(uint256 entriesRemoved, uint256 newLength);
     event ProviderPublisherSet(uint256 indexed providerId, address indexed previous, address indexed publisher);
@@ -782,7 +787,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (msg.sender != owner && msg.sender != _providerPublisher[info.providerId]) {
             revert NotProviderPublisher(info.providerId, msg.sender);
         }
-        if (info.revoked) revert AlreadyRegistered(); // reuse: "already revoked"
+        if (info.revoked) revert CredentialRootAlreadyRevoked(root);
         info.revoked = true;
         emit CredentialRootRevoked(root);
     }
@@ -1046,11 +1051,20 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         return _lastProofTimestamp[subject][jurisdictionId];
     }
 
-    /// @dev Check that a proof timestamp is within MAX_PROOF_AGE of block.timestamp
+    /// @dev Check that a proof timestamp is within MAX_PROOF_AGE in the past and
+    ///      never in the future. Future-dated proofs serve no honest use case --
+    ///      accepting them lets a submitter ratchet `_lastProofTimestamp` ahead of
+    ///      wall-clock and block their own subsequent older-timestamp submissions
+    ///      until the chain catches up (audit M-1).
     function _validateProofTimestamp(uint256 proofTimestamp) internal view {
-        uint256 diff =
-            block.timestamp > proofTimestamp ? block.timestamp - proofTimestamp : proofTimestamp - block.timestamp;
-        if (diff > MAX_PROOF_AGE) revert ProofTimestampStale(proofTimestamp, block.timestamp);
+        if (proofTimestamp > block.timestamp) {
+            revert ProofTimestampInFuture(proofTimestamp, block.timestamp);
+        }
+        unchecked {
+            if (block.timestamp - proofTimestamp > MAX_PROOF_AGE) {
+                revert ProofTimestampStale(proofTimestamp, block.timestamp);
+            }
+        }
     }
 
     /// @dev Assert that the encoded submitter equals msg.sender.
@@ -1198,6 +1212,9 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     ///      NOTE: callers that require a specific analysis (e.g. anti-structuring) MUST
     ///      verify the analysis_type field themselves; this validator only enforces
     ///      that it is well-formed.
+    ///      NOTE (audit H-1): `settlement_root` is treated as opaque here. Downstream
+    ///      consumers (e.g. SettlementRegistry) recompute it from their own state and
+    ///      assert equality; the Oracle has no opinion on its value.
     function _validatePatternInputs(bytes calldata publicInputs) internal view returns (uint256 proofTimestamp) {
         // PATTERN has no proof-internal timestamp (uses time_window); ratchet uses block.timestamp
         proofTimestamp = block.timestamp;
@@ -1208,6 +1225,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         //   [3]: time_window
         //   [4]: tx_set_hash
         //   [5]: submitter
+        //   [6]: settlement_root        (audit H-1 -- opaque to Oracle)
         uint256 analysisType = uint256(bytes32(publicInputs[0:32]));
         if (
             analysisType != PATTERN_STRUCTURING && analysisType != PATTERN_VELOCITY
@@ -1224,6 +1242,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         if (timeWindow < MIN_TIME_WINDOW) revert TimeWindowTooSmall(timeWindow, MIN_TIME_WINDOW);
         if (bytes32(publicInputs[128:160]) == bytes32(0)) revert PublicInputMismatch();
         _assertSubmitter(bytes32(publicInputs[160:192]));
+        // publicInputs[192:224] = settlement_root -- intentionally not validated here.
     }
 
     /// @dev Validate ATTESTATION public inputs (post C-1 redesign).

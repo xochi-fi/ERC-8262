@@ -707,7 +707,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
 
         vm.prank(alice);
-        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NotCancelAuthorized.selector, alice));
         verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -1059,7 +1059,8 @@ contract XochiZKPVerifierTest is XochiTestBase {
         );
     }
 
-    /// @dev 6 public inputs: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter
+    /// @dev 7 public inputs: analysis_type, result, reporting_threshold, time_window,
+    ///      tx_set_hash, submitter, settlement_root (audit H-1)
     function _patternInputs() internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(1)), // analysis_type: structuring
@@ -1067,7 +1068,8 @@ contract XochiZKPVerifierTest is XochiTestBase {
             bytes32(uint256(10000)), // reporting_threshold
             bytes32(uint256(3600)), // time_window
             bytes32(uint256(0xeeff)), // tx_set_hash
-            bytes32(uint256(0xdead)) // submitter
+            bytes32(uint256(0xdead)), // submitter
+            bytes32(0) // settlement_root (audit H-1)
         );
     }
 
