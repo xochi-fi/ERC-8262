@@ -317,7 +317,9 @@ Whether US BSA, EU MiCA, FATF Travel Rule, or any national regulator accepts a Z
 
 ### PATTERN proofs are still self-attested
 
-The signed-variant fix does not extend to PATTERN. The circuit consumes a private `(amounts[], timestamps[])` array the user supplies, and no provider in the system signs full address-level transaction histories. A user can cherry-pick clean transactions and prove "no structuring" against a curated subset. SettlementRegistry's `finalizeTrade` inherits the gap. Closing it would need a tx-feed provider category (signed per-address chain history) that does not exist yet.
+The signed-variant fix does not extend to PATTERN. The circuit consumes a private `(amounts[], timestamps[])` array the user supplies, and no provider in the system signs full address-level transaction histories. A user can cherry-pick clean transactions and prove "no structuring" against a curated subset. Closing it would need a tx-feed provider category (signed per-address chain history) that does not exist yet.
+
+SettlementRegistry's `finalizeTrade` partially hardens the inherited gap (audit H-1). The PATTERN circuit exposes a `settlement_root` public input the registry recomputes from `(subTradeCount, recorded sub-settlement hashes)` and asserts equality; a single pattern proof is also marked `_usedPatternProofs` after consumption, so it cannot finalize a second trade. The binding is declarative — the circuit treats `settlement_root` as opaque — so a user with one curated transaction set can still generate N distinct pattern proofs for N different trades, but they cannot reuse one pattern proof across trades and they cannot finalize a trade with a pattern proof generated without knowledge of that trade's sub-settlement set. Cryptographic anchoring of the analyzed transactions to the on-chain sub-settlements would require a v2 compliance circuit that exposes transaction-amount commitments.
 
 ### Operational complexity as adoption tax
 

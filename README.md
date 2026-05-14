@@ -62,26 +62,27 @@ The proof also commits to a timestamp and the screening providers used, enabling
                 |  XochiZKPVerifier       |  routes proofType -> UltraHonk verifier
                 +------------+------------+
                              |
-   +----+-----+-----+-----+--+--+-----+-----+--------+
-   v    v     v     v     v     v     v     v
-  0x01 0x02  0x03  0x04  0x05  0x06  0x07   0x08
-  comp risk  patt  attst memb  non-  comp_  risk_
-  lian _scor ern   ation rship membr signed _signed
-  ce   e                       ship
+   +----+-----+-----+-----+--+--+-----+-----+------+--------+
+   v    v     v     v     v     v     v     v      v
+  0x01 0x02  0x03  0x04  0x05  0x06  0x07  0x08   0x09
+  comp risk  patt  attst memb  non-  comp_ risk_  comp_
+  lian _scor ern   ation rship membr signed _sig  multi_
+  ce   e                       ship         ned   signed
 
   Generated UltraHonk verifiers (one per proof type, via bb write_solidity_verifier)
 ```
 
-Each of the 8 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`).
+Each of the 9 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`).
 
 ## SettlementRegistry
 
 Standalone immutable contract that links split settlement proofs to a tradeId (XIP-1). When a large trade is split into sub-trades for privacy, the registry records each sub-trade's compliance proof and enforces an anti-structuring pattern proof at finalization.
 
 - No admin, no pause, no upgradability. Fully immutable.
-- References the Oracle via `getHistoricalProof()` to validate proof existence
+- References the Oracle via `getHistoricalProof()` to validate proof existence.
+- `recordSubSettlement` rejects any proof type other than COMPLIANCE / COMPLIANCE_SIGNED / COMPLIANCE_MULTI_SIGNED. Substituting a MEMBERSHIP, RISK_SCORE, ATTESTATION, or PATTERN attestation reverts with `NonComplianceProofType`.
+- `finalizeTrade` binds the pattern proof to the specific settlement: the PATTERN circuit's `settlement_root` public input must equal `computeSettlementRoot(tradeId)` (keccak commitment over the recorded sub-settlement hashes, reduced into the BN254 scalar field). The same pattern proof cannot finalize two trades (`_usedPatternProofs`).
 - Interface: `ISettlementRegistry`
-- Test: `forge test --match-contract SettlementRegistry` (45 tests)
 
 ## Repository structure
 
@@ -413,7 +414,7 @@ honest. Honesty either comes from somewhere else, or it is a gap you accept.
   who need user-identity privacy must layer ERC-5564 stealth addresses,
   mixers, or trusted relayers on top.
 
-Four trust models across the eight proof types. They do not compose
+Four trust models across the nine proof types. They do not compose
 into a single "is this user compliant" answer. The signed variants close
 signal honesty when a provider opts in. PATTERN remains self-attested.
 ATTESTATION trusts a publisher EOA. Identity privacy is a separate layer

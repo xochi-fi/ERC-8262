@@ -15,8 +15,8 @@ ERC Xochi ZKP: a standard for zero-knowledge compliance proofs on Ethereum. User
 
 ```bash
 make build                     # compile contracts + circuits
-make test                      # run Solidity tests (499)
-make test-noir                 # run Noir circuit tests (89, workspace)
+make test                      # run Solidity tests
+make test-noir                 # run Noir circuit tests (workspace)
 make test-sdk                  # run TS consumer SDK tests (in test/sdk/)
 make test-all                  # run all tests
 make fmt                       # format Solidity
@@ -72,7 +72,7 @@ Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts are
 | ---- | ----------------------- | ----------------------- | -------------------------------------------------------------------------------- |
 | 0x01 | COMPLIANCE              | compliance              | 6                                                                                |
 | 0x02 | RISK_SCORE              | risk_score              | 8                                                                                |
-| 0x03 | PATTERN                 | pattern                 | 6                                                                                |
+| 0x03 | PATTERN                 | pattern                 | 7 (analysis + result + threshold + window + tx_set_hash + submitter + settlement_root) |
 | 0x04 | ATTESTATION             | attestation             | 6                                                                                |
 | 0x05 | MEMBERSHIP              | membership              | 5                                                                                |
 | 0x06 | NON_MEMBERSHIP          | non_membership          | 5                                                                                |
