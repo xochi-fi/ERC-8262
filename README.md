@@ -1,6 +1,6 @@
-# erc-xochi-zkp
+# ERC-8338: Zero-Knowledge Compliance Oracle
 
-Reference implementation for the Xochi ZKP Compliance Oracle, a standard for zero-knowledge compliance proofs on Ethereum.
+Reference implementation for [ERC-8338](https://github.com/ethereum/ERCs/pull/1747), a standard for zero-knowledge compliance proofs on Ethereum. Brand: Xochi ZKP.
 
 ## What this is
 
@@ -22,7 +22,7 @@ This is distinct from view keys (Railgun, Panther) where you trade privately and
 | Risk Score (signed) | 0x08 | Risk Score + provider sig          | Exact score, sig    | risk_score_signed       |
 | Compliance (M-of-N) | 0x09 | M of N independent providers agree | Per-provider data   | compliance_multi_signed |
 
-Normative spec for each row (public/private inputs, validation rules, gas cost): [erc-draft_xochi-zkp.md §Proof Types](erc-draft_xochi-zkp.md#proof-types).
+Normative spec for each row (public/private inputs, validation rules, gas cost): [ERC-8338.md §Proof Types](ERC-8338.md#proof-types).
 
 The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values. The multi-signed variant (0x09) extends this to an M-of-N quorum across up to 5 registered signers, with a runtime `threshold_m`; US and Singapore enforce a jurisdiction floor of M >= 2.
 
@@ -90,7 +90,7 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 /
   Makefile                        # Build/test/lint targets (make help)
   foundry.toml                    # Foundry project config
-  erc-draft_xochi-zkp.md          # The ERC document itself
+  ERC-8338.md                     # The ERC document itself
   src/
     interfaces/
       IXochiZKPVerifier.sol       # Verifier interface (ERC standard)
@@ -157,7 +157,7 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 
 Risk scores are in basis points (0-10000 = 0.00%-100.00%). Filing triggers
 range from 6600 bps (US BSA, strictest) to 7600 bps (Singapore). See the ERC
-[§Jurisdiction Configuration](erc-draft_xochi-zkp.md#jurisdiction-configuration)
+[§Jurisdiction Configuration](ERC-8338.md#jurisdiction-configuration)
 for the normative table; the on-chain source of truth is
 [`src/libraries/JurisdictionConfig.sol`](src/libraries/JurisdictionConfig.sol).
 
@@ -234,7 +234,7 @@ cd circuits/compliance && nargo execute
 
 ### Deployment
 
-`script/Deploy.s.sol` deploys the verifier router, oracle, all eight generated UltraHonk verifiers, and (optionally) the timelock; it registers each verifier with the router and asserts post-conditions before exiting.
+`script/Deploy.s.sol` deploys the verifier router, oracle, all nine generated UltraHonk verifiers, and (optionally) the timelock; it registers each verifier with the router and asserts post-conditions before exiting.
 
 ```bash
 # 1. Required environment variables
@@ -336,7 +336,7 @@ _Testnet deployments pending. Mainnet after audit._
 
 ## Related
 
-- [ERC Draft](erc-draft_xochi-zkp.md): the ERC specification
+- [ERC Draft](ERC-8338.md): the ERC-8338 specification
 - [nahualli](https://github.com/xochi-fi/nahualli): vanity stealth key grinder for ERC-5564
 - [ERC-5564](https://eips.ethereum.org/EIPS/eip-5564): stealth addresses (complementary)
 - [ERC-6538](https://eips.ethereum.org/EIPS/eip-6538): stealth meta-address registry

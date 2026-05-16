@@ -2,7 +2,11 @@
 
 ## Project Overview
 
-ERC Xochi ZKP: a standard for zero-knowledge compliance proofs on Ethereum. Users prove AML/sanctions compliance without revealing transaction data. Regulators verify a ZK proof, never see the trade.
+ERC-8338 (brand: Xochi ZKP): a standard for zero-knowledge compliance proofs on Ethereum. Users prove AML/sanctions compliance without revealing transaction data. Regulators verify a ZK proof, never see the trade.
+
+- ERC PR: https://github.com/ethereum/ERCs/pull/1747
+- Discussion: https://ethereum-magicians.org/t/erc-8338-zero-knowledge-compliance-oracle/28543
+- Spec in repo: `ERC-8338.md`
 
 ## Architecture
 
