@@ -86,7 +86,7 @@ contract GasBenchmarkTest is Test {
     }
 
     uint256 internal constant GAS_BENCH_CREDENTIAL_SIGNER_KEY =
-        uint256(keccak256("xochi-gas-benchmark-credential-signer"));
+        uint256(keccak256("erc8262-gas-benchmark-credential-signer"));
 
     // -------------------------------------------------------------------------
     // verifyProof gas per proof type (verifier only, no storage)

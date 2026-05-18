@@ -115,7 +115,7 @@ contract IntegrationTest is Test {
 
     /// @dev Deterministic test signing key for the integration fixture's credential root.
     uint256 internal constant FIXTURE_CREDENTIAL_SIGNER_KEY =
-        uint256(keccak256("xochi-integration-fixture-credential-signer"));
+        uint256(keccak256("erc8262-integration-fixture-credential-signer"));
 
     // -------------------------------------------------------------------------
     // End-to-end: real proof verification
@@ -494,7 +494,7 @@ contract IntegrationTest is Test {
         string memory contractName = _verifierContractName(circuit);
         string memory artifact = string.concat(circuit, "_verifier.sol:", contractName);
         bytes memory bytecode = vm.getCode(artifact);
-        bytes32 salt = keccak256(abi.encodePacked("xochi-test", circuit));
+        bytes32 salt = keccak256(abi.encodePacked("erc8262-test", circuit));
         address deployed;
         assembly {
             deployed := create2(0, add(bytecode, 0x20), mload(bytecode), salt)

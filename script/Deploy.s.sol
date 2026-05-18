@@ -36,7 +36,7 @@ import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.so
 ///                           non-empty; zero IDs are rejected.
 ///
 /// Optional env vars:
-///   DEPLOY_SALT          -- CREATE2 salt prefix (default: "xochi-v1")
+///   DEPLOY_SALT          -- CREATE2 salt prefix (default: "erc8262-v1")
 ///   USE_TIMELOCK         -- if "true", deploy Timelock and transfer ownership to it
 ///                           (recommended for production deployments per docs/THREAT_MODEL.md)
 ///   TIMELOCK_PROPOSER    -- multisig EOA that schedules timelock ops (required if USE_TIMELOCK=true)
@@ -54,7 +54,7 @@ contract Deploy is Script {
         address deployer = vm.addr(deployerKey);
         bytes32 configHash = vm.envBytes32("INITIAL_CONFIG_HASH");
         uint256[] memory providerIds = vm.envUint("INITIAL_PROVIDER_IDS", ",");
-        bytes32 baseSalt = vm.envOr("DEPLOY_SALT", bytes32("xochi-v1"));
+        bytes32 baseSalt = vm.envOr("DEPLOY_SALT", bytes32("erc8262-v1"));
         bool useTimelock = vm.envOr("USE_TIMELOCK", false);
 
         require(configHash != bytes32(0), "INITIAL_CONFIG_HASH must be non-zero");

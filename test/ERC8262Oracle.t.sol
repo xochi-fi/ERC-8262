@@ -1193,8 +1193,8 @@ contract ERC8262OracleTest is OracleTestBase {
     // Credential signer registry + signed publish flow (audit C-1 closure)
     // -------------------------------------------------------------------------
 
-    uint256 internal constant ATTACKER_KEY = uint256(keccak256("xochi-test-attacker"));
-    uint256 internal constant ROTATED_SIGNER_KEY = uint256(keccak256("xochi-test-rotated-signer"));
+    uint256 internal constant ATTACKER_KEY = uint256(keccak256("erc8262-test-attacker"));
+    uint256 internal constant ROTATED_SIGNER_KEY = uint256(keccak256("erc8262-test-rotated-signer"));
 
     function test_setCredentialSigner_emitsEvent() public {
         address newSigner = makeAddr("new-signer");

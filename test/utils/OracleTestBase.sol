@@ -28,7 +28,7 @@ abstract contract OracleTestBase is ERC8262TestBase {
 
     /// @dev Deterministic test signing key for credential-root signatures (audit C-1).
     ///      Registered as the credential signer for `DEFAULT_PROVIDER_ID` in `_setUpOracle`.
-    uint256 internal constant CREDENTIAL_SIGNER_KEY = uint256(keccak256("xochi-test-credential-signer"));
+    uint256 internal constant CREDENTIAL_SIGNER_KEY = uint256(keccak256("erc8262-test-credential-signer"));
 
     // Mirror of ERC8262Oracle internal constants for risk-score validation tests.
     uint8 internal constant RISK_PROOF_THRESHOLD = 0x01;
