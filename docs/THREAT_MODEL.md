@@ -1,7 +1,7 @@
-# ERC-8338 (Xochi ZKP) Threat Model
+# ERC-8262 (Xochi ZKP) Threat Model
 
 Who is trusted, what each role can do, which attacks are in scope, and how to
-respond to incidents. Covers the reference implementation of [ERC-8338](../ERC-8338.md)
+respond to incidents. Covers the reference implementation of [ERC-8262](../ERC-8262.md)
 ([ethereum/ERCs PR #1747](https://github.com/ethereum/ERCs/pull/1747)).
 
 ---

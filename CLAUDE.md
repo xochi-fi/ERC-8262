@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-ERC-8338 (brand: Xochi ZKP): a standard for zero-knowledge compliance proofs on Ethereum. Users prove AML/sanctions compliance without revealing transaction data. Regulators verify a ZK proof, never see the trade.
+ERC-8262 (brand: Xochi ZKP): a standard for zero-knowledge compliance proofs on Ethereum. Users prove AML/sanctions compliance without revealing transaction data. Regulators verify a ZK proof, never see the trade.
 
 - ERC PR: https://github.com/ethereum/ERCs/pull/1747
-- Discussion: https://ethereum-magicians.org/t/erc-8338-zero-knowledge-compliance-oracle/28543
-- Spec in repo: `ERC-8338.md`
+- Discussion: https://ethereum-magicians.org/t/erc-8262-zero-knowledge-compliance-oracle/28543
+- Spec in repo: `ERC-8262.md`
 
 ## Architecture
 
@@ -72,17 +72,17 @@ Nargo workspace at `circuits/Nargo.toml`. Each proof type is a separate Noir pro
 
 Circuit names match Solidity `ProofTypes` constants 1:1. Public input counts are _logical_ inputs (what the circuit's `main()` declares as `pub`). The generated UltraHonk verifiers see 16 more inputs per type because Noir flattens arrays into individual field elements (`NUMBER_OF_PUBLIC_INPUTS - 16 == logical count`).
 
-| ID   | ProofType               | Circuit                 | Logical Public Inputs                                                            |
-| ---- | ----------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| 0x01 | COMPLIANCE              | compliance              | 6                                                                                |
-| 0x02 | RISK_SCORE              | risk_score              | 8                                                                                |
+| ID   | ProofType               | Circuit                 | Logical Public Inputs                                                                  |
+| ---- | ----------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| 0x01 | COMPLIANCE              | compliance              | 6                                                                                      |
+| 0x02 | RISK_SCORE              | risk_score              | 8                                                                                      |
 | 0x03 | PATTERN                 | pattern                 | 7 (analysis + result + threshold + window + tx_set_hash + submitter + settlement_root) |
-| 0x04 | ATTESTATION             | attestation             | 6                                                                                |
-| 0x05 | MEMBERSHIP              | membership              | 5                                                                                |
-| 0x06 | NON_MEMBERSHIP          | non_membership          | 5                                                                                |
-| 0x07 | COMPLIANCE_SIGNED       | compliance_signed       | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address)                  |
-| 0x08 | RISK_SCORE_SIGNED       | risk_score_signed       | 11 (risk_score + signer_pubkey_hash + chain_id + oracle_address)                 |
-| 0x09 | COMPLIANCE_MULTI_SIGNED | compliance_multi_signed | 14 (compliance + threshold_m + 5 signer_pubkey_hash + chain_id + oracle_address) |
+| 0x04 | ATTESTATION             | attestation             | 6                                                                                      |
+| 0x05 | MEMBERSHIP              | membership              | 5                                                                                      |
+| 0x06 | NON_MEMBERSHIP          | non_membership          | 5                                                                                      |
+| 0x07 | COMPLIANCE_SIGNED       | compliance_signed       | 9 (compliance + signer_pubkey_hash + chain_id + oracle_address)                        |
+| 0x08 | RISK_SCORE_SIGNED       | risk_score_signed       | 11 (risk_score + signer_pubkey_hash + chain_id + oracle_address)                       |
+| 0x09 | COMPLIANCE_MULTI_SIGNED | compliance_multi_signed | 14 (compliance + threshold_m + 5 signer_pubkey_hash + chain_id + oracle_address)       |
 
 ## Conventions
 
