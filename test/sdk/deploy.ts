@@ -1,7 +1,7 @@
 /**
  * Self-contained contract deployment for SDK tests.
  *
- * Reads forge artifacts from out/ and deploys the full Xochi ZKP stack
+ * Reads forge artifacts from out/ and deploys the full ERC-8262 stack
  * to a local anvil instance.
  */
 
@@ -103,10 +103,10 @@ export async function deployContracts(): Promise<DeployedContracts> {
     transport: http(ANVIL_RPC),
   });
 
-  // Deploy XochiZKPVerifier
+  // Deploy ERC8262Verifier
   const verifierArtifact = readForgeArtifact(
-    "XochiZKPVerifier.sol",
-    "XochiZKPVerifier",
+    "ERC8262Verifier.sol",
+    "ERC8262Verifier",
   );
   const verifierHash = await walletClient.deployContract({
     abi: verifierArtifact.abi,
@@ -118,10 +118,10 @@ export async function deployContracts(): Promise<DeployedContracts> {
   });
   const verifierAddress = verifierReceipt.contractAddress!;
 
-  // Deploy XochiZKPOracle
+  // Deploy ERC8262Oracle
   const oracleArtifact = readForgeArtifact(
-    "XochiZKPOracle.sol",
-    "XochiZKPOracle",
+    "ERC8262Oracle.sol",
+    "ERC8262Oracle",
   );
   const oracleHash = await walletClient.deployContract({
     abi: oracleArtifact.abi,
