@@ -1,4 +1,4 @@
-/// Common validation utilities for Xochi ZKP circuits
+/// Common validation utilities for ERC-8262 circuits
 
 use crate::constants::MAX_PROVIDERS;
 use crate::hash::hash32;

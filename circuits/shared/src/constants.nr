@@ -1,4 +1,4 @@
-/// Constants shared across Xochi ZKP circuits
+/// Constants shared across ERC-8262 circuits
 
 /// Maximum number of screening providers supported
 pub global MAX_PROVIDERS: u32 = 8;

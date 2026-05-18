@@ -9,7 +9,7 @@
 /// Trust model
 /// -----------
 /// Each provider maintains a per-provider Merkle tree of issued credentials. The
-/// provider publishes the latest tree root on-chain via XochiZKPOracle.publishCredentialRoot
+/// provider publishes the latest tree root on-chain via ERC8262Oracle.publishCredentialRoot
 /// (callable only by the provider's authorized publisher EOA, registered by the
 /// oracle owner). The on-chain registry binds each root to its providerId; the
 /// Solidity validator checks that the proof's claimed provider_id matches the
@@ -38,7 +38,7 @@
 ///   - merkle_path: Merkle path to the credential_root
 
 use std::hash::pedersen_hash;
-use xochi_shared::{compute_merkle_root, leaf_hash_value};
+use erc8262_shared::{compute_merkle_root, leaf_hash_value};
 
 /// Credential types (2 and 3 are reserved for future use, e.g. KYC Enhanced, Accredited Investor)
 global CREDENTIAL_KYC_BASIC: u8 = 1;

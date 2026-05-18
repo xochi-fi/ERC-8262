@@ -1,4 +1,4 @@
-/// Pedersen hash wrappers for Xochi ZKP circuits
+/// Pedersen hash wrappers for ERC-8262 circuits
 ///
 /// All circuits use Pedersen hash (efficient in ZK circuits, publicly available in Noir stdlib).
 /// Field elements correspond to BN254 scalar field (~254 bits).

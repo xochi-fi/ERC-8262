@@ -61,7 +61,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Move generated verifiers
-        run: mv src/generated /tmp/xochi-generated-backup
+        run: mv src/generated /tmp/generated-backup
 
       - name: Run Slither
         uses: crytic/slither-action@v0.4.0
@@ -71,7 +71,7 @@ jobs:
 
       - name: Restore generated verifiers
         if: always()
-        run: mv /tmp/xochi-generated-backup src/generated
+        run: mv /tmp/generated-backup src/generated
 
   circuits:
     name: Noir Circuits

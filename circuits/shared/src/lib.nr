@@ -1,7 +1,7 @@
-/// Shared types and utilities for Xochi ZKP circuits
+/// Shared types and utilities for ERC-8262 circuits
 ///
 /// Re-exports all modules for convenient use by circuit crates:
-///   use xochi_shared::{hash2, compute_merkle_root, compute_risk_score, ...};
+///   use erc8262_shared::{hash2, compute_merkle_root, compute_risk_score, ...};
 
 pub mod constants;
 pub mod hash;
@@ -13,7 +13,7 @@ pub mod multi_sig;
 pub mod validation;
 
 // Re-export everything at the crate root for backwards compatibility.
-// Circuits can use either `xochi_shared::hash2` or `xochi_shared::hash::hash2`.
+// Circuits can use either `erc8262_shared::hash2` or `erc8262_shared::hash::hash2`.
 pub use constants::{
     MAX_PROVIDERS, MERKLE_DEPTH, MAX_TRANSACTIONS,
     JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG,

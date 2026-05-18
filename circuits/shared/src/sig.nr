@@ -35,7 +35,7 @@ pub fn coordinate_to_fields(coord: [u8; 32]) -> (Field, Field) {
 }
 
 /// Compute the public commitment to a secp256k1 signer pubkey.
-/// Off-chain: providers register the same hash with `XochiZKPOracle.registerSignerPubkeyHash`.
+/// Off-chain: providers register the same hash with `ERC8262Oracle.registerSignerPubkeyHash`.
 pub fn compute_signer_pubkey_hash(pubkey_x: [u8; 32], pubkey_y: [u8; 32]) -> Field {
     let (x_hi, x_lo) = coordinate_to_fields(pubkey_x);
     let (y_hi, y_lo) = coordinate_to_fields(pubkey_y);

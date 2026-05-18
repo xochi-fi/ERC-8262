@@ -116,7 +116,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Authorized signer pubkey hashes for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs.
     /// @dev Pedersen commitment to a secp256k1 (x, y) pubkey, layout per
-    ///      `xochi_shared::sig::compute_signer_pubkey_hash` in the circuits crate.
+    ///      `erc8262_shared::sig::compute_signer_pubkey_hash` in the circuits crate.
     ///      The signed-variant circuits expose `signer_pubkey_hash` as a public input;
     ///      the Oracle validates it against this registry. Rotating a compromised key
     ///      is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the
@@ -824,7 +824,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Authorize a secp256k1 signer pubkey hash for signed-signals proofs.
     /// @dev `signerPubkeyHash` is the Pedersen commitment computed by
-    ///      `xochi_shared::sig::compute_signer_pubkey_hash` (circuits/shared/src/sig.nr).
+    ///      `erc8262_shared::sig::compute_signer_pubkey_hash` (circuits/shared/src/sig.nr).
     ///      Off-chain computation MUST use the same domain tag and field-splitting layout
     ///      to produce a registry-matching hash. Rotating a key: revoke the outgoing hash,
     ///      register the new one; in-flight proofs from the outgoing key are rejected the

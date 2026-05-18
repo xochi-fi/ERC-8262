@@ -22,7 +22,7 @@
 ///   - signature: 64-byte secp256k1 ECDSA signature (r || s)
 ///   - pubkey_x, pubkey_y: 32-byte big-endian secp256k1 pubkey coordinates
 
-use xochi_shared::{
+use erc8262_shared::{
     compute_risk_score,
     verify_weight_sum,
     compute_config_hash,

@@ -1,4 +1,4 @@
-/// Provider set commitment for Xochi ZKP circuits
+/// Provider set commitment for ERC-8262 circuits
 
 use crate::constants::MAX_PROVIDERS;
 use crate::hash::hash16;

@@ -27,7 +27,7 @@
 ///   - timestamps: transaction timestamps
 ///   - num_transactions: how many are active
 
-use xochi_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, validate_timestamp};
+use erc8262_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, validate_timestamp};
 
 /// Structuring: amounts clustered just below threshold
 global ANALYSIS_STRUCTURING: u8 = 1;

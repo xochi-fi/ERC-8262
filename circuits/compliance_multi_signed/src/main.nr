@@ -28,7 +28,7 @@
 ///   - oracle_address          (audit F-6)
 ///   - submitter
 
-use xochi_shared::{
+use erc8262_shared::{
     compute_risk_score,
     get_high_threshold,
     verify_weight_sum,

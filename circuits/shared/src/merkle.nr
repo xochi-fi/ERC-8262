@@ -1,4 +1,4 @@
-/// Merkle tree utilities for Xochi ZKP circuits.
+/// Merkle tree utilities for ERC-8262 circuits.
 ///
 /// Internal nodes are domain-separated from leaves via an explicit tag. This prevents
 /// the classic second-preimage attack where an attacker crafts a leaf whose hash

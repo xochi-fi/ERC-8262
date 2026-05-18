@@ -29,7 +29,7 @@
 ///   - merkle_index: leaf position in the tree
 ///   - merkle_path: sibling hashes along the path to root
 
-use xochi_shared::{compute_merkle_root, internal_hash, leaf_hash_subject, validate_timestamp};
+use erc8262_shared::{compute_merkle_root, internal_hash, leaf_hash_subject, validate_timestamp};
 
 fn main(
     // --- Private ---

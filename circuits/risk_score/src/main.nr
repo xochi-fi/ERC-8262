@@ -25,7 +25,7 @@
 ///   - provider_ids: identifiers for each provider
 ///   - num_providers: how many providers are active (1-8)
 
-use xochi_shared::{
+use erc8262_shared::{
     compute_risk_score,
     verify_weight_sum,
     compute_config_hash,

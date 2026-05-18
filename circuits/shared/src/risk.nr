@@ -1,4 +1,4 @@
-/// Risk score computation for Xochi ZKP circuits
+/// Risk score computation for ERC-8262 circuits
 
 use crate::constants::{JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG};
 use crate::hash::hash8;

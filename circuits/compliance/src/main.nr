@@ -20,7 +20,7 @@
 ///   - weight_sum: sum of all weights (for normalization)
 ///   - provider_ids: identifiers for each provider
 
-use xochi_shared::{
+use erc8262_shared::{
     compute_risk_score,
     get_high_threshold,
     compute_provider_set_hash,

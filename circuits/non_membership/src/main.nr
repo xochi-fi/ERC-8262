@@ -40,7 +40,7 @@
 ///   - high_index:      Merkle index of high_leaf (must equal low_index + 1)
 ///   - high_path:       Merkle path for high_leaf
 
-use xochi_shared::{compute_merkle_root, leaf_hash_subject, validate_timestamp};
+use erc8262_shared::{compute_merkle_root, leaf_hash_subject, validate_timestamp};
 
 fn main(
     // --- Private ---
@@ -241,13 +241,13 @@ fn test_main_revert_non_adjacent_brackets() {
     let h3: Field = 0;
 
     // Build 4-leaf tree manually
-    let h01 = xochi_shared::internal_hash(h0, h1);
-    let h23 = xochi_shared::internal_hash(h2, h3);
-    let root_2levels = xochi_shared::internal_hash(h01, h23);
+    let h01 = erc8262_shared::internal_hash(h0, h1);
+    let h23 = erc8262_shared::internal_hash(h2, h3);
+    let root_2levels = erc8262_shared::internal_hash(h01, h23);
     // Pad to depth 20
     let mut current = root_2levels;
     for _i in 2..20 {
-        current = xochi_shared::internal_hash(current, 0);
+        current = erc8262_shared::internal_hash(current, 0);
     }
     let root = current;
 
