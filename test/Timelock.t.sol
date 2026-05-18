@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiTimelock} from "../src/XochiTimelock.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
+import {Timelock} from "../src/Timelock.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
 /// @dev Stub verifier for timelock integration tests
@@ -14,10 +14,10 @@ contract StubVerifier {
     }
 }
 
-contract XochiTimelockTest is Test {
-    XochiTimelock internal timelock;
-    XochiZKPVerifier internal verifier;
-    XochiZKPOracle internal oracle;
+contract TimelockTest is Test {
+    Timelock internal timelock;
+    ERC8262Verifier internal verifier;
+    ERC8262Oracle internal oracle;
 
     address internal multisig = makeAddr("multisig");
     address internal guardian = makeAddr("guardian");
@@ -32,12 +32,12 @@ contract XochiTimelockTest is Test {
     }
 
     function setUp() public {
-        timelock = new XochiTimelock(multisig, guardian);
+        timelock = new Timelock(multisig, guardian);
 
         // Deploy contracts owned by deployer, then transfer to timelock
         vm.startPrank(deployer);
-        verifier = new XochiZKPVerifier(deployer);
-        oracle = new XochiZKPOracle(address(verifier), deployer, CONFIG_HASH, _defaultProviders());
+        verifier = new ERC8262Verifier(deployer);
+        oracle = new ERC8262Oracle(address(verifier), deployer, CONFIG_HASH, _defaultProviders());
 
         // Register a stub verifier for compliance (needed for some integration tests)
         StubVerifier stub = new StubVerifier();
@@ -94,7 +94,7 @@ contract XochiTimelockTest is Test {
 
         // Too early
         vm.warp(block.timestamp + 6 hours - 1);
-        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.OperationNotReady.selector, id, block.timestamp + 1));
+        vm.expectRevert(abi.encodeWithSelector(Timelock.OperationNotReady.selector, id, block.timestamp + 1));
         timelock.execute(address(oracle), 0, data, salt);
 
         // Exact boundary
@@ -171,7 +171,7 @@ contract XochiTimelockTest is Test {
     function test_schedule_revert_notProposer() public {
         bytes memory data = abi.encodeWithSignature("updateAttestationTTL(uint256)", 48 hours);
         vm.prank(alice);
-        vm.expectRevert(XochiTimelock.NotProposer.selector);
+        vm.expectRevert(Timelock.NotProposer.selector);
         timelock.schedule(address(oracle), 0, data, bytes32(0));
     }
 
@@ -215,7 +215,7 @@ contract XochiTimelockTest is Test {
         bytes32 id = timelock.hashOperation(address(oracle), 0, data, salt);
 
         vm.prank(alice);
-        vm.expectRevert(XochiTimelock.NotAuthorized.selector);
+        vm.expectRevert(Timelock.NotAuthorized.selector);
         timelock.cancel(id);
     }
 
@@ -231,7 +231,7 @@ contract XochiTimelockTest is Test {
         timelock.schedule(address(oracle), 0, data, salt);
 
         bytes32 id = timelock.hashOperation(address(oracle), 0, data, salt);
-        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.OperationAlreadyScheduled.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Timelock.OperationAlreadyScheduled.selector, id));
         timelock.schedule(address(oracle), 0, data, salt);
         vm.stopPrank();
     }
@@ -239,7 +239,7 @@ contract XochiTimelockTest is Test {
     function test_execute_revert_notScheduled() public {
         bytes memory data = abi.encodeWithSignature("updateAttestationTTL(uint256)", 48 hours);
         bytes32 id = timelock.hashOperation(address(oracle), 0, data, bytes32(0));
-        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.OperationNotScheduled.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Timelock.OperationNotScheduled.selector, id));
         timelock.execute(address(oracle), 0, data, bytes32(0));
     }
 
@@ -254,7 +254,7 @@ contract XochiTimelockTest is Test {
         timelock.execute(address(oracle), 0, data, salt);
 
         bytes32 id = timelock.hashOperation(address(oracle), 0, data, salt);
-        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.OperationAlreadyExecuted.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(Timelock.OperationAlreadyExecuted.selector, id));
         timelock.execute(address(oracle), 0, data, salt);
     }
 
@@ -309,7 +309,7 @@ contract XochiTimelockTest is Test {
 
     function test_updateProposer_revert_directCall() public {
         vm.prank(multisig);
-        vm.expectRevert(XochiTimelock.NotProposer.selector);
+        vm.expectRevert(Timelock.NotProposer.selector);
         timelock.updateProposer(alice);
     }
 
@@ -343,7 +343,7 @@ contract XochiTimelockTest is Test {
 
         vm.prank(multisig);
         vm.expectEmit(true, true, false, true);
-        emit XochiTimelock.OperationScheduled(id, address(oracle), 0, data, readyAt);
+        emit Timelock.OperationScheduled(id, address(oracle), 0, data, readyAt);
         timelock.schedule(address(oracle), 0, data, salt);
     }
 
@@ -357,7 +357,7 @@ contract XochiTimelockTest is Test {
 
         vm.warp(block.timestamp + 6 hours);
         vm.expectEmit(true, true, false, true);
-        emit XochiTimelock.OperationExecuted(id, address(oracle), 0, data);
+        emit Timelock.OperationExecuted(id, address(oracle), 0, data);
         timelock.execute(address(oracle), 0, data, salt);
     }
 
@@ -371,7 +371,7 @@ contract XochiTimelockTest is Test {
 
         vm.prank(multisig);
         vm.expectEmit(true, false, false, false);
-        emit XochiTimelock.OperationCancelled(id);
+        emit Timelock.OperationCancelled(id);
         timelock.cancel(id);
     }
 
@@ -389,7 +389,7 @@ contract XochiTimelockTest is Test {
 
         // Send msg.value=1 wei against a scheduled value=0 -> reject (locks funds otherwise)
         vm.deal(address(this), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(XochiTimelock.ValueMismatch.selector, 1, 0));
+        vm.expectRevert(abi.encodeWithSelector(Timelock.ValueMismatch.selector, 1, 0));
         timelock.execute{value: 1}(address(oracle), 0, data, salt);
     }
 

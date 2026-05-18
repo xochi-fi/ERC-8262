@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
@@ -16,8 +16,8 @@ contract AlwaysPassVerifier is IUltraVerifier {
 }
 
 contract ProviderDenylistTest is Test {
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
     AlwaysPassVerifier internal stub;
 
     address internal owner = makeAddr("owner");
@@ -39,8 +39,8 @@ contract ProviderDenylistTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _initialProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _initialProviders());
         stub = new AlwaysPassVerifier();
 
         vm.startPrank(owner);
@@ -82,19 +82,19 @@ contract ProviderDenylistTest is Test {
     }
 
     function test_constructor_revert_emptyInitialExpansion() public {
-        XochiZKPVerifier v = new XochiZKPVerifier(owner);
+        ERC8262Verifier v = new ERC8262Verifier(owner);
         uint256[] memory empty = new uint256[](0);
-        vm.expectRevert(XochiZKPOracle.EmptyProviderExpansion.selector);
-        new XochiZKPOracle(address(v), owner, INITIAL_CONFIG, empty);
+        vm.expectRevert(ERC8262Oracle.EmptyProviderExpansion.selector);
+        new ERC8262Oracle(address(v), owner, INITIAL_CONFIG, empty);
     }
 
     function test_constructor_revert_zeroProviderInInitialExpansion() public {
-        XochiZKPVerifier v = new XochiZKPVerifier(owner);
+        ERC8262Verifier v = new ERC8262Verifier(owner);
         uint256[] memory bad = new uint256[](2);
         bad[0] = SUMSUB;
         bad[1] = 0;
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
-        new XochiZKPOracle(address(v), owner, INITIAL_CONFIG, bad);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
+        new ERC8262Oracle(address(v), owner, INITIAL_CONFIG, bad);
     }
 
     function test_updateProviderConfig_storesExpansionAtomically() public {
@@ -115,7 +115,7 @@ contract ProviderDenylistTest is Test {
     function test_updateProviderConfig_revert_emptyExpansion() public {
         uint256[] memory empty = new uint256[](0);
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.EmptyProviderExpansion.selector);
+        vm.expectRevert(ERC8262Oracle.EmptyProviderExpansion.selector);
         oracle.updateProviderConfig(keccak256("v2"), "", empty);
     }
 
@@ -124,7 +124,7 @@ contract ProviderDenylistTest is Test {
         bad[0] = SUMSUB;
         bad[1] = 0;
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
         oracle.updateProviderConfig(keccak256("v2"), "", bad);
     }
 
@@ -143,21 +143,21 @@ contract ProviderDenylistTest is Test {
     function test_denyProvider_setsState() public {
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
-        emit XochiZKPOracle.ProviderDeniedEvent(SUMSUB);
+        emit ERC8262Oracle.ProviderDeniedEvent(SUMSUB);
         oracle.denyProvider(SUMSUB);
         assertTrue(oracle.isProviderDenied(SUMSUB));
     }
 
     function test_denyProvider_revert_zeroId() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
         oracle.denyProvider(0);
     }
 
     function test_denyProvider_revert_alreadyDenied() public {
         vm.startPrank(owner);
         oracle.denyProvider(SUMSUB);
-        vm.expectRevert(XochiZKPOracle.AlreadyRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
         oracle.denyProvider(SUMSUB);
         vm.stopPrank();
     }
@@ -178,7 +178,7 @@ contract ProviderDenylistTest is Test {
 
     function test_undenyProvider_revert_notDenied() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.NotRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
         oracle.undenyProvider(SUMSUB);
     }
 
@@ -200,7 +200,7 @@ contract ProviderDenylistTest is Test {
 
         bytes memory proof = _proof(1);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProviderDenied.selector, CHAINALYSIS));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProviderDenied.selector, CHAINALYSIS));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(alice), PROVIDER_SET_HASH);
     }
 
@@ -238,7 +238,7 @@ contract ProviderDenylistTest is Test {
             bytes32(uint256(uint160(alice)))
         );
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProviderDenied.selector, SUMSUB));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProviderDenied.selector, SUMSUB));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, inputs, PROVIDER_SET_HASH);
     }
 }

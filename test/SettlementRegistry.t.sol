@@ -4,9 +4,9 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {SettlementRegistry} from "../src/SettlementRegistry.sol";
 import {ISettlementRegistry} from "../src/interfaces/ISettlementRegistry.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
@@ -18,8 +18,8 @@ contract AlwaysPassVerifier is IUltraVerifier {
 
 contract SettlementRegistryTest is Test {
     SettlementRegistry internal registry;
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
     AlwaysPassVerifier internal stubVerifier;
 
     address internal owner = makeAddr("owner");
@@ -35,8 +35,8 @@ contract SettlementRegistryTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         stubVerifier = new AlwaysPassVerifier();
         vm.startPrank(owner);
@@ -718,7 +718,7 @@ contract SettlementRegistryTest is Test {
             bytes32(0) // settlement_root
         );
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidAnalysisType.selector, 99));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidAnalysisType.selector, 99));
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
     }
 

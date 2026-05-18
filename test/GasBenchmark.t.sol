@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 
@@ -12,8 +12,8 @@ import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 /// @notice Uses real UltraHonk proofs from test/fixtures/ for accurate gas measurement.
 ///         Run with: forge test --match-contract GasBenchmark --gas-report
 contract GasBenchmarkTest is Test {
-    XochiZKPVerifier internal verifier;
-    XochiZKPOracle internal oracle;
+    ERC8262Verifier internal verifier;
+    ERC8262Oracle internal oracle;
 
     address internal owner = makeAddr("owner");
     address internal publisher = makeAddr("publisher");
@@ -36,8 +36,8 @@ contract GasBenchmarkTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         string[6] memory circuits =
             ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];

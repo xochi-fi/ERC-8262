@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
@@ -30,7 +30,7 @@ contract IncidentStub is IUltraVerifier {
 ///         which is far cheaper to discover here than during a live incident.
 /// @dev Audit F-7 closure.
 contract IncidentVerifierSoundnessTest is Test {
-    XochiZKPVerifier internal verifier;
+    ERC8262Verifier internal verifier;
     IncidentStub internal originalVerifier;
     IncidentStub internal replacementVerifier;
 
@@ -42,7 +42,7 @@ contract IncidentVerifierSoundnessTest is Test {
     bytes internal constant PROOF_BYTES = "proof-bytes";
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
+        verifier = new ERC8262Verifier(owner);
         originalVerifier = new IncidentStub(true);
 
         vm.prank(owner);
@@ -88,11 +88,11 @@ contract IncidentVerifierSoundnessTest is Test {
 
         // Live verification now reverts even though the underlying verifier
         // would still accept -- this is the surgical kill switch.
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypePaused.selector, PROOF_TYPE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, PROOF_TYPE));
         verifier.verifyProof(PROOF_TYPE, PROOF_BYTES, inputs);
 
         // verifyProofAtVersion is also gated by the per-type pause.
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypePaused.selector, PROOF_TYPE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, PROOF_TYPE));
         verifier.verifyProofAtVersion(PROOF_TYPE, 1, PROOF_BYTES, inputs);
 
         // (3) Revoke historical version 1 via the immediate emergency path.
@@ -112,7 +112,7 @@ contract IncidentVerifierSoundnessTest is Test {
         assertEq(pinnedCodehash, replacementCodehash);
 
         // (5) Cannot execute before timelock elapses
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, PROOF_TYPE, readyAt));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.TimelockNotElapsed.selector, PROOF_TYPE, readyAt));
         vm.prank(owner);
         verifier.executeVerifierUpdate(PROOF_TYPE);
 
@@ -127,7 +127,7 @@ contract IncidentVerifierSoundnessTest is Test {
 
         // (6) NOW revoke v1 (it is no longer the current). Use the immediate
         //     path -- the routine 6h-delay path tests the same invariant via a
-        //     different code branch and is covered by XochiZKPVerifier.t.sol.
+        //     different code branch and is covered by ERC8262Verifier.t.sol.
         vm.prank(owner);
         verifier.revokeVerifierVersion(PROOF_TYPE, 1);
         assertTrue(verifier.isVersionRevoked(PROOF_TYPE, 1));
@@ -143,7 +143,7 @@ contract IncidentVerifierSoundnessTest is Test {
         assertEq(verifier.getVerifier(PROOF_TYPE), address(replacementVerifier));
 
         // Revoked v1 is permanently locked out for retroactive verification
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.VersionRevoked.selector, PROOF_TYPE, 1));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.VersionRevoked.selector, PROOF_TYPE, 1));
         verifier.verifyProofAtVersion(PROOF_TYPE, 1, PROOF_BYTES, inputs);
 
         // v2 still works for retroactive verification
@@ -155,7 +155,7 @@ contract IncidentVerifierSoundnessTest is Test {
     ///         the runbook ordering above (propose+execute first, then revoke).
     function test_runbook_cannotRevokeCurrentVersion() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.CannotRevokeCurrentVersion.selector, PROOF_TYPE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.CannotRevokeCurrentVersion.selector, PROOF_TYPE));
         verifier.revokeVerifierVersion(PROOF_TYPE, 1);
     }
 

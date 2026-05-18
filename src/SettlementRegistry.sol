@@ -2,10 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {ISettlementRegistry} from "./interfaces/ISettlementRegistry.sol";
-import {IXochiZKPOracle} from "./interfaces/IXochiZKPOracle.sol";
+import {IERC8262Oracle} from "./interfaces/IERC8262Oracle.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
 
-/// @dev Mirror of XochiZKPOracle.PATTERN_STRUCTURING constant. Must match circuits/pattern.
+/// @dev Mirror of ERC8262Oracle.PATTERN_STRUCTURING constant. Must match circuits/pattern.
 uint256 constant PATTERN_STRUCTURING = 1;
 
 /// @title SettlementRegistry -- Links sub-settlement compliance proofs to a trade identifier
@@ -16,7 +16,7 @@ contract SettlementRegistry is ISettlementRegistry {
     error ZeroAddress();
 
     /// @notice The oracle contract used for attestation lookups
-    IXochiZKPOracle public immutable override oracle;
+    IERC8262Oracle public immutable override oracle;
 
     /// @notice Trade expiry duration (7 days from registration)
     uint256 internal constant TRADE_TTL = 7 days;
@@ -45,10 +45,10 @@ contract SettlementRegistry is ISettlementRegistry {
     uint256 internal constant BN254_FR_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    /// @param oracle_ The XochiZKPOracle contract address
+    /// @param oracle_ The ERC8262Oracle contract address
     constructor(address oracle_) {
         if (oracle_ == address(0)) revert ZeroAddress();
-        oracle = IXochiZKPOracle(oracle_);
+        oracle = IERC8262Oracle(oracle_);
     }
 
     // -------------------------------------------------------------------------
@@ -87,7 +87,7 @@ contract SettlementRegistry is ISettlementRegistry {
         if (_subSettlements[tradeId][index].settledAt != 0) revert SubTradeAlreadySettled(tradeId, index);
 
         // Verify the attestation exists in the oracle
-        IXochiZKPOracle.ComplianceAttestation memory attestation = _fetchAttestation(proofHash);
+        IERC8262Oracle.ComplianceAttestation memory attestation = _fetchAttestation(proofHash);
 
         // Reject any proof that is not a compliance variant. The interface
         // advertises "verified compliance attestation" semantics; MEMBERSHIP,
@@ -150,7 +150,7 @@ contract SettlementRegistry is ISettlementRegistry {
         if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
         uint8 proofType = oracle.getProofType(patternProofHash);
         if (proofType != ProofTypes.PATTERN) revert PatternProofRequired(tradeId);
-        IXochiZKPOracle.ComplianceAttestation memory patternAttestation = _fetchAttestation(patternProofHash);
+        IERC8262Oracle.ComplianceAttestation memory patternAttestation = _fetchAttestation(patternProofHash);
         if (patternAttestation.subject != settlement.subject) {
             revert SubjectMismatch(settlement.subject, patternAttestation.subject);
         }
@@ -291,9 +291,9 @@ contract SettlementRegistry is ISettlementRegistry {
     function _fetchAttestation(bytes32 proofHash)
         internal
         view
-        returns (IXochiZKPOracle.ComplianceAttestation memory attestation)
+        returns (IERC8262Oracle.ComplianceAttestation memory attestation)
     {
-        try oracle.getHistoricalProof(proofHash) returns (IXochiZKPOracle.ComplianceAttestation memory att) {
+        try oracle.getHistoricalProof(proofHash) returns (IERC8262Oracle.ComplianceAttestation memory att) {
             attestation = att;
         } catch {
             revert AttestationNotFound(proofHash);

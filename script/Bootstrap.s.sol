@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
 
 /// @title Bootstrap -- Post-deployment registry seeding for Xochi ZKP
 /// @notice Registers the initial set of provider publishers, reporting thresholds,
@@ -38,7 +38,7 @@ contract Bootstrap is Script {
     function run() public {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address oracleAddr = vm.envAddress("ORACLE_ADDRESS");
-        XochiZKPOracle oracle = XochiZKPOracle(oracleAddr);
+        ERC8262Oracle oracle = ERC8262Oracle(oracleAddr);
 
         console.log("Bootstrap target:", oracleAddr);
         console.log("Caller:", vm.addr(deployerKey));
@@ -58,7 +58,7 @@ contract Bootstrap is Script {
 
     /// @dev Register provider publishers from a JSON env var.
     ///      Format: '[{"providerId":42,"publisher":"0xAB..."}, ...]'
-    function _bootstrapProviders(XochiZKPOracle oracle) internal {
+    function _bootstrapProviders(ERC8262Oracle oracle) internal {
         string memory json = vm.envOr("PROVIDERS_JSON", string(""));
         if (bytes(json).length == 0) {
             console.log("No PROVIDERS_JSON; skipping provider publisher registration.");
@@ -80,7 +80,7 @@ contract Bootstrap is Script {
     }
 
     /// @dev Register reporting thresholds from a comma-separated env var.
-    function _bootstrapReportingThresholds(XochiZKPOracle oracle) internal {
+    function _bootstrapReportingThresholds(ERC8262Oracle oracle) internal {
         string memory raw = vm.envOr("REPORTING_THRESHOLDS", string(""));
         if (bytes(raw).length == 0) {
             console.log("No REPORTING_THRESHOLDS; skipping reporting threshold registration.");
@@ -95,7 +95,7 @@ contract Bootstrap is Script {
     }
 
     /// @dev Register merkle roots from a comma-separated env var of bytes32 hex strings.
-    function _bootstrapMerkleRoots(XochiZKPOracle oracle) internal {
+    function _bootstrapMerkleRoots(ERC8262Oracle oracle) internal {
         string memory raw = vm.envOr("MERKLE_ROOTS", string(""));
         if (bytes(raw).length == 0) {
             console.log("No MERKLE_ROOTS; skipping merkle root registration.");
@@ -111,7 +111,7 @@ contract Bootstrap is Script {
     }
 
     /// @dev Register signer pubkey hashes for provider-signed-signals proofs (audit I-1).
-    function _bootstrapSignerPubkeyHashes(XochiZKPOracle oracle) internal {
+    function _bootstrapSignerPubkeyHashes(ERC8262Oracle oracle) internal {
         string memory raw = vm.envOr("SIGNER_PUBKEY_HASHES", string(""));
         if (bytes(raw).length == 0) {
             console.log("No SIGNER_PUBKEY_HASHES; skipping signer pubkey hash registration.");

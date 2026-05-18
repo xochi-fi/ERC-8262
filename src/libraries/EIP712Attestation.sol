@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {IXochiZKPOracle} from "../interfaces/IXochiZKPOracle.sol";
+import {IERC8262Oracle} from "../interfaces/IERC8262Oracle.sol";
 
 /// @title EIP712Attestation -- EIP-712 typed data hashing for ComplianceAttestation
 /// @notice Enables off-chain attestation verification with structured wallet display.
@@ -23,7 +23,7 @@ library EIP712Attestation {
     function buildDomainSeparator(address verifyingContract) internal view returns (bytes32) {
         return keccak256(
             abi.encode(
-                EIP712_DOMAIN_TYPEHASH, keccak256("XochiZKPOracle"), keccak256("1"), block.chainid, verifyingContract
+                EIP712_DOMAIN_TYPEHASH, keccak256("ERC8262Oracle"), keccak256("1"), block.chainid, verifyingContract
             )
         );
     }
@@ -31,7 +31,7 @@ library EIP712Attestation {
     /// @notice Hash a ComplianceAttestation struct per EIP-712
     /// @param att The attestation to hash
     /// @return structHash The struct hash
-    function hashAttestation(IXochiZKPOracle.ComplianceAttestation memory att) internal pure returns (bytes32) {
+    function hashAttestation(IERC8262Oracle.ComplianceAttestation memory att) internal pure returns (bytes32) {
         return keccak256(
             abi.encode(
                 ATTESTATION_TYPEHASH,
@@ -53,7 +53,7 @@ library EIP712Attestation {
     /// @param domainSeparator The domain separator (cache via buildDomainSeparator)
     /// @param att The attestation
     /// @return digest The EIP-712 digest (ready for ecrecover)
-    function toTypedDataHash(bytes32 domainSeparator, IXochiZKPOracle.ComplianceAttestation memory att)
+    function toTypedDataHash(bytes32 domainSeparator, IERC8262Oracle.ComplianceAttestation memory att)
         internal
         pure
         returns (bytes32)

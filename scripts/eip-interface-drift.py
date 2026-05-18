@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ERC draft <-> src/interfaces drift check.
 
-The ERC draft (`erc-draft_xochi-zkp.md`) embeds Solidity interface listings for
-`IXochiZKPVerifier` and `IXochiZKPOracle`. Those listings are hand-maintained
+The ERC draft (`ERC-8262.md`) embeds Solidity interface listings for
+`IERC8262Verifier` and `IERC8262Oracle`. Those listings are hand-maintained
 and have drifted from the source twice already. This script extracts the
 function signatures from both sides and fails CI when they diverge.
 
@@ -20,7 +20,6 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Interface extraction
@@ -64,7 +63,9 @@ def normalize_param_list(params: str) -> str:
     for part in parts:
         tokens = [t for t in re.split(r"\s+", part) if t]
         # Drop storage-location qualifiers and indexed (for events).
-        tokens = [t for t in tokens if t not in {"calldata", "memory", "storage", "indexed"}]
+        tokens = [
+            t for t in tokens if t not in {"calldata", "memory", "storage", "indexed"}
+        ]
         # If two tokens remain, last one is the param name -- drop it.
         # If only one remains, it IS the type.
         if len(tokens) >= 2:
@@ -76,7 +77,9 @@ def normalize_param_list(params: str) -> str:
 def normalize_struct_body(body: str) -> str:
     """Struct fields: keep `type name` pairs, sorted-by-position so order matters."""
     cleaned = strip_comments(body)
-    fields = [line.strip().rstrip(";").strip() for line in cleaned.split(";") if line.strip()]
+    fields = [
+        line.strip().rstrip(";").strip() for line in cleaned.split(";") if line.strip()
+    ]
     out = []
     for field in fields:
         tokens = re.split(r"\s+", field)
@@ -114,7 +117,9 @@ def parse_signatures(body: str) -> list[Signature]:
         sigs.append(Signature("struct", m.group(1), normalize_struct_body(m.group(2))))
 
     for m in EVENT_DECL.finditer(body):
-        sigs.append(Signature("event", m.group(1), f"({normalize_param_list(m.group(2))})"))
+        sigs.append(
+            Signature("event", m.group(1), f"({normalize_param_list(m.group(2))})")
+        )
 
     for m in FUNCTION_DECL.finditer(body):
         name = m.group(1)
@@ -122,7 +127,9 @@ def parse_signatures(body: str) -> list[Signature]:
         modifiers = re.sub(r"\s+", " ", m.group(3).strip())
         # Drop visibility keywords -- they are not part of the ABI.
         modifiers = " ".join(
-            t for t in modifiers.split() if t not in {"external", "public", "view", "pure", "payable"}
+            t
+            for t in modifiers.split()
+            if t not in {"external", "public", "view", "pure", "payable"}
         )
         returns = m.group(4) or ""
         returns_norm = normalize_param_list(returns)
@@ -156,7 +163,9 @@ def extract_eip_solidity_blocks(eip_text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def compare(name: str, eip_sigs: list[Signature], src_sigs: list[Signature]) -> list[str]:
+def compare(
+    name: str, eip_sigs: list[Signature], src_sigs: list[Signature]
+) -> list[str]:
     eip_set = {s.render() for s in eip_sigs}
     src_set = {s.render() for s in src_sigs}
     drift: list[str] = []
@@ -171,14 +180,14 @@ def compare(name: str, eip_sigs: list[Signature], src_sigs: list[Signature]) -> 
 
 def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
-    eip_path = root / "erc-draft_xochi-zkp.md"
+    eip_path = root / "ERC-8262.md"
     if not eip_path.is_file():
         print(f"error: ERC draft not found at {eip_path}", file=sys.stderr)
         return 2
 
     interfaces = {
-        "IXochiZKPVerifier": root / "src" / "interfaces" / "IXochiZKPVerifier.sol",
-        "IXochiZKPOracle": root / "src" / "interfaces" / "IXochiZKPOracle.sol",
+        "IERC8262Verifier": root / "src" / "interfaces" / "IERC8262Verifier.sol",
+        "IERC8262Oracle": root / "src" / "interfaces" / "IERC8262Oracle.sol",
     }
     for name, path in interfaces.items():
         if not path.is_file():
@@ -189,7 +198,9 @@ def main(argv: list[str]) -> int:
     drift: list[str] = []
     for name, path in interfaces.items():
         if name not in eip_blocks:
-            drift.append(f"[{name}] no ```solidity block declaring this interface found in EIP draft")
+            drift.append(
+                f"[{name}] no ```solidity block declaring this interface found in EIP draft"
+            )
             continue
         eip_body = extract_interface_body(eip_blocks[name], name)
         src_body = extract_interface_body(path.read_text(), name)
@@ -205,7 +216,7 @@ def main(argv: list[str]) -> int:
         for line in drift:
             print(f"  {line}")
         print(
-            "\nThe Solidity interface listings in erc-draft_xochi-zkp.md must match "
+            "\nThe Solidity interface listings in ERC-8262.md must match "
             "src/interfaces/*.sol. Update the ERC draft or the source so they agree."
         )
         return 1

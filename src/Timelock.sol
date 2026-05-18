@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-/// @title XochiTimelock -- Minimal timelock controller for admin operations
+/// @title Timelock -- Minimal timelock controller for admin operations
 /// @notice Enforces delays on privileged calls to Verifier and Oracle contracts.
 ///         Two delay tiers: HIGH (24h) for verifier/ownership changes, LOW (6h) for config.
 /// @dev Operations are identified by keccak256(target, value, data, salt).
 ///      Salt allows scheduling the same call multiple times.
-contract XochiTimelock {
+contract Timelock {
     /// @notice Operation state: 0 = unscheduled, 1 = executed, >1 = ready timestamp
     mapping(bytes32 operationId => uint256 readyTimestamp) internal _timestamps;
 

@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Test.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {JurisdictionConfig} from "../src/libraries/JurisdictionConfig.sol";
@@ -16,7 +16,7 @@ import {IERC165} from "../src/interfaces/IERC165.sol";
 import {OracleTestBase} from "./utils/OracleTestBase.sol";
 import {PassingVerifier, FailingVerifier} from "./utils/TestStubs.sol";
 
-contract XochiZKPOracleTest is OracleTestBase {
+contract ERC8262OracleTest is OracleTestBase {
     function setUp() public {
         _setUpOracle();
     }
@@ -34,12 +34,12 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_constructor_revert_zeroVerifier() public {
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
-        new XochiZKPOracle(address(0), owner, INITIAL_CONFIG, _defaultProviders());
+        new ERC8262Oracle(address(0), owner, INITIAL_CONFIG, _defaultProviders());
     }
 
     function test_constructor_revert_zeroOwner() public {
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
-        new XochiZKPOracle(address(verifier), address(0), INITIAL_CONFIG, _defaultProviders());
+        new ERC8262Oracle(address(verifier), address(0), INITIAL_CONFIG, _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -51,7 +51,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs = _complianceInputs();
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
 
         assertEq(att.subject, alice);
@@ -71,7 +71,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IXochiZKPOracle.ComplianceVerified(alice, 0, true, expectedHash, block.timestamp + 24 hours, 0);
+        emit IERC8262Oracle.ComplianceVerified(alice, 0, true, expectedHash, block.timestamp + 24 hours, 0);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -85,9 +85,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 expectedHash = oracle.computeProofHash(proof2, ProofTypes.COMPLIANCE);
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IXochiZKPOracle.ComplianceVerified(
-            alice, 0, true, expectedHash, block.timestamp + 24 hours, firstExpiresAt
-        );
+        emit IERC8262Oracle.ComplianceVerified(alice, 0, true, expectedHash, block.timestamp + 24 hours, firstExpiresAt);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof2, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -110,7 +108,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_checkCompliance_validAttestation() public {
         _submitForAlice(0);
 
-        (bool valid, IXochiZKPOracle.ComplianceAttestation memory att) = oracle.checkCompliance(alice, 0);
+        (bool valid, IERC8262Oracle.ComplianceAttestation memory att) = oracle.checkCompliance(alice, 0);
 
         assertTrue(valid);
         assertEq(att.subject, alice);
@@ -143,7 +141,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_checkComplianceByType_matches() public {
         _submitForAlice(0);
 
-        (bool valid, IXochiZKPOracle.ComplianceAttestation memory att) =
+        (bool valid, IERC8262Oracle.ComplianceAttestation memory att) =
             oracle.checkComplianceByType(alice, 0, ProofTypes.COMPLIANCE);
         assertTrue(valid);
         assertEq(att.proofType, ProofTypes.COMPLIANCE);
@@ -160,7 +158,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.prank(alice);
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), _riskScoreInputs(INITIAL_CONFIG), bytes32(0));
 
-        (bool valid, IXochiZKPOracle.ComplianceAttestation memory att) =
+        (bool valid, IERC8262Oracle.ComplianceAttestation memory att) =
             oracle.checkComplianceByType(alice, 0, ProofTypes.RISK_SCORE);
         assertTrue(valid);
         assertEq(att.proofType, ProofTypes.RISK_SCORE);
@@ -177,14 +175,14 @@ contract XochiZKPOracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
 
         assertEq(att.subject, alice);
         assertEq(att.proofHash, proofHash);
     }
 
     function test_getHistoricalProof_revert_notFound() public {
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.AttestationNotFound.selector, bytes32(uint256(999))));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.AttestationNotFound.selector, bytes32(uint256(999))));
         oracle.getHistoricalProof(bytes32(uint256(999)));
     }
 
@@ -217,7 +215,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, false, false, true);
-        emit IXochiZKPOracle.ProviderWeightsUpdated(newConfig, block.timestamp, uri);
+        emit IERC8262Oracle.ProviderWeightsUpdated(newConfig, block.timestamp, uri);
         oracle.updateProviderConfig(newConfig, uri, _defaultProviders());
 
         assertEq(oracle.providerConfigHash(), newConfig);
@@ -238,7 +236,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_updateAttestationTTL() public {
         vm.prank(owner);
         vm.expectEmit(false, false, false, true);
-        emit IXochiZKPOracle.AttestationTTLUpdated(24 hours, 12 hours);
+        emit IERC8262Oracle.AttestationTTLUpdated(24 hours, 12 hours);
         oracle.updateAttestationTTL(12 hours);
 
         assertEq(oracle.attestationTTL(), 12 hours);
@@ -246,13 +244,13 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_updateAttestationTTL_revert_tooLow() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidTTL.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidTTL.selector);
         oracle.updateAttestationTTL(30 minutes);
     }
 
     function test_updateAttestationTTL_revert_tooHigh() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidTTL.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidTTL.selector);
         oracle.updateAttestationTTL(31 days);
     }
 
@@ -269,7 +267,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofAlreadyUsed.selector, expectedHash));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofAlreadyUsed.selector, expectedHash));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -283,7 +281,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // before any jurisdiction-policy check.
         bytes memory publicInputs = _complianceInputsFor(0, DEFAULT_PROVIDER_SET_HASH);
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(2, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -292,7 +290,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs = _complianceInputs();
         bytes32 wrongHash = keccak256("wrong");
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, wrongHash);
     }
 
@@ -348,7 +346,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         for (uint256 i; i < permissive.length; i++) {
             uint8 j = permissive[i];
-            (bool valid, IXochiZKPOracle.ComplianceAttestation memory att) = oracle.checkCompliance(alice, j);
+            (bool valid, IERC8262Oracle.ComplianceAttestation memory att) = oracle.checkCompliance(alice, j);
             assertTrue(valid);
             assertEq(att.jurisdictionId, j);
             assertEq(att.subject, alice);
@@ -425,7 +423,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_submitCompliance_riskScore_validConfigHash() public {
         bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -438,7 +436,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG);
         bytes32 arbitraryHash = keccak256("arbitrary");
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, arbitraryHash);
         assertEq(att.providerSetHash, bytes32(0));
     }
@@ -450,7 +448,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_submitCompliance_capturesVerifierUsed() public {
         bytes memory proof = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         assertEq(att.verifierUsed, address(stubVerifier));
@@ -460,7 +458,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Submit with original verifier
         bytes memory proof1 = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att1 =
+        IERC8262Oracle.ComplianceAttestation memory att1 =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof1, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Upgrade verifier via timelock
@@ -474,11 +472,11 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Submit with new verifier
         bytes memory proof2 = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att2 =
+        IERC8262Oracle.ComplianceAttestation memory att2 =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof2, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Historical proof preserves original verifier
-        IXochiZKPOracle.ComplianceAttestation memory historical =
+        IERC8262Oracle.ComplianceAttestation memory historical =
             oracle.getHistoricalProof(oracle.computeProofHash(proof1, ProofTypes.COMPLIANCE));
         assertEq(historical.verifierUsed, address(stubVerifier));
         assertEq(att1.verifierUsed, address(stubVerifier));
@@ -500,7 +498,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, bytes32(uint256(0xdead))));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, bytes32(uint256(0xdead))));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -508,7 +506,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 badConfig = bytes32(uint256(0xdead));
         bytes memory publicInputs = _riskScoreInputs(badConfig);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, badConfig));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, badConfig));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -521,7 +519,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_GT, 0, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TrivialRiskBound.selector, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TrivialRiskBound.selector, 0, 0));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -530,7 +528,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_GT, 10000, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TrivialRiskBound.selector, 10000, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TrivialRiskBound.selector, 10000, 0));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -539,7 +537,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_LT, 10001, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TrivialRiskBound.selector, 10001, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TrivialRiskBound.selector, 10001, 0));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -548,42 +546,42 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_LT, 0, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TrivialRiskBound.selector, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TrivialRiskBound.selector, 0, 0));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     function test_submitCompliance_revert_riskScore_invalidDirection() public {
         bytes memory publicInputs = _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, 3, 5000, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidRiskDirection.selector, 3));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidRiskDirection.selector, 3));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     function test_submitCompliance_revert_riskScore_invalidProofType() public {
         bytes memory publicInputs = _riskScoreInputsCustom(7, RISK_DIRECTION_GT, 5000, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidRiskProofType.selector, 7));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidRiskProofType.selector, 7));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     function test_submitCompliance_revert_riskScore_range_invertedBounds() public {
         bytes memory publicInputs = _riskScoreInputsCustom(RISK_PROOF_RANGE, 0, 5000, 4000, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidRiskBound.selector, 5000, 4000));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidRiskBound.selector, 5000, 4000));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     function test_submitCompliance_revert_riskScore_range_boundUpperOverMax() public {
         bytes memory publicInputs = _riskScoreInputsCustom(RISK_PROOF_RANGE, 0, 0, 10001, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidRiskBound.selector, 0, 10001));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidRiskBound.selector, 0, 10001));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     function test_submitCompliance_revert_riskScore_range_fullDomain() public {
         bytes memory publicInputs = _riskScoreInputsCustom(RISK_PROOF_RANGE, 0, 0, 10000, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TrivialRiskBound.selector, 0, 10000));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TrivialRiskBound.selector, 0, 10000));
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -591,7 +589,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_GT, 5000, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -600,7 +598,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs =
             _riskScoreInputsCustom(RISK_PROOF_THRESHOLD, RISK_DIRECTION_LT, 7100, 0, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -608,7 +606,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_submitCompliance_riskScore_range_acceptsBoundedRange() public {
         bytes memory publicInputs = _riskScoreInputsCustom(RISK_PROOF_RANGE, 0, 4000, 5000, INITIAL_CONFIG, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -621,7 +619,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         // Submit with INITIAL_CONFIG -- should still be accepted
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
         );
         assertEq(att.subject, alice);
@@ -639,7 +637,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(0) // settlement_root (audit H-1)
         );
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -663,7 +661,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function testFuzz_updateAttestationTTL_revert_outOfRange(uint256 ttl) public {
         vm.assume(ttl < 1 hours || ttl > 30 days);
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidTTL.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidTTL.selector);
         oracle.updateAttestationTTL(ttl);
     }
 
@@ -728,7 +726,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_submitCompliance_membershipProof_revert_unregisteredMerkleRoot() public {
         bytes memory publicInputs = _membershipInputs(bytes32(uint256(0xdead)));
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidMerkleRoot.selector, bytes32(uint256(0xdead))));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidMerkleRoot.selector, bytes32(uint256(0xdead))));
         oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -739,7 +737,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory publicInputs = _membershipInputs(root);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -747,7 +745,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     function test_submitCompliance_nonMembershipProof_revert_unregisteredMerkleRoot() public {
         bytes memory publicInputs = _nonMembershipInputs(bytes32(uint256(0xdead)));
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidMerkleRoot.selector, bytes32(uint256(0xdead))));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidMerkleRoot.selector, bytes32(uint256(0xdead))));
         oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -755,7 +753,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 unregistered = bytes32(uint256(0xdead));
         bytes memory publicInputs = _attestationInputs(unregistered);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialRootNotFound.selector, unregistered));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialRootNotFound.selector, unregistered));
         oracle.submitCompliance(0, ProofTypes.ATTESTATION, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -770,7 +768,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(0) // settlement_root
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -789,7 +787,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -806,7 +804,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -822,7 +820,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(0) // settlement_root
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -840,7 +838,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.ATTESTATION, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -858,7 +856,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -876,7 +874,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -940,7 +938,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         // Submit with revoked INITIAL_CONFIG should fail
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, INITIAL_CONFIG));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, INITIAL_CONFIG));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
         );
@@ -954,7 +952,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_revokeConfig_revert_cannotRevokeCurrent() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.CannotRevokeCurrentConfig.selector);
+        vm.expectRevert(ERC8262Oracle.CannotRevokeCurrentConfig.selector);
         oracle.revokeConfig(INITIAL_CONFIG);
     }
 
@@ -986,7 +984,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         oracle.updateProviderConfig(thirdConfig, "", _defaultProviders());
 
         // Try to re-register the revoked INITIAL_CONFIG -- must revert
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ConfigPermanentlyRevoked.selector, INITIAL_CONFIG));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ConfigPermanentlyRevoked.selector, INITIAL_CONFIG));
         oracle.updateProviderConfig(INITIAL_CONFIG, "", _defaultProviders());
         vm.stopPrank();
     }
@@ -1010,7 +1008,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         address pub99 = makeAddr("publisher-99");
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPOracle.ProviderPublisherSet(providerId, address(0), pub99);
+        emit ERC8262Oracle.ProviderPublisherSet(providerId, address(0), pub99);
         oracle.setProviderPublisher(providerId, pub99);
 
         assertEq(oracle.getProviderPublisher(providerId), pub99);
@@ -1018,7 +1016,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_setProviderPublisher_revert_zeroProviderId() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
         oracle.setProviderPublisher(0, makeAddr("publisher"));
     }
 
@@ -1034,7 +1032,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.startPrank(owner);
         oracle.setProviderPublisher(42, pub1);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPOracle.ProviderPublisherSet(42, pub1, pub2);
+        emit ERC8262Oracle.ProviderPublisherSet(42, pub1, pub2);
         oracle.setProviderPublisher(42, pub2);
         vm.stopPrank();
         assertEq(oracle.getProviderPublisher(42), pub2);
@@ -1044,11 +1042,11 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 root = keccak256("root-v1");
 
         vm.expectEmit(true, true, false, true);
-        emit XochiZKPOracle.CredentialRootPublished(DEFAULT_PROVIDER_ID, root, "ipfs://Qm...", block.timestamp);
+        emit ERC8262Oracle.CredentialRootPublished(DEFAULT_PROVIDER_ID, root, "ipfs://Qm...", block.timestamp);
         _publishCredentialRootSigned(DEFAULT_PROVIDER_ID, publisher, root, "ipfs://Qm...", CREDENTIAL_SIGNER_KEY);
 
         assertTrue(oracle.isValidCredentialRoot(root));
-        XochiZKPOracle.CredentialRootInfo memory info = oracle.getCredentialRoot(root);
+        ERC8262Oracle.CredentialRootInfo memory info = oracle.getCredentialRoot(root);
         assertEq(info.providerId, DEFAULT_PROVIDER_ID);
         assertEq(uint256(info.registeredAt), block.timestamp);
         assertFalse(info.revoked);
@@ -1067,9 +1065,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             CREDENTIAL_SIGNER_KEY
         );
         vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, owner)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, owner));
         oracle.publishCredentialRoot(
             DEFAULT_PROVIDER_ID, root, "", uint64(block.timestamp), uint64(block.timestamp + 1 hours), sig
         );
@@ -1079,7 +1075,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Provider id never authorized -- publisher mapping is zero.
         bytes memory sig = new bytes(65);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, 99, alice));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NotProviderPublisher.selector, 99, alice));
         oracle.publishCredentialRoot(
             99, keccak256("r"), "", uint64(block.timestamp), uint64(block.timestamp + 1 hours), sig
         );
@@ -1094,7 +1090,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         uint64 na = uint64(block.timestamp + 1 hours);
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
         vm.prank(publisher);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialRootAlreadyPublished.selector, root));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialRootAlreadyPublished.selector, root));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
@@ -1124,7 +1120,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sigMalleable = abi.encodePacked(r, sFlipped, vFlipped);
 
         vm.prank(publisher);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sigMalleable);
     }
 
@@ -1147,7 +1143,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
-        emit XochiZKPOracle.CredentialRootRevoked(root);
+        emit ERC8262Oracle.CredentialRootRevoked(root);
         oracle.revokeCredentialRoot(root);
 
         assertFalse(oracle.isValidCredentialRoot(root));
@@ -1168,16 +1164,14 @@ contract XochiZKPOracleTest is OracleTestBase {
         _publishCredentialRoot(root);
 
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, alice)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NotProviderPublisher.selector, DEFAULT_PROVIDER_ID, alice));
         oracle.revokeCredentialRoot(root);
     }
 
     function test_revokeCredentialRoot_revert_notFound() public {
         bytes32 root = keccak256("never-published");
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialRootNotFound.selector, root));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialRootNotFound.selector, root));
         oracle.revokeCredentialRoot(root);
     }
 
@@ -1208,7 +1202,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, false);
-        emit XochiZKPOracle.CredentialSignerSet(DEFAULT_PROVIDER_ID, previous, newSigner);
+        emit ERC8262Oracle.CredentialSignerSet(DEFAULT_PROVIDER_ID, previous, newSigner);
         oracle.setCredentialSigner(DEFAULT_PROVIDER_ID, newSigner);
 
         assertEq(oracle.getCredentialSigner(DEFAULT_PROVIDER_ID), newSigner);
@@ -1216,7 +1210,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_setCredentialSigner_revert_zeroProviderId() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.InvalidProviderId.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
         oracle.setCredentialSigner(0, makeAddr("s"));
     }
 
@@ -1239,7 +1233,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(pid, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
 
         vm.prank(pub99);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignerNotSet.selector, pid));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialSignerNotSet.selector, pid));
         oracle.publishCredentialRoot(pid, root, "", nb, na, sig);
     }
 
@@ -1251,7 +1245,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, ATTACKER_KEY);
 
         vm.prank(publisher);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
@@ -1264,7 +1258,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, signedRoot, "", nb, na, CREDENTIAL_SIGNER_KEY);
 
         vm.prank(publisher);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, swappedRoot, "", nb, na, sig);
     }
 
@@ -1276,7 +1270,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "ipfs://A", nb, na, CREDENTIAL_SIGNER_KEY);
 
         vm.prank(publisher);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "ipfs://B", nb, na, sig);
     }
 
@@ -1287,7 +1281,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
 
         vm.prank(publisher);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignatureOutOfWindow.selector, nb, na));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialSignatureOutOfWindow.selector, nb, na));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
@@ -1300,7 +1294,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Warp past notAfter and try to publish.
         vm.warp(uint256(na) + 1);
         vm.prank(publisher);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignatureOutOfWindow.selector, nb, na));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialSignatureOutOfWindow.selector, nb, na));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
@@ -1311,7 +1305,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory shortSig = new bytes(64);
 
         vm.prank(publisher);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignatureLength.selector, 64));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidSignatureLength.selector, 64));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, shortSig);
     }
 
@@ -1338,7 +1332,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(pid, root, "", nb, na, publisherKey);
 
         vm.prank(publisherEoa);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(pid, root, "", nb, na, sig);
     }
 
@@ -1356,7 +1350,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Old key tries to sign a new root: rejected.
         bytes memory oldSig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
         vm.prank(publisher);
-        vm.expectRevert(XochiZKPOracle.InvalidCredentialSignature.selector);
+        vm.expectRevert(ERC8262Oracle.InvalidCredentialSignature.selector);
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, oldSig);
 
         // New key signs same root: accepted.
@@ -1392,7 +1386,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory sig = _signCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, CREDENTIAL_SIGNER_KEY);
 
         vm.prank(publisher);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.CredentialSignerNotSet.selector, DEFAULT_PROVIDER_ID));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.CredentialSignerNotSet.selector, DEFAULT_PROVIDER_ID));
         oracle.publishCredentialRoot(DEFAULT_PROVIDER_ID, root, "", nb, na, sig);
     }
 
@@ -1452,7 +1446,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         assertEq(oracle.configHistoryLength(), oracle.MAX_CONFIG_HISTORY());
 
         // Cannot add more
-        vm.expectRevert(XochiZKPOracle.ConfigHistoryFull.selector);
+        vm.expectRevert(ERC8262Oracle.ConfigHistoryFull.selector);
         oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
 
         // Revoke a few old entries and compact
@@ -1475,7 +1469,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
-        emit IXochiZKPOracle.MerkleRootRegistered(root);
+        emit IERC8262Oracle.MerkleRootRegistered(root);
         oracle.registerMerkleRoot(root);
         assertTrue(oracle.isValidMerkleRoot(root));
     }
@@ -1511,7 +1505,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         );
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.InvalidReportingThreshold.selector, bytes32(uint256(99999)))
+            abi.encodeWithSelector(ERC8262Oracle.InvalidReportingThreshold.selector, bytes32(uint256(99999)))
         );
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
@@ -1527,7 +1521,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(0) // settlement_root
         );
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.TimeWindowTooSmall.selector, 1, 3600));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooSmall.selector, 1, 3600));
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -1542,7 +1536,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(0) // settlement_root
         );
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
     }
@@ -1563,7 +1557,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         );
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
         );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
@@ -1580,7 +1574,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         );
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampInFuture.selector, 1700000000 + 1, 1700000000)
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, 1700000000 + 1, 1700000000)
         );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
@@ -1596,7 +1590,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice)))
         );
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), publicInputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.subject, alice);
     }
@@ -1616,7 +1610,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         );
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
         );
         oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
@@ -1645,7 +1639,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // across a verifier upgrade scenario.
         bytes memory proof1 = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att1 =
+        IERC8262Oracle.ComplianceAttestation memory att1 =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof1, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Upgrade verifier mid-session via timelock
@@ -1658,7 +1652,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory proof2 = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att2 =
+        IERC8262Oracle.ComplianceAttestation memory att2 =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof2, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
 
         // Each attestation records the verifier that was actually used
@@ -1718,7 +1712,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         // Same proof on a different oracle deployment must produce a different hash
         vm.chainId(block.chainid - 1);
-        XochiZKPOracle other = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        ERC8262Oracle other = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         bytes32 hashOtherOracle = other.computeProofHash(proof, ProofTypes.COMPLIANCE);
         assertTrue(hashHere != hashOtherOracle);
     }
@@ -1759,7 +1753,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         }
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0,
             proofType,
             proof,
@@ -1798,7 +1792,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         // Replay with same proof and same type always reverts
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofAlreadyUsed.selector, expectedHash));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofAlreadyUsed.selector, expectedHash));
         oracle.submitCompliance(jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -1809,7 +1803,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs = _complianceInputsFor(jurisdictionId, DEFAULT_PROVIDER_SET_HASH);
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH
         );
 
@@ -1824,8 +1818,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         assertTrue(att.verifierUsed != address(0));
 
         // Stored attestation must match returned attestation
-        (bool valid, IXochiZKPOracle.ComplianceAttestation memory stored) =
-            oracle.checkCompliance(alice, jurisdictionId);
+        (bool valid, IERC8262Oracle.ComplianceAttestation memory stored) = oracle.checkCompliance(alice, jurisdictionId);
         assertTrue(valid);
         assertEq(stored.proofHash, att.proofHash);
         assertEq(stored.verifierUsed, att.verifierUsed);
@@ -1841,7 +1834,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         // Proof using revoked config must fail
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, INITIAL_CONFIG));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, INITIAL_CONFIG));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
         );
@@ -1880,7 +1873,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         oracle.pause();
 
         bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
         assertEq(att.subject, alice);
     }
 
@@ -1891,7 +1884,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.stopPrank();
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
         );
         assertEq(att.subject, alice);
@@ -1952,7 +1945,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         oracle.pauseProofType(ProofTypes.COMPLIANCE);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _dummyProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -2011,14 +2004,14 @@ contract XochiZKPOracleTest is OracleTestBase {
         assertEq(oracle.configHistoryLength(), 256);
 
         // 257th should revert
-        vm.expectRevert(XochiZKPOracle.ConfigHistoryFull.selector);
+        vm.expectRevert(ERC8262Oracle.ConfigHistoryFull.selector);
         oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
         vm.stopPrank();
     }
 
     function test_updateProviderConfig_revert_duplicateConfig() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.ConfigAlreadyCurrent.selector);
+        vm.expectRevert(ERC8262Oracle.ConfigAlreadyCurrent.selector);
         oracle.updateProviderConfig(INITIAL_CONFIG, "", _defaultProviders());
     }
 
@@ -2027,8 +2020,8 @@ contract XochiZKPOracleTest is OracleTestBase {
     // -------------------------------------------------------------------------
 
     function test_constructor_revert_zeroConfigHash() public {
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidConfigHash.selector, bytes32(0)));
-        new XochiZKPOracle(address(verifier), owner, bytes32(0), _defaultProviders());
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, bytes32(0)));
+        new ERC8262Oracle(address(verifier), owner, bytes32(0), _defaultProviders());
     }
 
     // -------------------------------------------------------------------------
@@ -2039,27 +2032,27 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.startPrank(owner);
         oracle.registerMerkleRoot(root);
-        vm.expectRevert(XochiZKPOracle.AlreadyRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
         oracle.registerMerkleRoot(root);
         vm.stopPrank();
     }
 
     function test_revokeMerkleRoot_revert_notRegistered() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.NotRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
         oracle.revokeMerkleRoot(bytes32(uint256(0xdead)));
     }
 
     function test_registerReportingThreshold_revert_alreadyRegistered() public {
         // 10000 already registered in setUp
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.AlreadyRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
     }
 
     function test_revokeReportingThreshold_revert_notRegistered() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.NotRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
         oracle.revokeReportingThreshold(bytes32(uint256(99999)));
     }
 
@@ -2182,7 +2175,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         }
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofResultNegative.selector);
+        vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
         oracle.submitCompliance(
             0,
             proofType,
@@ -2212,7 +2205,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory publicInputs = _complianceInputsFor(j, DEFAULT_PROVIDER_SET_HASH);
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(j, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.jurisdictionId, j);
         assertTrue(att.meetsThreshold);
@@ -2253,7 +2246,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.stopPrank();
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofVerificationFailed.selector);
+        vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -2288,7 +2281,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         // Submit a proof with INITIAL_CONFIG
         bytes memory proof = _uniqueProof();
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
         bytes32 proofHash = att.proofHash;
 
@@ -2299,7 +2292,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.stopPrank();
 
         // Historical proof should still be retrievable
-        IXochiZKPOracle.ComplianceAttestation memory historical = oracle.getHistoricalProof(proofHash);
+        IERC8262Oracle.ComplianceAttestation memory historical = oracle.getHistoricalProof(proofHash);
         assertEq(historical.subject, alice);
         assertEq(historical.proofHash, proofHash);
         assertEq(historical.timestamp, att.timestamp);
@@ -2335,7 +2328,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         hashes[2] = DEFAULT_PROVIDER_SET_HASH;
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation[] memory atts =
+        IERC8262Oracle.ComplianceAttestation[] memory atts =
             oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
 
         assertEq(atts.length, 3);
@@ -2345,7 +2338,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             assertTrue(atts[i].meetsThreshold);
 
             // Verify each is retrievable via getHistoricalProof
-            IXochiZKPOracle.ComplianceAttestation memory stored = oracle.getHistoricalProof(atts[i].proofHash);
+            IERC8262Oracle.ComplianceAttestation memory stored = oracle.getHistoricalProof(atts[i].proofHash);
             assertEq(stored.subject, alice);
             assertEq(stored.proofHash, atts[i].proofHash);
         }
@@ -2398,7 +2391,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32[] memory hashes = new bytes32[](2);
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.BatchLengthMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.BatchLengthMismatch.selector);
         oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
     }
 
@@ -2410,7 +2403,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32[] memory hashes = new bytes32[](size);
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.BatchTooLarge.selector);
+        vm.expectRevert(ERC8262Oracle.BatchTooLarge.selector);
         oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
     }
 
@@ -2435,7 +2428,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32 expectedHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofAlreadyUsed.selector, expectedHash));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofAlreadyUsed.selector, expectedHash));
         oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
     }
 
@@ -2465,7 +2458,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         hashes[1] = bytes32(0);
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.ProofVerificationFailed.selector);
+        vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
         oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
     }
 
@@ -2487,7 +2480,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         hashes[1] = bytes32(0);
 
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation[] memory atts =
+        IERC8262Oracle.ComplianceAttestation[] memory atts =
             oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
 
         assertEq(atts.length, 2);
@@ -2506,7 +2499,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32[] memory hashes = new bytes32[](0);
 
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.EmptyBatch.selector);
+        vm.expectRevert(ERC8262Oracle.EmptyBatch.selector);
         oracle.submitComplianceBatch(0, proofTypes, proofs, inputs, hashes);
     }
 
@@ -2539,21 +2532,21 @@ contract XochiZKPOracleTest is OracleTestBase {
         assertFalse(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
-        emit XochiZKPOracle.SignerPubkeyHashRegistered(TEST_SIGNER_PUBKEY_HASH);
+        emit ERC8262Oracle.SignerPubkeyHashRegistered(TEST_SIGNER_PUBKEY_HASH);
         oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
         assertTrue(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
     }
 
     function test_registerSignerPubkeyHash_revert_zero() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, bytes32(0)));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, bytes32(0)));
         oracle.registerSignerPubkeyHash(bytes32(0));
     }
 
     function test_registerSignerPubkeyHash_revert_alreadyRegistered() public {
         vm.startPrank(owner);
         oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
-        vm.expectRevert(XochiZKPOracle.AlreadyRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
         oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
         vm.stopPrank();
     }
@@ -2568,7 +2561,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         vm.startPrank(owner);
         oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
         vm.expectEmit(true, false, false, false);
-        emit XochiZKPOracle.SignerPubkeyHashRevoked(TEST_SIGNER_PUBKEY_HASH);
+        emit ERC8262Oracle.SignerPubkeyHashRevoked(TEST_SIGNER_PUBKEY_HASH);
         oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
         vm.stopPrank();
         assertFalse(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
@@ -2576,7 +2569,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
     function test_revokeSignerPubkeyHash_revert_notRegistered() public {
         vm.prank(owner);
-        vm.expectRevert(XochiZKPOracle.NotRegistered.selector);
+        vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
         oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
     }
 
@@ -2598,7 +2591,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.proofType, ProofTypes.COMPLIANCE_SIGNED);
         assertEq(att.providerSetHash, DEFAULT_PROVIDER_SET_HASH);
@@ -2608,7 +2601,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, OTHER_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
+            abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
         );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
@@ -2621,9 +2614,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, TEST_SIGNER_PUBKEY_HASH)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, TEST_SIGNER_PUBKEY_HASH));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -2635,7 +2626,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         address bob = makeAddr("bob");
         vm.prank(bob);
-        vm.expectRevert(XochiZKPOracle.SubmitterMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.SubmitterMismatch.selector);
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -2649,7 +2640,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
         // RISK_SCORE-class proofs do not carry providerSetHash on the attestation.
@@ -2660,7 +2651,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, OTHER_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
+            abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, OTHER_SIGNER_PUBKEY_HASH)
         );
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
@@ -2677,14 +2668,14 @@ contract XochiZKPOracleTest is OracleTestBase {
             alice
         );
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.SignedSignalsRequired.selector, 1, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.SignedSignalsRequired.selector, 1, ProofTypes.COMPLIANCE));
         oracle.submitCompliance(1, ProofTypes.COMPLIANCE, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
     function test_strictJurisdiction_rejects_unsignedRiskScore() public {
         bytes memory inputs = _riskScoreInputs(INITIAL_CONFIG);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.SignedSignalsRequired.selector, 3, ProofTypes.RISK_SCORE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.SignedSignalsRequired.selector, 3, ProofTypes.RISK_SCORE));
         oracle.submitCompliance(
             3,
             /* SG */
@@ -2707,7 +2698,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             alice
         );
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.jurisdictionId, 1);
     }
@@ -2726,7 +2717,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             alice
         );
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
         assertEq(att.jurisdictionId, 0);
     }
@@ -2765,7 +2756,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
         assertEq(att.proofType, ProofTypes.COMPLIANCE_MULTI_SIGNED);
@@ -2779,7 +2770,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 3, hashes, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
         assertEq(att.proofType, ProofTypes.COMPLIANCE_MULTI_SIGNED);
@@ -2792,7 +2783,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 3, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InsufficientSigners.selector, 2, 3));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InsufficientSigners.selector, 2, 3));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2806,7 +2797,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, SIGNER_HASH_C, bytes32(0), bytes32(0)];
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidSignerPubkeyHash.selector, SIGNER_HASH_B));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, SIGNER_HASH_B));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2819,7 +2810,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.DuplicateSigner.selector, SIGNER_HASH_A));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.DuplicateSigner.selector, SIGNER_HASH_A));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2831,7 +2822,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 0, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidThresholdM.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidThresholdM.selector, 0));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2843,7 +2834,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 6, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.InvalidThresholdM.selector, 6));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidThresholdM.selector, 6));
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2856,7 +2847,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, 1, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.BelowJurisdictionMinProviders.selector, 1, 1, 2));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.BelowJurisdictionMinProviders.selector, 1, 1, 2));
         oracle.submitCompliance(
             1, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2869,7 +2860,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(3, DEFAULT_PROVIDER_SET_HASH, 1, hashes, alice);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.BelowJurisdictionMinProviders.selector, 3, 1, 2));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.BelowJurisdictionMinProviders.selector, 3, 1, 2));
         oracle.submitCompliance(
             3, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2882,7 +2873,7 @@ contract XochiZKPOracleTest is OracleTestBase {
 
         bytes memory inputs = _complianceMultiSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
         vm.prank(alice);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             1, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
         assertEq(att.jurisdictionId, 1);
@@ -2910,7 +2901,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice))) // [13]
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2937,7 +2928,7 @@ contract XochiZKPOracleTest is OracleTestBase {
             bytes32(uint256(uint160(alice)))
         );
         vm.prank(alice);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2951,7 +2942,7 @@ contract XochiZKPOracleTest is OracleTestBase {
         bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
         address bob = makeAddr("bob");
         vm.prank(bob);
-        vm.expectRevert(XochiZKPOracle.SubmitterMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.SubmitterMismatch.selector);
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
@@ -2962,7 +2953,7 @@ contract XochiZKPOracleTest is OracleTestBase {
     // -------------------------------------------------------------------------
 
     function test_supportsInterface_self() public view {
-        assertTrue(oracle.supportsInterface(type(IXochiZKPOracle).interfaceId));
+        assertTrue(oracle.supportsInterface(type(IERC8262Oracle).interfaceId));
     }
 
     function test_supportsInterface_erc165() public view {

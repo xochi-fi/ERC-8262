@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {IXochiZKPOracle} from "./interfaces/IXochiZKPOracle.sol";
-import {IXochiZKPVerifier} from "./interfaces/IXochiZKPVerifier.sol";
+import {IERC8262Oracle} from "./interfaces/IERC8262Oracle.sol";
+import {IERC8262Verifier} from "./interfaces/IERC8262Verifier.sol";
 import {IUltraVerifier} from "./interfaces/IUltraVerifier.sol";
 import {IERC165} from "./interfaces/IERC165.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
@@ -12,7 +12,7 @@ import {Pausable} from "./libraries/Pausable.sol";
 import {EIP712Attestation} from "./libraries/EIP712Attestation.sol";
 import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 
-/// @title XochiZKPOracle -- Reference implementation of the Xochi ZKP compliance oracle
+/// @title ERC8262Oracle -- Reference implementation of the Xochi ZKP compliance oracle
 /// @notice Records compliance attestations backed by verified ZK proofs and supports
 ///         retroactive proof-of-innocence lookups
 /// @dev Privileged actions are split across roles (see AccessControl):
@@ -21,9 +21,9 @@ import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 ///      - CONFIG: updateProviderConfig (atomic with provider expansion),
 ///        updateAttestationTTL, compactConfigHistory
 ///      - owner: grant/revoke roles, transfer ownership
-contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
+contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @notice The verifier contract used to validate proofs
-    IXochiZKPVerifier public immutable verifier;
+    IERC8262Verifier public immutable verifier;
 
     /// @notice Hash of the current provider weight configuration
     bytes32 internal _providerConfigHash;
@@ -227,7 +227,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     ///      remain provable. After expiry, users must obtain paths against a current root.
     uint256 public constant CREDENTIAL_ROOT_TTL = 48 hours;
 
-    /// @param _verifier The XochiZKPVerifier contract address
+    /// @param _verifier The ERC8262Verifier contract address
     /// @param initialOwner The initial owner address
     /// @param initialConfigHash The initial provider weight configuration hash
     /// @param initialProviderIds Provider IDs whose weights are committed-to by
@@ -245,7 +245,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         }
         if (initialConfigHash == bytes32(0)) revert InvalidConfigHash(bytes32(0));
 
-        verifier = IXochiZKPVerifier(_verifier);
+        verifier = IERC8262Verifier(_verifier);
         owner = initialOwner;
         _providerConfigHash = initialConfigHash;
         _attestationTTL = 24 hours;
@@ -260,10 +260,10 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
     }
 
     // -------------------------------------------------------------------------
-    // IXochiZKPOracle -- Core
+    // IERC8262Oracle -- Core
     // -------------------------------------------------------------------------
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function submitCompliance(
         uint8 jurisdictionId,
         uint8 proofType,
@@ -302,7 +302,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function submitComplianceBatch(
         uint8 jurisdictionId,
         uint8[] calldata proofTypes,
@@ -330,7 +330,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function checkCompliance(address subject, uint8 jurisdictionId)
         external
         view
@@ -342,7 +342,7 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function checkComplianceByType(address subject, uint8 jurisdictionId, uint8 proofType)
         external
         view
@@ -353,19 +353,19 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
             && attestation.proofType == proofType;
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function getHistoricalProof(bytes32 proofHash) external view returns (ComplianceAttestation memory attestation) {
         attestation = _proofIndex[proofHash];
         if (attestation.timestamp == 0) revert AttestationNotFound(proofHash);
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function getProofType(bytes32 proofHash) external view returns (uint8) {
         if (_proofIndex[proofHash].timestamp == 0) revert AttestationNotFound(proofHash);
         return _proofTypes[proofHash];
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     /// @dev WARNING: Returns an unbounded array. Gas cost scales linearly with the
     ///      number of attestations for the given (subject, jurisdictionId) pair.
     ///      A subject could self-attest many times (each with a unique proof), growing
@@ -414,12 +414,12 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function providerConfigHash() external view returns (bytes32 configHash) {
         return _providerConfigHash;
     }
 
-    /// @inheritdoc IXochiZKPOracle
+    /// @inheritdoc IERC8262Oracle
     function attestationTTL() external view returns (uint256 ttl) {
         return _attestationTTL;
     }
@@ -1464,6 +1464,6 @@ contract XochiZKPOracle is IXochiZKPOracle, IERC165, AccessControl, Pausable {
 
     /// @inheritdoc IERC165
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IXochiZKPOracle).interfaceId || interfaceId == type(IERC165).interfaceId;
+        return interfaceId == type(IERC8262Oracle).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 }

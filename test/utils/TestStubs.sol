@@ -34,7 +34,7 @@ contract StubVerifier is IUltraVerifier {
 
 /// @dev Regression: malicious verifier that attempts to mutate state from inside verify().
 ///      The IUltraVerifier interface declares verify() as `view`, so Solidity emits a
-///      STATICCALL at the CALLER (XochiZKPVerifier) when invoking it. STATICCALL halts
+///      STATICCALL at the CALLER (ERC8262Verifier) when invoking it. STATICCALL halts
 ///      on any SSTORE, LOG, CREATE, SELFDESTRUCT, or CALL with non-zero value -- the
 ///      EVM-level guarantee that protects the router from a malicious verifier.
 ///

@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 
@@ -12,8 +12,8 @@ import {EIP712CredentialRoot} from "../src/libraries/EIP712CredentialRoot.sol";
 /// @notice These tests deploy the generated HonkVerifier contracts and verify
 ///         actual ZK proofs from the Noir circuits, end-to-end.
 contract IntegrationTest is Test {
-    XochiZKPVerifier internal verifier;
-    XochiZKPOracle internal oracle;
+    ERC8262Verifier internal verifier;
+    ERC8262Oracle internal oracle;
 
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
@@ -56,8 +56,8 @@ contract IntegrationTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         // Deploy all generated verifiers and register them
         string[6] memory circuits =
@@ -132,7 +132,7 @@ contract IntegrationTest is Test {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance");
 
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             0, // jurisdiction EU (matches fixture)
             ProofTypes.COMPLIANCE,
             proof,
@@ -151,7 +151,7 @@ contract IntegrationTest is Test {
         assertTrue(valid);
 
         // Historical proof should be retrievable
-        IXochiZKPOracle.ComplianceAttestation memory historical =
+        IERC8262Oracle.ComplianceAttestation memory historical =
             oracle.getHistoricalProof(oracle.computeProofHash(proof, ProofTypes.COMPLIANCE));
         assertEq(historical.subject, FIXTURE_SUBMITTER);
     }
@@ -165,7 +165,7 @@ contract IntegrationTest is Test {
 
         // Same proof should be rejected
         vm.prank(FIXTURE_SUBMITTER);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofAlreadyUsed.selector, expectedHash));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofAlreadyUsed.selector, expectedHash));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
     }
 
@@ -176,7 +176,7 @@ contract IntegrationTest is Test {
         // permissive jurisdictions so the PublicInputMismatch check fires before any
         // signed-signals policy check.
         vm.prank(FIXTURE_SUBMITTER);
-        vm.expectRevert(XochiZKPOracle.PublicInputMismatch.selector);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
         oracle.submitCompliance(2, ProofTypes.COMPLIANCE, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
     }
 
@@ -205,7 +205,7 @@ contract IntegrationTest is Test {
     function test_realProof_riskScore_submitAndCheck() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
@@ -224,7 +224,7 @@ contract IntegrationTest is Test {
     function test_realProof_pattern_submitAndCheck() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
@@ -243,7 +243,7 @@ contract IntegrationTest is Test {
     function test_realProof_attestation_submitAndCheck() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("attestation");
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.ATTESTATION, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
@@ -262,7 +262,7 @@ contract IntegrationTest is Test {
     function test_realProof_membership_submitAndCheck() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("membership");
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
@@ -281,7 +281,7 @@ contract IntegrationTest is Test {
     function test_realProof_nonMembership_submitAndCheck() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("non_membership");
         vm.prank(FIXTURE_SUBMITTER);
-        IXochiZKPOracle.ComplianceAttestation memory att =
+        IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);

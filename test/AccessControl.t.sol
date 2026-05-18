@@ -2,15 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
 contract AccessControlTest is Test {
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
 
     address internal owner = makeAddr("owner");
     address internal guardian = makeAddr("guardian");
@@ -31,8 +31,8 @@ contract AccessControlTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         GUARDIAN = keccak256("GUARDIAN");
         REGISTRAR = keccak256("REGISTRAR");
         CONFIG = keccak256("CONFIG");

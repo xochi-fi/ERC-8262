@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-/// @title IXochiZKPOracle -- Standard interface for ZK compliance attestation oracle
+/// @title IERC8262Oracle -- Standard interface for ZK compliance attestation oracle
 /// @notice Records and queries compliance attestations backed by zero-knowledge proofs
-interface IXochiZKPOracle {
+interface IERC8262Oracle {
     /// @notice A compliance attestation recorded on-chain
     struct ComplianceAttestation {
         address subject; // address that proved compliance

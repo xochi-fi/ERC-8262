@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiTimelock} from "../src/XochiTimelock.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {Timelock} from "../src/Timelock.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 // Force generated verifiers into the script's build graph so vm.getCode can find them.
 // `forge script` only builds files reachable from the script's imports.
@@ -21,7 +21,7 @@ import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.so
 /// @title Deploy -- Deployment script for Xochi ZKP contracts
 /// @notice Deploys the verifier router, oracle, and all 6 generated UltraHonk
 ///         verifier contracts, then registers each verifier with the router.
-///         Optionally deploys XochiTimelock and transfers ownership to it.
+///         Optionally deploys Timelock and transfers ownership to it.
 ///
 /// Usage:
 ///   forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast
@@ -37,7 +37,7 @@ import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.so
 ///
 /// Optional env vars:
 ///   DEPLOY_SALT          -- CREATE2 salt prefix (default: "xochi-v1")
-///   USE_TIMELOCK         -- if "true", deploy XochiTimelock and transfer ownership to it
+///   USE_TIMELOCK         -- if "true", deploy Timelock and transfer ownership to it
 ///                           (recommended for production deployments per docs/THREAT_MODEL.md)
 ///   TIMELOCK_PROPOSER    -- multisig EOA that schedules timelock ops (required if USE_TIMELOCK=true)
 ///   TIMELOCK_GUARDIAN    -- guardian EOA that can cancel scheduled ops (optional)
@@ -72,16 +72,16 @@ contract Deploy is Script {
         vm.startBroadcast(deployerKey);
 
         // 1. Deploy the verifier router (deterministic via CREATE2)
-        XochiZKPVerifier verifier = new XochiZKPVerifier{salt: baseSalt}(deployer);
-        console.log("XochiZKPVerifier:", address(verifier));
+        ERC8262Verifier verifier = new ERC8262Verifier{salt: baseSalt}(deployer);
+        console.log("ERC8262Verifier:", address(verifier));
 
         // 2. Deploy the oracle (deterministic via CREATE2). The provider expansion
         //    for `configHash` is written atomically in the constructor so denylist
         //    enforcement is in effect from block one (audit F-2).
-        XochiZKPOracle oracle = new XochiZKPOracle{salt: keccak256(abi.encodePacked(baseSalt, "oracle"))}(
+        ERC8262Oracle oracle = new ERC8262Oracle{salt: keccak256(abi.encodePacked(baseSalt, "oracle"))}(
             address(verifier), deployer, configHash, providerIds
         );
-        console.log("XochiZKPOracle:", address(oracle));
+        console.log("ERC8262Oracle:", address(oracle));
 
         // 3. Deploy generated UltraHonk verifiers and register them.
         //    Factored into a helper so run()'s local-variable count stays
@@ -90,7 +90,7 @@ contract Deploy is Script {
         //    were added).
         _deployAndRegisterVerifiers(verifier, baseSalt);
 
-        // 4. Optional: deploy XochiTimelock and transfer ownership to it.
+        // 4. Optional: deploy Timelock and transfer ownership to it.
         //    For production deployments, this is strongly recommended -- the timelock
         //    enforces the 24h / 6h delays documented in docs/THREAT_MODEL.md.
         if (useTimelock) {
@@ -111,7 +111,7 @@ contract Deploy is Script {
     /// @dev Deploy each generated UltraHonk verifier and register it with the
     ///      router. Direct `new` (not vm.getCode) avoids the artifact-lookup
     ///      quirk where `forge script`'s build set differs from `forge test`'s.
-    function _deployAndRegisterVerifiers(XochiZKPVerifier verifier, bytes32 baseSalt) internal {
+    function _deployAndRegisterVerifiers(ERC8262Verifier verifier, bytes32 baseSalt) internal {
         address v;
         v = address(new ComplianceVerifier{salt: keccak256(abi.encodePacked(baseSalt, "ComplianceVerifier"))}());
         verifier.setVerifierInitial(ProofTypes.COMPLIANCE, v);
@@ -163,17 +163,16 @@ contract Deploy is Script {
         console.log("  ComplianceMultiSignedVerifier:", v);
     }
 
-    /// @dev Deploy XochiTimelock and start the two-step ownership transfer.
+    /// @dev Deploy Timelock and start the two-step ownership transfer.
     ///      The proposer must accept via the standard schedule + execute path
     ///      (audit F-5 closure).
-    function _setupTimelock(XochiZKPVerifier verifier, XochiZKPOracle oracle, bytes32 baseSalt) internal {
+    function _setupTimelock(ERC8262Verifier verifier, ERC8262Oracle oracle, bytes32 baseSalt) internal {
         address proposer = vm.envAddress("TIMELOCK_PROPOSER");
         address guardian = vm.envOr("TIMELOCK_GUARDIAN", address(0));
         require(proposer != address(0), "TIMELOCK_PROPOSER must be set when USE_TIMELOCK=true");
 
-        XochiTimelock timelock =
-            new XochiTimelock{salt: keccak256(abi.encodePacked(baseSalt, "timelock"))}(proposer, guardian);
-        console.log("XochiTimelock:", address(timelock));
+        Timelock timelock = new Timelock{salt: keccak256(abi.encodePacked(baseSalt, "timelock"))}(proposer, guardian);
+        console.log("Timelock:", address(timelock));
         console.log("  proposer:", proposer);
         console.log("  guardian:", guardian);
 
@@ -189,8 +188,8 @@ contract Deploy is Script {
     /// @dev Verifies every invariant the deploy flow is supposed to establish.
     ///      Reverts with a descriptive message if any check fails.
     function _assertPostConditions(
-        XochiZKPVerifier verifier,
-        XochiZKPOracle oracle,
+        ERC8262Verifier verifier,
+        ERC8262Oracle oracle,
         bool useTimelock,
         address deployer,
         uint256 expectedProviderCount

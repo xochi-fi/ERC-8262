@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {XochiZKPOracle} from "../../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../../src/XochiZKPVerifier.sol";
+import {ERC8262Oracle} from "../../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../../src/ERC8262Verifier.sol";
 import {EIP712CredentialRoot} from "../../src/libraries/EIP712CredentialRoot.sol";
 import {ProofTypes} from "../../src/libraries/ProofTypes.sol";
 import {XochiTestBase} from "./XochiTestBase.sol";
 import {PassingVerifier} from "./TestStubs.sol";
 
-/// @dev Shared base for test suites that exercise XochiZKPOracle end-to-end.
+/// @dev Shared base for test suites that exercise ERC8262Oracle end-to-end.
 ///      Owns the oracle and verifier instances, the deterministic credential signer,
 ///      and the set of public-input builders for every proof type. Inheriting tests
 ///      call `_setUpOracle()` from their own `setUp()` to get a ready-to-use Oracle
 ///      registered with the stub verifier for all 9 proof types and seeded with a
 ///      default reporting threshold, publisher, and credential signer.
 abstract contract OracleTestBase is XochiTestBase {
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
     PassingVerifier internal stubVerifier;
 
     address internal publisher = makeAddr("publisher");
@@ -30,7 +30,7 @@ abstract contract OracleTestBase is XochiTestBase {
     ///      Registered as the credential signer for `DEFAULT_PROVIDER_ID` in `_setUpOracle`.
     uint256 internal constant CREDENTIAL_SIGNER_KEY = uint256(keccak256("xochi-test-credential-signer"));
 
-    // Mirror of XochiZKPOracle internal constants for risk-score validation tests.
+    // Mirror of ERC8262Oracle internal constants for risk-score validation tests.
     uint8 internal constant RISK_PROOF_THRESHOLD = 0x01;
     uint8 internal constant RISK_PROOF_RANGE = 0x02;
     uint8 internal constant RISK_DIRECTION_GT = 1;
@@ -55,8 +55,8 @@ abstract contract OracleTestBase is XochiTestBase {
     ///      threshold (for PATTERN tests), and seed the default attestation provider's
     ///      publisher and credential signing key.
     function _setUpOracle() internal {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         stubVerifier = new PassingVerifier();
         _registerAllVerifiers(verifier, address(stubVerifier), true);

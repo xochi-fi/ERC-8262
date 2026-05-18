@@ -2,10 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPVerifier} from "../../src/XochiZKPVerifier.sol";
+import {ERC8262Verifier} from "../../src/ERC8262Verifier.sol";
 import {ProofTypes} from "../../src/libraries/ProofTypes.sol";
 
-/// @dev Shared base for XochiZKPVerifier and XochiZKPOracle test suites.
+/// @dev Shared base for ERC8262Verifier and ERC8262Oracle test suites.
 ///      Provides common EOAs, a dummy proof of the size bb-generated verifiers expect,
 ///      and a registration helper that wires a single stub verifier into every proof type.
 abstract contract XochiTestBase is Test {
@@ -23,7 +23,7 @@ abstract contract XochiTestBase is Test {
     ///      Pass `includeSigned = true` to also cover COMPLIANCE_SIGNED, RISK_SCORE_SIGNED,
     ///      and COMPLIANCE_MULTI_SIGNED -- needed by the Oracle suite, optional for tests
     ///      that only exercise the unsigned routing path.
-    function _registerAllVerifiers(XochiZKPVerifier v, address stub, bool includeSigned) internal {
+    function _registerAllVerifiers(ERC8262Verifier v, address stub, bool includeSigned) internal {
         vm.startPrank(owner);
         v.setVerifierInitial(ProofTypes.COMPLIANCE, stub);
         v.setVerifierInitial(ProofTypes.RISK_SCORE, stub);

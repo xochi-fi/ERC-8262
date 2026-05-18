@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {IXochiZKPOracle} from "./IXochiZKPOracle.sol";
+import {IERC8262Oracle} from "./IERC8262Oracle.sol";
 
 /// @title ISettlementRegistry -- Interface for linking sub-settlement compliance proofs to a trade
 /// @notice Tracks multi-leg trade settlements where each sub-trade must have a verified compliance
@@ -123,5 +123,5 @@ interface ISettlementRegistry {
 
     /// @notice The oracle contract used for attestation lookups
     /// @return The oracle address
-    function oracle() external view returns (IXochiZKPOracle);
+    function oracle() external view returns (IERC8262Oracle);
 }

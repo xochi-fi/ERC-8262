@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
@@ -15,8 +15,8 @@ contract AlwaysPassVerifierInv is IUltraVerifier {
 }
 
 contract Handler is Test {
-    XochiZKPOracle public oracle;
-    XochiZKPVerifier public verifier;
+    ERC8262Oracle public oracle;
+    ERC8262Verifier public verifier;
 
     uint256 internal _proofNonce;
     uint256 public proofCount;
@@ -45,7 +45,7 @@ contract Handler is Test {
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
 
-    constructor(XochiZKPOracle _oracle, XochiZKPVerifier _verifier) {
+    constructor(ERC8262Oracle _oracle, ERC8262Verifier _verifier) {
         oracle = _oracle;
         verifier = _verifier;
     }
@@ -70,7 +70,7 @@ contract Handler is Test {
 
         bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
 
-        IXochiZKPOracle.ComplianceAttestation memory att = oracle.submitCompliance(
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
             jurisdictionId, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH
         );
 
@@ -175,8 +175,8 @@ contract Handler is Test {
 }
 
 contract InvariantTest is Test {
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
     Handler internal handler;
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
@@ -191,8 +191,8 @@ contract InvariantTest is Test {
         vm.warp(1_700_000_000);
 
         address owner = address(this);
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
 
         AlwaysPassVerifierInv stub = new AlwaysPassVerifierInv();
         for (uint8 i = ProofTypes.COMPLIANCE; i <= ProofTypes.NON_MEMBERSHIP; i++) {
@@ -207,7 +207,7 @@ contract InvariantTest is Test {
     function invariant_proofImmutability() public view {
         for (uint256 i; i < handler.proofCount(); i++) {
             bytes32 proofHash = handler.submittedProofHashes(i);
-            IXochiZKPOracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
+            IERC8262Oracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
             assertTrue(att.timestamp > 0);
         }
     }
@@ -220,7 +220,7 @@ contract InvariantTest is Test {
     function invariant_subjectBinding() public view {
         for (uint256 i; i < handler.proofCount(); i++) {
             bytes32 proofHash = handler.submittedProofHashes(i);
-            IXochiZKPOracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
+            IERC8262Oracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
             assertEq(att.subject, handler.submitters(i));
         }
     }
@@ -228,7 +228,7 @@ contract InvariantTest is Test {
     function invariant_ttlConsistency() public view {
         for (uint256 i; i < handler.proofCount(); i++) {
             bytes32 proofHash = handler.submittedProofHashes(i);
-            IXochiZKPOracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
+            IERC8262Oracle.ComplianceAttestation memory att = oracle.getHistoricalProof(proofHash);
             uint256 expectedTTL = handler.submissionTTLs(i);
             assertEq(att.expiresAt, handler.submissionTimestamps(i) + expectedTTL);
         }

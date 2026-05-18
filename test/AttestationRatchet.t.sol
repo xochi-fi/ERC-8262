@@ -2,9 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {XochiZKPOracle} from "../src/XochiZKPOracle.sol";
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPOracle} from "../src/interfaces/IXochiZKPOracle.sol";
+import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Oracle} from "../src/interfaces/IERC8262Oracle.sol";
 import {IUltraVerifier} from "../src/interfaces/IUltraVerifier.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
@@ -15,8 +15,8 @@ contract AlwaysPassVerifier is IUltraVerifier {
 }
 
 contract AttestationRatchetTest is Test {
-    XochiZKPOracle internal oracle;
-    XochiZKPVerifier internal verifier;
+    ERC8262Oracle internal oracle;
+    ERC8262Verifier internal verifier;
     AlwaysPassVerifier internal stub;
 
     address internal owner = makeAddr("owner");
@@ -32,8 +32,8 @@ contract AttestationRatchetTest is Test {
     }
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
-        oracle = new XochiZKPOracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
+        verifier = new ERC8262Verifier(owner);
+        oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
         stub = new AlwaysPassVerifier();
 
         vm.startPrank(owner);
@@ -115,7 +115,7 @@ contract AttestationRatchetTest is Test {
         vm.warp(t0 + 200);
         // Submit older proof (timestamp t0 - 50 is older than the recorded ratchet)
         bytes memory olderInputs = _complianceInputs(0, alice, t0 - 50);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPOracle.ProofTimestampNotMonotonic.selector, t0 - 50, t0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofTimestampNotMonotonic.selector, t0 - 50, t0));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _proof(2), olderInputs, PROVIDER_SET_HASH);
         vm.stopPrank();
     }
@@ -134,9 +134,7 @@ contract AttestationRatchetTest is Test {
         vm.warp(t0 + 1900);
         // Older proof at t0 + 1700 is in the past (within MAX_PROOF_AGE) but behind the ratchet.
         bytes memory olderInputs = _complianceInputs(0, alice, t0 + 1700);
-        vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPOracle.ProofTimestampNotMonotonic.selector, t0 + 1700, t0 + 1800)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofTimestampNotMonotonic.selector, t0 + 1700, t0 + 1800));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _proof(2), olderInputs, PROVIDER_SET_HASH);
         vm.stopPrank();
     }

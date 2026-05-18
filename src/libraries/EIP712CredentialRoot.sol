@@ -27,13 +27,13 @@ library EIP712CredentialRoot {
     );
 
     /// @notice Compute the EIP-712 domain separator for the oracle.
-    /// @dev Same domain as `EIP712Attestation` (name="XochiZKPOracle", version="1").
+    /// @dev Same domain as `EIP712Attestation` (name="ERC8262Oracle", version="1").
     ///      Uses `block.chainid` at call time so the separator stays correct
     ///      after a chain fork.
     function buildDomainSeparator(address verifyingContract) internal view returns (bytes32) {
         return keccak256(
             abi.encode(
-                EIP712_DOMAIN_TYPEHASH, keccak256("XochiZKPOracle"), keccak256("1"), block.chainid, verifyingContract
+                EIP712_DOMAIN_TYPEHASH, keccak256("ERC8262Oracle"), keccak256("1"), block.chainid, verifyingContract
             )
         );
     }

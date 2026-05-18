@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-import {XochiZKPVerifier} from "../src/XochiZKPVerifier.sol";
-import {IXochiZKPVerifier} from "../src/interfaces/IXochiZKPVerifier.sol";
+import {ERC8262Verifier} from "../src/ERC8262Verifier.sol";
+import {IERC8262Verifier} from "../src/interfaces/IERC8262Verifier.sol";
 import {IERC165} from "../src/interfaces/IERC165.sol";
 import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
@@ -11,13 +11,13 @@ import {Pausable} from "../src/libraries/Pausable.sol";
 import {XochiTestBase} from "./utils/XochiTestBase.sol";
 import {StubVerifier, MutatingVerifier} from "./utils/TestStubs.sol";
 
-contract XochiZKPVerifierTest is XochiTestBase {
-    XochiZKPVerifier internal verifier;
+contract ERC8262VerifierTest is XochiTestBase {
+    ERC8262Verifier internal verifier;
     StubVerifier internal passingVerifier;
     StubVerifier internal failingVerifier;
 
     function setUp() public {
-        verifier = new XochiZKPVerifier(owner);
+        verifier = new ERC8262Verifier(owner);
         passingVerifier = new StubVerifier(true);
         failingVerifier = new StubVerifier(false);
         _registerAllVerifiers(verifier, address(passingVerifier), false);
@@ -47,7 +47,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
     function test_constructor_revert_zeroAddress() public {
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
-        new XochiZKPVerifier(address(0));
+        new ERC8262Verifier(address(0));
     }
 
     // -------------------------------------------------------------------------
@@ -89,9 +89,9 @@ contract XochiZKPVerifierTest is XochiTestBase {
     }
 
     function test_verifyProof_revert_verifierNotSet() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
 
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.VerifierNotSet.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.VerifierNotSet.selector, ProofTypes.COMPLIANCE));
         fresh.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), _complianceInputs());
     }
 
@@ -150,7 +150,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
     }
 
     function test_verifyProofBatch_revert_emptyBatch() public {
-        vm.expectRevert(XochiZKPVerifier.EmptyBatch.selector);
+        vm.expectRevert(ERC8262Verifier.EmptyBatch.selector);
         verifier.verifyProofBatch(new uint8[](0), new bytes[](0), new bytes[](0));
     }
 
@@ -160,7 +160,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         bytes[] memory proofs = new bytes[](size);
         bytes[] memory inputs = new bytes[](size);
 
-        vm.expectRevert(XochiZKPVerifier.BatchTooLarge.selector);
+        vm.expectRevert(ERC8262Verifier.BatchTooLarge.selector);
         verifier.verifyProofBatch(types, proofs, inputs);
     }
 
@@ -169,7 +169,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         bytes[] memory proofs = new bytes[](1);
         bytes[] memory inputs = new bytes[](2);
 
-        vm.expectRevert(XochiZKPVerifier.BatchLengthMismatch.selector);
+        vm.expectRevert(ERC8262Verifier.BatchLengthMismatch.selector);
         verifier.verifyProofBatch(types, proofs, inputs);
     }
 
@@ -179,12 +179,12 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
     function test_setVerifierInitial_revert_alreadySet() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.VerifierAlreadySet.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.VerifierAlreadySet.selector, ProofTypes.COMPLIANCE));
         verifier.setVerifierInitial(ProofTypes.COMPLIANCE, address(passingVerifier));
     }
 
     function test_setVerifierInitial_fresh() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
         address newVerifier = _newStub();
         vm.prank(owner);
         fresh.setVerifierInitial(ProofTypes.COMPLIANCE, newVerifier);
@@ -192,14 +192,14 @@ contract XochiZKPVerifierTest is XochiTestBase {
     }
 
     function test_setVerifierInitial_revert_notOwner() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
         vm.prank(alice);
         vm.expectRevert(Ownable2Step.Unauthorized.selector);
         fresh.setVerifierInitial(ProofTypes.COMPLIANCE, address(passingVerifier));
     }
 
     function test_setVerifierInitial_revert_zeroAddress() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
         vm.prank(owner);
         vm.expectRevert(Ownable2Step.ZeroAddress.selector);
         fresh.setVerifierInitial(ProofTypes.COMPLIANCE, address(0));
@@ -212,17 +212,17 @@ contract XochiZKPVerifierTest is XochiTestBase {
     }
 
     function test_setVerifierInitial_revert_notAContract() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
         address eoa = makeAddr("eoa");
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NotAContract.selector, eoa));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NotAContract.selector, eoa));
         fresh.setVerifierInitial(ProofTypes.COMPLIANCE, eoa);
     }
 
     function test_proposeVerifier_revert_notAContract() public {
         address eoa = makeAddr("eoa");
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NotAContract.selector, eoa));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NotAContract.selector, eoa));
         verifier.proposeVerifier(ProofTypes.COMPLIANCE, eoa, bytes32(0));
     }
 
@@ -236,7 +236,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                XochiZKPVerifier.CodehashMismatch.selector, newVerifier, wrongCodehash, newVerifier.codehash
+                ERC8262Verifier.CodehashMismatch.selector, newVerifier, wrongCodehash, newVerifier.codehash
             )
         );
         verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, wrongCodehash);
@@ -261,7 +261,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                XochiZKPVerifier.CodehashMismatch.selector, newVerifier, originalCodehash, newCodehash
+                ERC8262Verifier.CodehashMismatch.selector, newVerifier, originalCodehash, newCodehash
             )
         );
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
@@ -311,7 +311,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                XochiZKPVerifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, block.timestamp + 1
+                ERC8262Verifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, block.timestamp + 1
             )
         );
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
@@ -345,7 +345,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
     function test_cancelVerifierProposal_revert_noPending() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
         verifier.cancelVerifierProposal(ProofTypes.COMPLIANCE);
     }
 
@@ -356,13 +356,13 @@ contract XochiZKPVerifierTest is XochiTestBase {
         verifier.proposeVerifier(ProofTypes.COMPLIANCE, v1, v1.codehash);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
         verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2, v2.codehash);
     }
 
     function test_executeVerifierUpdate_revert_noPending() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
     }
 
@@ -374,7 +374,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.warp(block.timestamp + 24 hours);
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPVerifier.VerifierUpdated(ProofTypes.COMPLIANCE, address(passingVerifier), newVerifier);
+        emit ERC8262Verifier.VerifierUpdated(ProofTypes.COMPLIANCE, address(passingVerifier), newVerifier);
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
     }
 
@@ -384,7 +384,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         uint256 readyAt = block.timestamp + 24 hours;
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPVerifier.VerifierProposed(ProofTypes.COMPLIANCE, newVerifier, ch, readyAt);
+        emit ERC8262Verifier.VerifierProposed(ProofTypes.COMPLIANCE, newVerifier, ch, readyAt);
         verifier.proposeVerifier(ProofTypes.COMPLIANCE, newVerifier, ch);
     }
 
@@ -488,15 +488,15 @@ contract XochiZKPVerifierTest is XochiTestBase {
     }
 
     function test_getVerifierAtVersion_revert_invalidVersion() public {
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
         verifier.getVerifierAtVersion(ProofTypes.COMPLIANCE, 0);
 
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
         verifier.getVerifierAtVersion(ProofTypes.COMPLIANCE, 99);
     }
 
     function test_getVerifierVersion_noVerifierSet() public {
-        XochiZKPVerifier fresh = new XochiZKPVerifier(owner);
+        ERC8262Verifier fresh = new ERC8262Verifier(owner);
         assertEq(fresh.getVerifierVersion(ProofTypes.COMPLIANCE), 0);
     }
 
@@ -517,7 +517,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
 
         // v1 is now blocked
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.VersionRevoked.selector, ProofTypes.COMPLIANCE, 1));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.VersionRevoked.selector, ProofTypes.COMPLIANCE, 1));
         verifier.verifyProofAtVersion(ProofTypes.COMPLIANCE, 1, _dummyProof(), _complianceInputs());
     }
 
@@ -526,7 +526,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPVerifier.VerifierVersionRevoked(ProofTypes.COMPLIANCE, 1, address(passingVerifier));
+        emit ERC8262Verifier.VerifierVersionRevoked(ProofTypes.COMPLIANCE, 1, address(passingVerifier));
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -534,7 +534,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         // Only v1 exists, can't revoke current
         vm.prank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPVerifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
+            abi.encodeWithSelector(ERC8262Verifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
         );
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
     }
@@ -546,17 +546,17 @@ contract XochiZKPVerifierTest is XochiTestBase {
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.AlreadyRevoked.selector, ProofTypes.COMPLIANCE, 1));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.AlreadyRevoked.selector, ProofTypes.COMPLIANCE, 1));
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
     }
 
     function test_revokeVerifierVersion_revert_invalidVersion() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 0);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 99);
     }
 
@@ -582,7 +582,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         uint256 readyAt = block.timestamp + verifier.REVOCATION_TIMELOCK();
 
         vm.expectEmit(true, true, false, true);
-        emit XochiZKPVerifier.VersionRevocationProposed(ProofTypes.COMPLIANCE, 1, readyAt);
+        emit ERC8262Verifier.VersionRevocationProposed(ProofTypes.COMPLIANCE, 1, readyAt);
         vm.prank(owner);
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
 
@@ -594,7 +594,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
     function test_proposeVersionRevocation_revert_currentVersion() public {
         vm.prank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPVerifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
+            abi.encodeWithSelector(ERC8262Verifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
         );
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
@@ -605,7 +605,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.AlreadyRevoked.selector, ProofTypes.COMPLIANCE, 1));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.AlreadyRevoked.selector, ProofTypes.COMPLIANCE, 1));
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -614,18 +614,18 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
         vm.startPrank(owner);
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProposalAlreadyPending.selector, ProofTypes.COMPLIANCE));
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
         vm.stopPrank();
     }
 
     function test_proposeVersionRevocation_revert_invalidVersion() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 0));
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 0);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.InvalidVersion.selector, ProofTypes.COMPLIANCE, 99));
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 99);
     }
 
@@ -645,7 +645,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         // Cannot execute before delay elapses
         uint256 readyAt = block.timestamp + verifier.REVOCATION_TIMELOCK();
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
+            abi.encodeWithSelector(ERC8262Verifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
         );
         vm.prank(owner);
         verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
@@ -653,7 +653,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         // Just before ready
         vm.warp(readyAt - 1);
         vm.expectRevert(
-            abi.encodeWithSelector(XochiZKPVerifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
+            abi.encodeWithSelector(ERC8262Verifier.TimelockNotElapsed.selector, ProofTypes.COMPLIANCE, readyAt)
         );
         vm.prank(owner);
         verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
@@ -662,7 +662,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.warp(readyAt);
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit XochiZKPVerifier.VerifierVersionRevoked(ProofTypes.COMPLIANCE, 1, address(passingVerifier));
+        emit ERC8262Verifier.VerifierVersionRevoked(ProofTypes.COMPLIANCE, 1, address(passingVerifier));
         verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
 
         assertTrue(verifier.isVersionRevoked(ProofTypes.COMPLIANCE, 1));
@@ -672,7 +672,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
     function test_executeVersionRevocation_revert_noPendingProposal() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
         verifier.executeVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -684,7 +684,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, true, false, false);
-        emit XochiZKPVerifier.VersionRevocationCancelled(ProofTypes.COMPLIANCE, 1);
+        emit ERC8262Verifier.VersionRevocationCancelled(ProofTypes.COMPLIANCE, 1);
         verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
 
         assertEq(verifier.getPendingRevocation(ProofTypes.COMPLIANCE, 1), 0);
@@ -697,7 +697,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
     function test_cancelVersionRevocation_revert_noPendingProposal() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NoPendingProposal.selector, ProofTypes.COMPLIANCE));
         verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -707,7 +707,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         verifier.proposeVersionRevocation(ProofTypes.COMPLIANCE, 1);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.NotCancelAuthorized.selector, alice));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.NotCancelAuthorized.selector, alice));
         verifier.cancelVersionRevocation(ProofTypes.COMPLIANCE, 1);
     }
 
@@ -915,7 +915,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.prank(owner);
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
 
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
         verifier.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), _complianceInputs());
     }
 
@@ -931,7 +931,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
         vm.prank(owner);
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
 
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
         verifier.verifyProofAtVersion(ProofTypes.COMPLIANCE, 1, _dummyProof(), _complianceInputs());
     }
 
@@ -947,14 +947,14 @@ contract XochiZKPVerifierTest is XochiTestBase {
     function test_pauseProofType_revert_alreadyPaused() public {
         vm.startPrank(owner);
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
         vm.stopPrank();
     }
 
     function test_unpauseProofType_revert_notPaused() public {
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(XochiZKPVerifier.ProofTypeNotPaused.selector, ProofTypes.COMPLIANCE));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypeNotPaused.selector, ProofTypes.COMPLIANCE));
         verifier.unpauseProofType(ProofTypes.COMPLIANCE);
     }
 
@@ -980,7 +980,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
     function test_pauseProofType_emitsEvent() public {
         vm.prank(owner);
         vm.expectEmit(true, true, false, false);
-        emit XochiZKPVerifier.ProofTypePausedEvent(ProofTypes.COMPLIANCE, owner);
+        emit ERC8262Verifier.ProofTypePausedEvent(ProofTypes.COMPLIANCE, owner);
         verifier.pauseProofType(ProofTypes.COMPLIANCE);
     }
 
@@ -990,7 +990,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
 
         vm.prank(owner);
         vm.expectEmit(true, true, false, false);
-        emit XochiZKPVerifier.ProofTypeUnpausedEvent(ProofTypes.COMPLIANCE, owner);
+        emit ERC8262Verifier.ProofTypeUnpausedEvent(ProofTypes.COMPLIANCE, owner);
         verifier.unpauseProofType(ProofTypes.COMPLIANCE);
     }
 
@@ -1014,7 +1014,7 @@ contract XochiZKPVerifierTest is XochiTestBase {
     // -------------------------------------------------------------------------
 
     function test_supportsInterface_self() public view {
-        assertTrue(verifier.supportsInterface(type(IXochiZKPVerifier).interfaceId));
+        assertTrue(verifier.supportsInterface(type(IERC8262Verifier).interfaceId));
     }
 
     function test_supportsInterface_erc165() public view {
