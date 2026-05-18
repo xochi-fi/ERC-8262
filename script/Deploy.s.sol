@@ -18,7 +18,7 @@ import {AttestationVerifier} from "../src/generated/attestation_verifier.sol";
 import {MembershipVerifier} from "../src/generated/membership_verifier.sol";
 import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.sol";
 
-/// @title Deploy -- Deployment script for Xochi ZKP contracts
+/// @title Deploy -- Deployment script for ERC-8262 contracts
 /// @notice Deploys the verifier router, oracle, and all 6 generated UltraHonk
 ///         verifier contracts, then registers each verifier with the router.
 ///         Optionally deploys Timelock and transfers ownership to it.

@@ -8,7 +8,7 @@ import {ProofTypes} from "../../src/libraries/ProofTypes.sol";
 /// @dev Shared base for ERC8262Verifier and ERC8262Oracle test suites.
 ///      Provides common EOAs, a dummy proof of the size bb-generated verifiers expect,
 ///      and a registration helper that wires a single stub verifier into every proof type.
-abstract contract XochiTestBase is Test {
+abstract contract ERC8262TestBase is Test {
     address internal owner = makeAddr("owner");
     address internal alice = makeAddr("alice");
 

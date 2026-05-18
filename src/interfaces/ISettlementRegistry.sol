@@ -5,7 +5,7 @@ import {IERC8262Oracle} from "./IERC8262Oracle.sol";
 
 /// @title ISettlementRegistry -- Interface for linking sub-settlement compliance proofs to a trade
 /// @notice Tracks multi-leg trade settlements where each sub-trade must have a verified compliance
-///         attestation in the Xochi ZKP Oracle before the trade can be finalized
+///         attestation in the ERC-8262 Oracle before the trade can be finalized
 interface ISettlementRegistry {
     /// @notice A registered trade awaiting sub-settlement completion
     struct Settlement {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-/// @title ProofTypes -- Proof type definitions for Xochi ZKP compliance oracle
+/// @title ProofTypes -- Proof type definitions for ERC-8262 compliance oracle
 /// @notice Defines the nine proof types and their public input schemas.
 ///         Each proof type corresponds to a separate Noir circuit.
 library ProofTypes {

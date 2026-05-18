@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
 
-/// @title Bootstrap -- Post-deployment registry seeding for Xochi ZKP
+/// @title Bootstrap -- Post-deployment registry seeding for ERC-8262
 /// @notice Registers the initial set of provider publishers, reporting thresholds,
 ///         and merkle roots that the oracle needs to accept production proofs.
 ///

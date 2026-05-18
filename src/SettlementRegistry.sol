@@ -10,7 +10,7 @@ uint256 constant PATTERN_STRUCTURING = 1;
 
 /// @title SettlementRegistry -- Links sub-settlement compliance proofs to a trade identifier
 /// @notice Immutable contract (no owner, no pause) that tracks multi-leg trade settlements.
-///         Each sub-trade must reference a verified compliance attestation in the Xochi ZKP Oracle.
+///         Each sub-trade must reference a verified compliance attestation in the ERC-8262 Oracle.
 ///         Anti-structuring: finalization requires a pattern detection proof for the subject.
 contract SettlementRegistry is ISettlementRegistry {
     error ZeroAddress();

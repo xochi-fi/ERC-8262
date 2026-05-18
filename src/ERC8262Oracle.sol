@@ -12,7 +12,7 @@ import {Pausable} from "./libraries/Pausable.sol";
 import {EIP712Attestation} from "./libraries/EIP712Attestation.sol";
 import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 
-/// @title ERC8262Oracle -- Reference implementation of the Xochi ZKP compliance oracle
+/// @title ERC8262Oracle -- Reference implementation of the ERC-8262 compliance oracle
 /// @notice Records compliance attestations backed by verified ZK proofs and supports
 ///         retroactive proof-of-innocence lookups
 /// @dev Privileged actions are split across roles (see AccessControl):

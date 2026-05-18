@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.28;
 
-/// @title JurisdictionConfig -- Jurisdiction threshold definitions for Xochi ZKP
+/// @title JurisdictionConfig -- Jurisdiction threshold definitions for ERC-8262
 /// @notice Defines risk score thresholds per jurisdiction as specified in the ERC
 library JurisdictionConfig {
     /// @notice Jurisdiction identifiers

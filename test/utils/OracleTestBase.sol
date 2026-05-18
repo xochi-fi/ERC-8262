@@ -5,7 +5,7 @@ import {ERC8262Oracle} from "../../src/ERC8262Oracle.sol";
 import {ERC8262Verifier} from "../../src/ERC8262Verifier.sol";
 import {EIP712CredentialRoot} from "../../src/libraries/EIP712CredentialRoot.sol";
 import {ProofTypes} from "../../src/libraries/ProofTypes.sol";
-import {XochiTestBase} from "./XochiTestBase.sol";
+import {ERC8262TestBase} from "./ERC8262TestBase.sol";
 import {PassingVerifier} from "./TestStubs.sol";
 
 /// @dev Shared base for test suites that exercise ERC8262Oracle end-to-end.
@@ -14,7 +14,7 @@ import {PassingVerifier} from "./TestStubs.sol";
 ///      call `_setUpOracle()` from their own `setUp()` to get a ready-to-use Oracle
 ///      registered with the stub verifier for all 9 proof types and seeded with a
 ///      default reporting threshold, publisher, and credential signer.
-abstract contract OracleTestBase is XochiTestBase {
+abstract contract OracleTestBase is ERC8262TestBase {
     ERC8262Oracle internal oracle;
     ERC8262Verifier internal verifier;
     PassingVerifier internal stubVerifier;

@@ -8,10 +8,10 @@ import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 import {Ownable2Step} from "../src/libraries/Ownable2Step.sol";
 import {AccessControl} from "../src/libraries/AccessControl.sol";
 import {Pausable} from "../src/libraries/Pausable.sol";
-import {XochiTestBase} from "./utils/XochiTestBase.sol";
+import {ERC8262TestBase} from "./utils/ERC8262TestBase.sol";
 import {StubVerifier, MutatingVerifier} from "./utils/TestStubs.sol";
 
-contract ERC8262VerifierTest is XochiTestBase {
+contract ERC8262VerifierTest is ERC8262TestBase {
     ERC8262Verifier internal verifier;
     StubVerifier internal passingVerifier;
     StubVerifier internal failingVerifier;
