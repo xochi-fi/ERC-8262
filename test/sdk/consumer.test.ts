@@ -1,7 +1,7 @@
 /**
  * Consumer SDK Integration Tests
  *
- * Validates the full integrator path for the Xochi ZKP system:
+ * Validates the full integrator path for the ERC-8262 system:
  *
  * Layer 1 (SDK): Load compiled circuit -> construct witness -> generate proof.
  *   No blockchain needed. Tests that a third-party developer can use
