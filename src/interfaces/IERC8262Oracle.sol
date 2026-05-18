@@ -8,7 +8,7 @@ interface IERC8262Oracle {
     struct ComplianceAttestation {
         address subject; // address that proved compliance
         uint8 jurisdictionId; // jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
-        uint8 proofType; // which proof type generated this attestation (0x01-0x08)
+        uint8 proofType; // which proof type generated this attestation (0x01-0x09)
         bool meetsThreshold; // whether risk score is below filing trigger
         uint256 timestamp; // block.timestamp when attestation was recorded
         uint256 expiresAt; // timestamp after which attestation is stale
@@ -51,7 +51,7 @@ interface IERC8262Oracle {
 
     /// @notice Submit a compliance proof and record the attestation
     /// @param jurisdictionId Target jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
-    /// @param proofType The proof type for verifier routing (0x01-0x08)
+    /// @param proofType The proof type for verifier routing (0x01-0x09)
     /// @param proof The ZK proof data
     /// @param publicInputs Public inputs matching the circuit's pub parameters
     /// @param providerSetHash Hash of provider IDs and weights used for screening
@@ -77,7 +77,7 @@ interface IERC8262Oracle {
     /// @notice Check compliance filtered by proof type
     /// @param subject The address to check
     /// @param jurisdictionId The jurisdiction to check against
-    /// @param proofType The required proof type (0x01-0x08)
+    /// @param proofType The required proof type (0x01-0x09)
     /// @return valid Whether a valid attestation of the specified type exists
     /// @return attestation The attestation if valid
     function checkComplianceByType(address subject, uint8 jurisdictionId, uint8 proofType)
@@ -112,7 +112,7 @@ interface IERC8262Oracle {
 
     /// @notice Submit a batch of compliance proofs atomically
     /// @param jurisdictionId Target jurisdiction for all entries (0=EU, 1=US, 2=UK, 3=SG)
-    /// @param proofTypes The proof type for each entry (0x01-0x08)
+    /// @param proofTypes The proof type for each entry (0x01-0x09)
     /// @param proofs The ZK proof data for each entry
     /// @param publicInputs Public inputs for each entry
     /// @param providerSetHashes Provider set hash for each entry

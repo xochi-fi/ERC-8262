@@ -32,7 +32,10 @@ contract EIP712CredentialRootParityTest is Test {
             domainSep, SAMPLE_PROVIDER_ID, SAMPLE_ROOT, cidHash, SAMPLE_NOT_BEFORE, SAMPLE_NOT_AFTER
         );
 
-        bytes32 expected = 0x51a1b48c73ff24ff989085d41c815bdb0fec1bf25089919f87d741fd5c9f1c41;
+        // PARITY_VECTOR computed under EIP-712 domain name "ERC8262Oracle".
+        // The SDK at xochi-sdk/src/provider/eip712.ts must use the same domain
+        // name to match -- see xochi-sdk/HANDOFF.md.
+        bytes32 expected = 0x82109ef42010d7a55f19c7b22fb75d1ebf990ec91663fc8c7fa9dd13ead2b3dd;
         assertEq(digest, expected, "EIP-712 digest drift between Solidity and xochi-sdk/eip712.ts");
     }
 
