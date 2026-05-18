@@ -14,7 +14,7 @@ Adjacent work that doesn’t fit the same problem: ERC-3643 (identity-revealing)
 
 Two interfaces. The verifier routes by proof type and keeps a version history, so a proof valid a year ago is still checkable after the verifier has been upgraded. That matters: if you can’t re-verify a proof later, you can’t do proof-of-innocence after a discovered circuit bug.
 
-interface IXochiZKPVerifier {
+interface IERC8262Verifier {
 function verifyProof(uint8 proofType, bytes calldata proof, bytes calldata publicInputs) external view returns (bool);
 function verifyProofBatch(uint8[] calldata, bytes[] calldata, bytes[] calldata) external view returns (bool);
 function verifyProofAtVersion(uint8 proofType, uint256 version, bytes calldata proof, bytes calldata publicInputs) external view returns (bool);

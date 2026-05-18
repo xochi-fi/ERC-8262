@@ -50,9 +50,9 @@ fmt-check: ## Check Solidity formatting (CI)
 lint: fmt-check ## Lint (currently fmt-check only)
 
 slither: ## Run Slither static analysis (requires slither-analyzer)
-	@mv src/generated /tmp/xochi-generated-backup 2>/dev/null || true
-	@slither . || (mv /tmp/xochi-generated-backup src/generated 2>/dev/null; exit 1)
-	@mv /tmp/xochi-generated-backup src/generated 2>/dev/null || true
+	@mv src/generated /tmp/erc8262-generated-backup 2>/dev/null || true
+	@slither . || (mv /tmp/erc8262-generated-backup src/generated 2>/dev/null; exit 1)
+	@mv /tmp/erc8262-generated-backup src/generated 2>/dev/null || true
 
 # ── Fixtures & Gas ───────────────────────────────────────────
 

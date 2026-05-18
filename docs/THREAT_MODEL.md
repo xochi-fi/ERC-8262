@@ -1,4 +1,4 @@
-# ERC-8262 (Xochi ZKP) Threat Model
+# ERC-8262 Threat Model
 
 Who is trusted, what each role can do, which attacks are in scope, and how to
 respond to incidents. Covers the reference implementation of [ERC-8262](../ERC-8262.md)
@@ -20,7 +20,7 @@ respond to incidents. Covers the reference implementation of [ERC-8262](../ERC-8
 
 ### Oracle owner (timelocked admin)
 
-Holds the `owner` key on `XochiZKPVerifier`, `XochiZKPOracle`, and (transitively) `SettlementRegistry`. In production deployments this MUST be a multisig behind `XochiTimelock`.
+Holds the `owner` key on `ERC8262Verifier`, `ERC8262Oracle`, and (transitively) `SettlementRegistry`. In production deployments this MUST be a multisig behind `Timelock`.
 
 | Capability                                                                                                      | Delay | Notes                                                                                                |
 | --------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------- |
@@ -157,7 +157,7 @@ The unsigned COMPLIANCE (0x01) and RISK_SCORE (0x02) circuits accept `signals[]`
 - Bind the submitter into the signed payload. A relayer cannot steal a signed bundle and submit it under a different address; the in-circuit ECDSA verify fails.
 - Are mandatory in strict jurisdictions. `JurisdictionConfig.requireSignedSignals(US) == true` and `requireSignedSignals(SG) == true`; the Oracle reverts with `SignedSignalsRequired` if a caller submits the unsigned variants for those jurisdictions. Permissive jurisdictions (EU, UK) accept either; integrators that care about signal honesty there should pick the signed variant explicitly.
 
-Off-chain, providers run a signing daemon (reference implementation at `xochi-sdk/daemon/`) holding the secp256k1 key. The daemon's `signer_pubkey_hash` is registered once on-chain via `XochiZKPOracle.registerSignerPubkeyHash(bytes32)`. Provider key rotation is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the new key.
+Off-chain, providers run a signing daemon (reference implementation at `xochi-sdk/daemon/`) holding the secp256k1 key. The daemon's `signer_pubkey_hash` is registered once on-chain via `ERC8262Oracle.registerSignerPubkeyHash(bytes32)`. Provider key rotation is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the new key.
 
 **Multi-provider quorum (COMPLIANCE_MULTI_SIGNED, 0x09).** Reduces single-provider trust to M-of-N. A single signed proof bundles up to `MAX_PROVIDERS_MULTI = 5` parallel signer slots; each active slot independently verifies a secp256k1 signature over a slot-specific Pedersen digest (distinct `DOMAIN_MULTI_SIGNED_SIGNALS` tag plus `slot_index` to prevent cross-proof and cross-slot replay), and each active slot independently asserts the per-provider risk score is below the jurisdiction high-risk floor. The Oracle additionally enforces `threshold_m >= JurisdictionConfig.minMultiProviderThreshold(jurisdictionId)` (US/SG require >= 2 distinct signers; EU/UK accept >= 1). Forging an attestation requires compromising at least `M` of the `N` registered signing keys simultaneously; with M=2, two independent provider compromises are needed.
 
@@ -236,8 +236,8 @@ We are **not engineering for PQ resistance in this draft**. Mainstream estimates
 **Mitigation.**
 
 - Owner SHOULD be a multisig with geographically distributed signers.
-- Owner SHOULD be `XochiTimelock` (which enforces the 6 h / 24 h delays at the timelock layer; the verifier's own `executeVerifierUpdate` adds an additional verifier-level delay).
-- Monitoring on `VerifierProposed`, `VersionRevocationProposed`, `ProviderPublisherSet`, `Paused` events — anomalous activity should trigger guardian cancellation via `XochiTimelock.cancel`.
+- Owner SHOULD be `Timelock` (which enforces the 6 h / 24 h delays at the timelock layer; the verifier's own `executeVerifierUpdate` adds an additional verifier-level delay).
+- Monitoring on `VerifierProposed`, `VersionRevocationProposed`, `ProviderPublisherSet`, `Paused` events — anomalous activity should trigger guardian cancellation via `Timelock.cancel`.
 - The `revokeVerifierVersion` immediate path is documented as emergency-only; routine production usage should always go through `proposeVersionRevocation`.
 
 ### Compromised provider publisher key
@@ -326,7 +326,7 @@ SettlementRegistry's `finalizeTrade` partially hardens the inherited gap (audit 
 
 A production deployment at the recommended security level needs:
 
-- Multisig owner behind `XochiTimelock`, signers in different geographies.
+- Multisig owner behind `Timelock`, signers in different geographies.
 - Monitoring on every privileged event (`VerifierProposed`, `VersionRevocationProposed`, `ProviderPublisherSet`, `Paused`, `SignerPubkeyHashRegistered`, `SignerPubkeyHashRevoked`).
 - Per-provider publisher EOA for credential roots, with rotation playbook.
 - Per-provider signing daemon for the SIGNED variants, key in a KMS or HSM (the dev `HexKeyLoader` is unsafe), persistent replay-DB, tamper-evident audit log.

@@ -51,7 +51,7 @@ All 256 × 500 = 128k call sequences pass with 0 reverts across 8 invariants. To
 
 - `VerifierProposal` gains `expectedCodehash`; new `CodehashMismatch(address, bytes32 expected, bytes32 actual)` error fires at both propose and execute.
 - `VerifierProposed` event extended with `expectedCodehash`. `getPendingVerifier` now returns `(address, uint256, bytes32)`.
-- `XochiTimelock.getDelay` unchanged: the new selector falls through to the `HIGH_DELAY` default (24h), same as before.
+- `Timelock.getDelay` unchanged: the new selector falls through to the `HIGH_DELAY` default (24h), same as before.
 - Regression: `test_proposeVerifier_revert_codehashMismatch_atPropose`, `test_executeVerifierUpdate_revert_codehashChangedMidWindow` (uses `vm.etch` to simulate mid-window bytecode swap), `test_proposeAndExecute_succeeds_whenCodehashMatches`.
 
 Breaking change for any off-chain caller of `proposeVerifier`. SDK + deploy script side: none today; the SDK and `script/*.s.sol` do not call `proposeVerifier`.
@@ -67,7 +67,7 @@ Breaking change for any off-chain caller of `proposeVerifier`. SDK + deploy scri
 - **F-7 `45f0e8b`** -- `Incident_VerifierSoundness.t.sol` runbook-as-code. Walks the documented incident response (pause -> propose -> 24h -> execute -> revoke -> unpause) end-to-end so any future regression in the response sequence breaks CI instead of breaking the runbook during a live incident.
 - **F-3 `ea812c9`** -- `MAX_BATCH_SIZE` lowered from 100 to 10. Per-proof gas baseline (~2.4M verify / ~2.83M submit) put 100 batched at 240M-283M gas, 10x over mainnet's 30M block target. New gas-bounded test pins the cap to a 29M budget.
 - **F-4 `731f54b`** -- enforce low-s on credential-root signatures. Inlined `secp256k1n / 2` constant rejects malleable (`r, n-s`) tuples without adding OZ as a dependency.
-- **F-5 `ef5b1c2`** -- removed permissive `acceptOwnership(address)` shortcut from `XochiTimelock`. Bootstrap workflow now uses standard schedule + execute; every action goes through the configured delay.
+- **F-5 `ef5b1c2`** -- removed permissive `acceptOwnership(address)` shortcut from `Timelock`. Bootstrap workflow now uses standard schedule + execute; every action goes through the configured delay.
 - **F-8 `82d26c2`** -- vendor `parity-check.py` from the `zk-x-ray` skill into `scripts/`; wire `make parity-check` into the Noir Circuits CI job. Logical / physical / Solidity-expected / verifier `NUMBER_OF_PUBLIC_INPUTS` are now CI-asserted to agree on every PR.
 - **F-1 `37b5fbf`** -- harden `script/Deploy.s.sol` with post-condition assertions (oracle.verifier wiring, every proof-type verifier set + has code, initial provider expansion length matches, ownership shape matches `useTimelock`). A multi-step partial deploy now reverts the broadcast.
 - **F-6 `25d52ca` + xochi-sdk `080ceeb`** -- bind `chain_id` + `oracle_address` into the in-circuit Pedersen digest for signed variants. compliance_signed logical pubs 7 -> 9, risk_score_signed 9 -> 11. Verifier `NUMBER_OF_PUBLIC_INPUTS` regenerated to 25 / 27. A single provider signature can no longer mint attestations across chains or alternate Oracle deployments. xochi-sdk parity vector regenerated to `0x161ce9164a86defd6b8c44e9923690407bea0488eb15bd91b99ce71438dae106`.
@@ -82,7 +82,7 @@ Methodology side-effect: drafted the `zk-x-ray` skill (https://github.com/DROOdo
 
 Two-key separation for ATTESTATION credential roots. The publisher EOA submits the publish tx; a separate per-provider signing key (held in HSM/KMS) signs an EIP-712 `CredentialRootPublication` struct, and the Oracle verifies the signature via `ecrecover` before storing the root. A compromised publisher EOA can no longer mint forged credentials.
 
-- New library `EIP712CredentialRoot.sol` with the `CredentialRootPublication { providerId, root, cidHash, notBefore, notAfter }` type hash. Reuses the `XochiZKPOracle / 1` EIP-712 domain.
+- New library `EIP712CredentialRoot.sol` with the `CredentialRootPublication { providerId, root, cidHash, notBefore, notAfter }` type hash. Reuses the `ERC8262Oracle / 1` EIP-712 domain.
 - Oracle additions: `_credentialSigner[providerId]` mapping, `setCredentialSigner` / `getCredentialSigner` (REGISTRAR), modified `publishCredentialRoot(providerId, root, cid, notBefore, notAfter, signature)` with `ecrecover` verification, new errors and events.
 - Off-chain: `xochi-sdk/src/provider/eip712.ts` (TS digest, parity-tested byte-for-byte against Solidity), `credential-root-signer.ts` (`signCredentialRoot` returning `{signature, digest, signer}`), daemon route `POST /sign-credential-root`.
 - ATTESTATION circuit and `attestation_verifier.sol` unchanged. No VK_HASH change. Existing UltraHonk fixture proofs verify byte-for-byte.
@@ -111,12 +111,12 @@ Two new proof types (`COMPLIANCE_SIGNED = 0x07`, `RISK_SCORE_SIGNED = 0x08`) ver
 - Defense-in-depth (2026-04-28): cross-chain replay binding (`keccak256(proof, proofType, chainId, address(this))` + `computeProofHash()`), `AccessControl` library splitting GUARDIAN/REGISTRAR/CONFIG roles, per-provider denylist (`registerProviderConfigExpansion` + `denyProvider`).
 - Per-subject attestation ratchet (2026-04-28): `_lastProofTimestamp[subject][jurisdictionId]` + `_ratchet()` enforces non-decreasing proof-internal timestamps. Prevents older-proof-overwriting-newer attacks.
 - Code refactor (2026-04-08): shared Noir helpers + `Ownable2Step` / `Pausable` abstractions deduped ~110 lines.
-- Infrastructure: `generate-fixtures.sh` (incl. verifier-only mode for circuits without `Prover.toml`), `Makefile`, pre-commit `forge fmt`, xochi e2e harness, TS consumer SDK + on-chain integration tests, CI jobs, gas-snapshot regression.
+- Infrastructure: `generate-fixtures.sh` (incl. verifier-only mode for circuits without `Prover.toml`), `Makefile`, pre-commit `forge fmt`, e2e harness, TS consumer SDK + on-chain integration tests, CI jobs, gas-snapshot regression.
 </details>
 
 ## Medium-priority hardening
 
-- [ ] **Jurisdiction threshold timelock**: route `JurisdictionConfig` updates through `XochiTimelock LOW_DELAY` (6h). Today the thresholds and `requireSignedSignals` flag are compile-time constants; relevant only if/when these become governed.
+- [ ] **Jurisdiction threshold timelock**: route `JurisdictionConfig` updates through `Timelock LOW_DELAY` (6h). Today the thresholds and `requireSignedSignals` flag are compile-time constants; relevant only if/when these become governed.
 
 ## Lower-priority hardening
 
@@ -134,9 +134,9 @@ Prerequisite: CI green.
 
 - [ ] Deploy script updates: chain-specific config (RPC URLs, gas settings)
 - [ ] Deploy generated verifiers (8 contracts per chain incl. signed variants)
-- [ ] Deploy XochiZKPVerifier, register all 8 per-type verifiers
-- [ ] Deploy XochiZKPOracle with initial config hash
-- [ ] Deploy XochiTimelock with Safe multi-sig as proposer
+- [ ] Deploy ERC8262Verifier, register all 8 per-type verifiers
+- [ ] Deploy ERC8262Oracle with initial config hash
+- [ ] Deploy Timelock with Safe multi-sig as proposer
 - [ ] Transfer Verifier + Oracle ownership to timelock
 - [ ] Register initial merkle roots, reporting thresholds, signer pubkey hashes
 - [ ] Verify all contracts on Etherscan/Basescan
@@ -182,5 +182,5 @@ Signed-variant verifiers add ~30% to the verify cost from in-circuit ECDSA.
 - **verifier immutable on Oracle**: the router address is immutable; per-type verifiers behind it are upgradable via `proposeVerifier` + `executeVerifierUpdate`.
 - **Circuit names match ProofTypes**: directories (pattern, attestation, compliance_signed, etc.) match Solidity constants 1:1.
 - **compliance vs risk_score (vs \*\_signed)**: both unsigned circuits use `compute_risk_score()` from shared. Compliance is the primary jurisdiction-aware proof; risk_score is a raw scoring primitive (GT/LT/range, no jurisdiction). Signed variants add an in-circuit secp256k1 verify; same authority anchor (`signer_pubkey_hash` registered on the Oracle) regardless of whether jurisdiction policy requires them.
-- **Double timelock for verifier updates**: external `XochiTimelock` (24h) + internal verifier timelock (24h) = 48h total. Defense-in-depth. Emergency bypass via `revokeVerifierVersion` and `pauseProofType` (no timelock).
+- **Double timelock for verifier updates**: external `Timelock` (24h) + internal verifier timelock (24h) = 48h total. Defense-in-depth. Emergency bypass via `revokeVerifierVersion` and `pauseProofType` (no timelock).
 - **Per-jurisdiction signed-signals (US/SG strict, EU/UK permissive)**: stricter regimes require provider-signed signals; permissive regimes keep the cheaper unsigned path. Permissive jurisdictions accept signed proofs voluntarily; the policy sets a floor, not a cap.

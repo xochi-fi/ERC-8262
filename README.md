@@ -1,12 +1,12 @@
 # ERC-8262: Zero-Knowledge Compliance Oracle
 
-Reference implementation for [ERC-8262](https://github.com/ethereum/ERCs/pull/1747), a standard for zero-knowledge compliance proofs on Ethereum. Brand: Xochi ZKP.
+Reference implementation for [ERC-8262](https://github.com/ethereum/ERCs/pull/1747), a standard for zero-knowledge compliance proofs on Ethereum.
 
 ## What this is
 
 A system where a user proves they're AML/sanctions-compliant without revealing any transaction data. The regulator verifies a ZK proof. They never see the trade.
 
-This is distinct from view keys (Railgun, Panther) where you trade privately and then reveal transactions to auditors on request. Xochi ZKP never reveals the data. Compliance is proven cryptographically at transaction time, not reconstructed after the fact.
+This is distinct from view keys (Railgun, Panther) where you trade privately and then reveal transactions to auditors on request. ERC-8262 never reveals the data. Compliance is proven cryptographically at transaction time, not reconstructed after the fact.
 
 ## Proof types
 
@@ -39,8 +39,8 @@ User's client fetches signed risk signals from screening providers
        - Signal values were used (hidden)
        - Published weights were applied correctly (public config hash)
        - Score meets jurisdiction threshold (boolean: yes/no)
-  -> Proof submitted on-chain to XochiZKPOracle
-  -> Oracle routes to the correct UltraHonk verifier via XochiZKPVerifier
+  -> Proof submitted on-chain to ERC8262Oracle
+  -> Oracle routes to the correct UltraHonk verifier via ERC8262Verifier
   -> Attestation recorded on-chain (subject, jurisdiction, timestamp, proof hash)
 ```
 
@@ -50,7 +50,7 @@ The proof also commits to a timestamp and the screening providers used, enabling
 
 ```solidity
                 +-------------------------+
-                |  XochiZKPOracle         |  submitCompliance / checkCompliance
+                |  ERC8262Oracle          |  submitCompliance / checkCompliance
                 |  attestation storage,   |  getHistoricalProof, 8 registries,
                 |  input validation,      |  ratchet, replay protection,
                 |  jurisdiction policy    |  signed-signals enforcement
@@ -59,7 +59,7 @@ The proof also commits to a timestamp and the screening providers used, enabling
                              | verify(proofType, proof, publicInputs)  (view)
                              v
                 +-------------------------+
-                |  XochiZKPVerifier       |  routes proofType -> UltraHonk verifier
+                |  ERC8262Verifier        |  routes proofType -> UltraHonk verifier
                 +------------+------------+
                              |
    +----+-----+-----+-----+--+--+-----+-----+------+--------+
@@ -93,17 +93,17 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
   ERC-8262.md                     # The ERC document itself
   src/
     interfaces/
-      IXochiZKPVerifier.sol       # Verifier interface (ERC standard)
-      IXochiZKPOracle.sol         # Oracle interface (ERC standard)
+      IERC8262Verifier.sol        # Verifier interface (ERC standard)
+      IERC8262Oracle.sol          # Oracle interface (ERC standard)
       IUltraVerifier.sol          # Interface for generated verifiers
       ISettlementRegistry.sol     # Settlement registry interface
     libraries/
       ProofTypes.sol              # Proof type definitions and encoding
       JurisdictionConfig.sol      # Threshold configurations per jurisdiction
-    XochiZKPVerifier.sol          # Verifier router (proofType -> generated UltraHonk verifier)
-    XochiZKPOracle.sol            # Oracle: attestation storage, 8 registries, ratchet, replay
+    ERC8262Verifier.sol           # Verifier router (proofType -> generated UltraHonk verifier)
+    ERC8262Oracle.sol             # Oracle: attestation storage, 8 registries, ratchet, replay
     SettlementRegistry.sol        # Immutable registry linking split settlement proofs to a tradeId
-    XochiTimelock.sol             # 2-tier (24h HIGH / 6h LOW) selector-gated admin delay
+    Timelock.sol                  # 2-tier (24h HIGH / 6h LOW) selector-gated admin delay
     libraries/
       ProofTypes.sol              # Proof type IDs + public-input encoding/validation
       JurisdictionConfig.sol      # Per-jurisdiction thresholds + signed-signals policy
@@ -242,7 +242,7 @@ export PRIVATE_KEY=0x...
 export INITIAL_CONFIG_HASH=0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405
 export INITIAL_PROVIDER_IDS=1,2,3   # comma-separated uint256s; weights for these IDs are committed to in INITIAL_CONFIG_HASH
 
-# 2. Optional: deploy XochiTimelock and transfer ownership to it (recommended for prod)
+# 2. Optional: deploy Timelock and transfer ownership to it (recommended for prod)
 export USE_TIMELOCK=true
 export TIMELOCK_PROPOSER=0x...   # multisig that schedules ops
 export TIMELOCK_GUARDIAN=0x...   # optional cancel-only role
@@ -275,7 +275,7 @@ export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
 forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS
 ```
 
-If timelock-owned, the admin must schedule each registry op through `XochiTimelock.schedule(...)` and `execute(...)` rather than calling Bootstrap directly.
+If timelock-owned, the admin must schedule each registry op through `Timelock.schedule(...)` and `execute(...)` rather than calling Bootstrap directly.
 
 ## Client-side proof generation
 
@@ -308,7 +308,7 @@ const inputs = {
 const { witness } = await noir.execute(inputs);
 const proof = await backend.generateProof(witness, { verifierTarget: "evm" });
 
-// Submit proof.proof and proof.publicInputs to XochiZKPOracle.submitCompliance()
+// Submit proof.proof and proof.publicInputs to ERC8262Oracle.submitCompliance()
 await api.destroy();
 ```
 
@@ -345,7 +345,7 @@ _Testnet deployments pending. Mainnet after audit._
 
 ## Trust model
 
-A Xochi ZKP attestation is narrower than the word makes it sound. It proves a
+An ERC-8262 attestation is narrower than the word makes it sound. It proves a
 specific computation ran on private inputs. It does not prove the inputs were
 honest. Honesty either comes from somewhere else, or it is a gap you accept.
 
