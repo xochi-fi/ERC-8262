@@ -39,7 +39,7 @@ contract Handler is Test {
     /// @dev The handler is the submitter for every successful call, so it is also the subject.
     mapping(uint8 => uint256) public maxProofTimestamp;
 
-    /// @notice Unsigned-compliance jurisdictions only. US (1) and SG (3) require signed signals.
+    /// @notice Unsigned-compliance jurisdictions only. US (1), SG (3), and UAE (4) require signed signals.
     uint8[2] internal _unsignedJurisdictions = [0, 2]; // EU, UK
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");

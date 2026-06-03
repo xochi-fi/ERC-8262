@@ -1,6 +1,6 @@
 /// Risk score computation for ERC-8262 circuits
 
-use crate::constants::{JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG};
+use crate::constants::{JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG, JURISDICTION_UAE};
 use crate::hash::hash8;
 
 /// Maximum weight per provider (prevents u32 overflow in risk score computation).
@@ -35,15 +35,17 @@ pub fn compute_risk_score<let N: u32>(
 /// Get the high-risk threshold for a jurisdiction (in basis points)
 /// Must match Solidity JurisdictionConfig thresholds
 pub fn get_high_threshold(jurisdiction_id: u8) -> u32 {
-    assert(jurisdiction_id <= JURISDICTION_SG, "Invalid jurisdiction");
+    assert(jurisdiction_id <= JURISDICTION_UAE, "Invalid jurisdiction");
     if jurisdiction_id == JURISDICTION_EU {
         7100 // 71%
     } else if jurisdiction_id == JURISDICTION_US {
         6600 // 66%
     } else if jurisdiction_id == JURISDICTION_UK {
         7100 // 71%
+    } else if jurisdiction_id == JURISDICTION_SG {
+        7600 // 76%
     } else {
-        7600 // 76% (JURISDICTION_SG, guarded by assert above)
+        7100 // 71% (JURISDICTION_UAE, guarded by assert above)
     }
 }
 
@@ -110,9 +112,10 @@ fn test_high_threshold_us() {
 #[test]
 fn test_threshold_cross_validation_all() {
     // Cross-validation: these MUST match Solidity JurisdictionConfig.getHighRiskThreshold() * 100
-    // See: src/libraries/JurisdictionConfig.sol (EU=71, US=66, UK=71, SG=76 percentage scale)
+    // See: src/libraries/JurisdictionConfig.sol (EU=71, US=66, UK=71, SG=76, UAE=71 percentage scale)
     assert(get_high_threshold(JURISDICTION_EU) == 7100);
     assert(get_high_threshold(JURISDICTION_US) == 6600);
     assert(get_high_threshold(JURISDICTION_UK) == 7100);
     assert(get_high_threshold(JURISDICTION_SG) == 7600);
+    assert(get_high_threshold(JURISDICTION_UAE) == 7100);
 }

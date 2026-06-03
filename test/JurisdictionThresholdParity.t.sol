@@ -23,6 +23,7 @@ contract JurisdictionThresholdParityTest is Test {
         if (jurisdictionId == JurisdictionConfig.US) return 6600; // 66%
         if (jurisdictionId == JurisdictionConfig.UK) return 7100; // 71%
         if (jurisdictionId == JurisdictionConfig.SINGAPORE) return 7600; // 76%
+        if (jurisdictionId == JurisdictionConfig.UAE) return 7100; // 71%
         revert("unknown jurisdiction in test mirror");
     }
 
@@ -42,11 +43,15 @@ contract JurisdictionThresholdParityTest is Test {
         _assertParity(JurisdictionConfig.SINGAPORE);
     }
 
+    function test_parity_uae() public pure {
+        _assertParity(JurisdictionConfig.UAE);
+    }
+
     /// @notice Iterates every defined jurisdiction. Adding a new one without
     ///         updating `_expectedBps` will revert here, forcing the parity
     ///         table to stay in sync.
     function test_parity_allJurisdictions() public pure {
-        for (uint8 j = JurisdictionConfig.EU; j <= JurisdictionConfig.SINGAPORE; j++) {
+        for (uint8 j = JurisdictionConfig.EU; j <= JurisdictionConfig.UAE; j++) {
             _assertParity(j);
         }
     }

@@ -14,3 +14,4 @@ pub global JURISDICTION_EU: u8 = 0;
 pub global JURISDICTION_US: u8 = 1;
 pub global JURISDICTION_UK: u8 = 2;
 pub global JURISDICTION_SG: u8 = 3;
+pub global JURISDICTION_UAE: u8 = 4;

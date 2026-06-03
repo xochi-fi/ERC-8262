@@ -9,6 +9,7 @@ library JurisdictionConfig {
     uint8 internal constant US = 1; // BSA
     uint8 internal constant UK = 2; // MLR
     uint8 internal constant SINGAPORE = 3;
+    uint8 internal constant UAE = 4; // VARA
 
     /// @notice Risk tiers
     uint8 internal constant TIER_LOW = 0;
@@ -28,13 +29,14 @@ library JurisdictionConfig {
     }
 
     /// @notice Get the threshold configuration for a jurisdiction
-    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
+    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG, 4=UAE)
     /// @return thresholds The threshold boundaries
     function getThresholds(uint8 jurisdictionId) internal pure returns (Thresholds memory thresholds) {
         if (jurisdictionId == EU) return Thresholds({mediumFloor: 31, highFloor: 71});
         if (jurisdictionId == US) return Thresholds({mediumFloor: 26, highFloor: 66});
         if (jurisdictionId == UK) return Thresholds({mediumFloor: 31, highFloor: 71});
         if (jurisdictionId == SINGAPORE) return Thresholds({mediumFloor: 36, highFloor: 76});
+        if (jurisdictionId == UAE) return Thresholds({mediumFloor: 31, highFloor: 71});
         revert InvalidJurisdiction(jurisdictionId);
     }
 
@@ -64,7 +66,7 @@ library JurisdictionConfig {
     /// @notice Validate that a jurisdiction ID is valid
     /// @param jurisdictionId The jurisdiction to validate
     function validateJurisdiction(uint8 jurisdictionId) internal pure {
-        if (jurisdictionId > SINGAPORE) {
+        if (jurisdictionId > UAE) {
             revert InvalidJurisdiction(jurisdictionId);
         }
     }
@@ -85,18 +87,19 @@ library JurisdictionConfig {
     ///
     ///      Initial values reflect each regime's traceability stance:
     ///      - EU AMLD6, UK MLR: unsigned acceptable (provider attestation layered off-chain)
-    ///      - US BSA, Singapore: signed required (regulator demands provider-signed evidence)
+    ///      - US BSA, Singapore, UAE VARA: signed required (regulator demands provider-signed evidence)
     ///
     ///      Changing this is a breaking-change for integrators in that jurisdiction;
     ///      it is intentionally hard-coded rather than admin-mutable. A future revision
     ///      may move it to a registry if jurisdiction policy diverges from this default.
-    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
+    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG, 4=UAE)
     /// @return required Whether signed signals are required
     function requireSignedSignals(uint8 jurisdictionId) internal pure returns (bool required) {
         if (jurisdictionId == EU) return false;
         if (jurisdictionId == US) return true;
         if (jurisdictionId == UK) return false;
         if (jurisdictionId == SINGAPORE) return true;
+        if (jurisdictionId == UAE) return true;
         revert InvalidJurisdiction(jurisdictionId);
     }
 
@@ -104,17 +107,19 @@ library JurisdictionConfig {
     ///         compliance proof (proof type 0x09) in this jurisdiction.
     /// @dev 1 means single-signer attestation is sufficient (the proof is then
     ///      operationally equivalent to 0x07). Values >= 2 force genuine M-of-N
-    ///      corroboration. Stricter regimes (US BSA, Singapore MAS) demand >= 2
-    ///      independent providers; permissive regimes (EU AMLD6, UK MLR) accept 1.
+    ///      corroboration. Stricter regimes (US BSA, Singapore MAS, UAE VARA)
+    ///      demand >= 2 independent providers; permissive regimes (EU AMLD6,
+    ///      UK MLR) accept 1.
     ///      Like `requireSignedSignals`, this is a regulatory parameter compiled
     ///      into the contract by design.
-    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG)
+    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG, 4=UAE)
     /// @return floor Minimum M (1..MAX) required for multi-signed proofs
     function minMultiProviderThreshold(uint8 jurisdictionId) internal pure returns (uint8 floor) {
         if (jurisdictionId == EU) return 1;
         if (jurisdictionId == US) return 2;
         if (jurisdictionId == UK) return 1;
         if (jurisdictionId == SINGAPORE) return 2;
+        if (jurisdictionId == UAE) return 2;
         revert InvalidJurisdiction(jurisdictionId);
     }
 }
