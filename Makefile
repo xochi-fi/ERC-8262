@@ -39,6 +39,20 @@ test-xochi-sdk: ## Run @xochi/sdk cross-repo tests (requires ../xochi-sdk)
 
 test-all: test-sol test-noir test-sdk ## Run all tests
 
+coverage: ## Run forge coverage (summary report; excludes generated/test/script)
+	@# Skip ratchet + MAX_BATCH_SIZE gas tests: under --ir-minimum gas inflates
+	@# and warp ordering shifts, so these become non-deterministic.
+	$(FORGE) coverage \
+		--ir-minimum \
+		--no-match-test "test_ratchet_acceptsForwardProgression|test_ratchet_rejectsOlderProof|test_ratchet_rejectsBackwardEvenWithinMaxAge|test_ratchet_separateJurisdictions_independent|test_ratchet_separateUsers_independent|test_gas_batch_atMaxSize_fitsBlockGasTarget" \
+		--report summary
+
+coverage-lcov: ## Run forge coverage and emit lcov.info
+	$(FORGE) coverage \
+		--ir-minimum \
+		--no-match-test "test_ratchet_acceptsForwardProgression|test_ratchet_rejectsOlderProof|test_ratchet_rejectsBackwardEvenWithinMaxAge|test_ratchet_separateJurisdictions_independent|test_ratchet_separateUsers_independent|test_gas_batch_atMaxSize_fitsBlockGasTarget" \
+		--report lcov
+
 # ── Formatting & Lint ────────────────────────────────────────
 
 fmt: ## Format Solidity sources
