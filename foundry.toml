@@ -19,6 +19,10 @@ fs_permissions = [
 
 fuzz = { runs = 256, max_test_rejects = 65536 }
 
+# Generated verifiers are out-of-scope (regenerated via `make fixtures`); the
+# HonkVerificationKey struct literal trips via-IR stack-too-deep under coverage.
+no_match_coverage = "(src/generated|test|script)"
+
 remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
