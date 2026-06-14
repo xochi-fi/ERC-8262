@@ -36,7 +36,7 @@ library ProofTypes {
         if (proofType == RISK_SCORE) return 8;
         // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter, settlement_root
         if (proofType == PATTERN) return 7;
-        // attestation: provider_id, credential_type, is_valid, merkle_root, current_timestamp, submitter
+        // attestation: provider_id, credential_type, is_valid, credential_root, current_timestamp, submitter
         if (proofType == ATTESTATION) return 6;
         // membership: merkle_root, set_id, timestamp, is_member, submitter
         if (proofType == MEMBERSHIP) return 5;
