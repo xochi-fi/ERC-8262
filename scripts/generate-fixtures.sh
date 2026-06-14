@@ -68,6 +68,8 @@ generate_fixture() {
         cp "$circuit_dir/target/${circuit}_verifier.sol" "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
         sed -i '' "s/contract HonkVerifier is/contract ${verifier_name} is/" \
             "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
+        "$REPO_ROOT/scripts/patch-pairing-yul.sh" \
+            "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
         echo "  done: verifier=${verifier_name}"
         return
     fi
@@ -117,6 +119,8 @@ generate_fixture() {
     verifier_name=$(_contract_name "$circuit")
     cp "$circuit_dir/target/${circuit}_verifier.sol" "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
     sed -i '' "s/contract HonkVerifier is/contract ${verifier_name} is/" \
+        "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
+    "$REPO_ROOT/scripts/patch-pairing-yul.sh" \
         "$REPO_ROOT/src/generated/${circuit}_verifier.sol"
 
     local proof_size inputs_size
