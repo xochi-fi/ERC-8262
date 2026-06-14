@@ -14,6 +14,7 @@ contract ThresholdCrossValidationTest is Test {
     uint256 constant NOIR_US_THRESHOLD = 6600;
     uint256 constant NOIR_UK_THRESHOLD = 7100;
     uint256 constant NOIR_SG_THRESHOLD = 7600;
+    uint256 constant NOIR_UAE_THRESHOLD = 7100;
 
     function test_eu_threshold_matches_noir() public pure {
         assertEq(uint256(JurisdictionConfig.getHighRiskThreshold(0)) * 100, NOIR_EU_THRESHOLD);
@@ -31,9 +32,14 @@ contract ThresholdCrossValidationTest is Test {
         assertEq(uint256(JurisdictionConfig.getHighRiskThreshold(3)) * 100, NOIR_SG_THRESHOLD);
     }
 
+    function test_uae_threshold_matches_noir() public pure {
+        assertEq(uint256(JurisdictionConfig.getHighRiskThreshold(4)) * 100, NOIR_UAE_THRESHOLD);
+    }
+
     function test_all_jurisdictions_exhaustive() public pure {
-        uint256[4] memory expected = [NOIR_EU_THRESHOLD, NOIR_US_THRESHOLD, NOIR_UK_THRESHOLD, NOIR_SG_THRESHOLD];
-        for (uint8 j; j < 4; j++) {
+        uint256[5] memory expected =
+            [NOIR_EU_THRESHOLD, NOIR_US_THRESHOLD, NOIR_UK_THRESHOLD, NOIR_SG_THRESHOLD, NOIR_UAE_THRESHOLD];
+        for (uint8 j; j < 5; j++) {
             assertEq(
                 uint256(JurisdictionConfig.getHighRiskThreshold(j)) * 100,
                 expected[j],

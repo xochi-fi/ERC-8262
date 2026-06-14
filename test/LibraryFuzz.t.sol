@@ -102,7 +102,7 @@ contract LibraryFuzzTest is Test {
     // -------------------------------------------------------------------------
 
     function testFuzz_meetsThreshold_allJurisdictions(uint8 score, uint8 jurisdictionId) public view {
-        jurisdictionId = uint8(bound(jurisdictionId, 0, 3));
+        jurisdictionId = uint8(bound(jurisdictionId, 0, 4));
         score = uint8(bound(score, 0, 100));
 
         bool result = jurisdiction.meetsThreshold(score, jurisdictionId);
@@ -117,7 +117,7 @@ contract LibraryFuzzTest is Test {
     }
 
     function testFuzz_meetsThreshold_boundary(uint8 jurisdictionId) public view {
-        jurisdictionId = uint8(bound(jurisdictionId, 0, 3));
+        jurisdictionId = uint8(bound(jurisdictionId, 0, 4));
 
         JurisdictionConfig.Thresholds memory t = JurisdictionConfig.getThresholds(jurisdictionId);
 
@@ -126,13 +126,13 @@ contract LibraryFuzzTest is Test {
     }
 
     function testFuzz_meetsThreshold_revert_invalidJurisdiction(uint8 jurisdictionId) public {
-        vm.assume(jurisdictionId > 3);
+        vm.assume(jurisdictionId > 4);
         vm.expectRevert(abi.encodeWithSelector(JurisdictionConfig.InvalidJurisdiction.selector, jurisdictionId));
         jurisdiction.meetsThreshold(50, jurisdictionId);
     }
 
     function testFuzz_getRiskTier_consistency(uint8 score, uint8 jurisdictionId) public view {
-        jurisdictionId = uint8(bound(jurisdictionId, 0, 3));
+        jurisdictionId = uint8(bound(jurisdictionId, 0, 4));
         score = uint8(bound(score, 0, 100));
 
         uint8 tier = jurisdiction.getRiskTier(score, jurisdictionId);

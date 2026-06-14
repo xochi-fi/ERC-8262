@@ -16,7 +16,7 @@ pub mod validation;
 // Circuits can use either `erc8262_shared::hash2` or `erc8262_shared::hash::hash2`.
 pub use constants::{
     MAX_PROVIDERS, MERKLE_DEPTH, MAX_TRANSACTIONS,
-    JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG,
+    JURISDICTION_EU, JURISDICTION_US, JURISDICTION_UK, JURISDICTION_SG, JURISDICTION_UAE,
 };
 pub use hash::{hash2, hash3, hash4, hash8, hash16, hash32};
 pub use merkle::{compute_merkle_root, internal_hash, leaf_hash_set, leaf_hash_subject, leaf_hash_value};

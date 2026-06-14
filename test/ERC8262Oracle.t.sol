@@ -91,12 +91,12 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_revert_invalidJurisdiction() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(JurisdictionConfig.InvalidJurisdiction.selector, 4));
+        vm.expectRevert(abi.encodeWithSelector(JurisdictionConfig.InvalidJurisdiction.selector, 5));
         oracle.submitCompliance(
-            4,
+            5,
             ProofTypes.COMPLIANCE,
             _uniqueProof(),
-            _complianceInputsFor(4, DEFAULT_PROVIDER_SET_HASH),
+            _complianceInputsFor(5, DEFAULT_PROVIDER_SET_HASH),
             DEFAULT_PROVIDER_SET_HASH
         );
     }
@@ -337,8 +337,8 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_concurrentAttestations_multipleJurisdictions() public {
         // Alice submits unsigned COMPLIANCE for EU (0) and UK (2), the two permissive
-        // jurisdictions. US (1) and Singapore (3) require signed-signals proofs and
-        // are exercised by the COMPLIANCE_SIGNED test suite.
+        // jurisdictions. US (1), Singapore (3), and UAE (4) require signed-signals
+        // proofs and are exercised by the COMPLIANCE_SIGNED test suite.
         uint8[2] memory permissive = [uint8(0), uint8(2)];
         for (uint256 i; i < permissive.length; i++) {
             _submitForAlice(permissive[i]);
@@ -680,7 +680,7 @@ contract ERC8262OracleTest is OracleTestBase {
     }
 
     function testFuzz_submitCompliance_revert_invalidJurisdiction(uint8 j) public {
-        vm.assume(j > 3);
+        vm.assume(j > 4);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(JurisdictionConfig.InvalidJurisdiction.selector, j));
         oracle.submitCompliance(
@@ -1779,7 +1779,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function testFuzz_replayAlwaysReverts(uint8 jurisdictionId) public {
         // Test exercises replay protection on unsigned COMPLIANCE; bound to permissive
-        // jurisdictions (EU=0, UK=2) since strict ones (US, SG) reject the unsigned variant.
+        // jurisdictions (EU=0, UK=2) since strict ones (US, SG, UAE) reject the unsigned variant.
         uint8[2] memory permissive = [uint8(0), uint8(2)];
         jurisdictionId = permissive[uint256(bound(jurisdictionId, 0, 1))];
         bytes memory proof = _uniqueProof();
@@ -2657,7 +2657,7 @@ contract ERC8262OracleTest is OracleTestBase {
     }
 
     // -------------------------------------------------------------------------
-    // Jurisdiction-flag enforcement (US, SG strict; EU, UK permissive)
+    // Jurisdiction-flag enforcement (US, SG, UAE strict; EU, UK permissive)
     // -------------------------------------------------------------------------
 
     function test_strictJurisdiction_rejects_unsignedCompliance() public {
