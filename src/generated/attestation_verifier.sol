@@ -180,7 +180,7 @@ library FrLib {
         uint256 result;
 
         // Call the modexp precompile to invert in the field
-        assembly {
+        assembly ("memory-safe") {
             let free := mload(0x40)
             mstore(free, 0x20)
             mstore(add(free, 0x20), 0x20)
@@ -204,7 +204,7 @@ library FrLib {
         uint256 result;
 
         // Call the modexp precompile to invert in the field
-        assembly {
+        assembly ("memory-safe") {
             let free := mload(0x40)
             mstore(free, 0x20)
             mstore(add(free, 0x20), 0x20)
@@ -1747,7 +1747,7 @@ function mulWithSeperator(Honk.G1Point memory basePoint, Honk.G1Point memory oth
 function ecMul(Fr value, Honk.G1Point memory point) view returns (Honk.G1Point memory) {
     Honk.G1Point memory result;
 
-    assembly {
+    assembly ("memory-safe") {
         let free := mload(0x40)
         // Write the point into memory (two 32 byte words)
         // Memory layout:
@@ -1793,7 +1793,7 @@ function ecMul(Fr value, Honk.G1Point memory point) view returns (Honk.G1Point m
 function ecAdd(Honk.G1Point memory lhs, Honk.G1Point memory rhs) view returns (Honk.G1Point memory) {
     Honk.G1Point memory result;
 
-    assembly {
+    assembly ("memory-safe") {
         let free := mload(0x40)
         // Write lhs into memory (two 32 byte words)
         // Memory layout:
@@ -1835,7 +1835,7 @@ function validateOnCurve(Honk.G1Point memory point) pure {
     uint256 y = point.y;
 
     bool success = false;
-    assembly {
+    assembly ("memory-safe") {
         let xx := mulmod(x, x, Q)
         success := eq(mulmod(y, y, Q), addmod(mulmod(x, xx, Q), 3, Q))
     }
@@ -1844,25 +1844,23 @@ function validateOnCurve(Honk.G1Point memory point) pure {
 }
 
 function pairing(Honk.G1Point memory rhs, Honk.G1Point memory lhs) view returns (bool decodedResult) {
-    bytes memory input = abi.encodePacked(
-        rhs.x,
-        rhs.y,
-        // Fixed G2 point
-        uint256(0x198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2),
-        uint256(0x1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed),
-        uint256(0x090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b),
-        uint256(0x12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa),
-        lhs.x,
-        lhs.y,
-        // G2 point from VK
-        uint256(0x260e01b251f6f1c7e7ff4e580791dee8ea51d87a358e038b4efe30fac09383c1),
-        uint256(0x0118c4d5b837bcc2bc89b5b398b5974e9f5944073b32078b7e231fec938883b0),
-        uint256(0x04fc6369f7110fe3d25156c1bb9a72859cf2a04641f99ba4ee413c80da6a5fe4),
-        uint256(0x22febda3c0c0632a56475b4214e5615e11e6dd3f96e6cea2854a87d4dacc5e55)
-    );
-
-    (bool success, bytes memory result) = address(0x08).staticcall(input);
-    decodedResult = success && abi.decode(result, (bool));
+    assembly ("memory-safe") {
+        let m := mload(0x40)
+        mstore(m, mload(rhs))
+        mstore(add(m, 0x20), mload(add(rhs, 0x20)))
+        mstore(add(m, 0x40), 0x198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2)
+        mstore(add(m, 0x60), 0x1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed)
+        mstore(add(m, 0x80), 0x090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b)
+        mstore(add(m, 0xa0), 0x12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa)
+        mstore(add(m, 0xc0), mload(lhs))
+        mstore(add(m, 0xe0), mload(add(lhs, 0x20)))
+        mstore(add(m, 0x100), 0x260e01b251f6f1c7e7ff4e580791dee8ea51d87a358e038b4efe30fac09383c1)
+        mstore(add(m, 0x120), 0x0118c4d5b837bcc2bc89b5b398b5974e9f5944073b32078b7e231fec938883b0)
+        mstore(add(m, 0x140), 0x04fc6369f7110fe3d25156c1bb9a72859cf2a04641f99ba4ee413c80da6a5fe4)
+        mstore(add(m, 0x160), 0x22febda3c0c0632a56475b4214e5615e11e6dd3f96e6cea2854a87d4dacc5e55)
+        let success := staticcall(gas(), 0x08, m, 0x180, m, 0x20)
+        decodedResult := and(success, eq(mload(m), 1))
+    }
 }
 
 // Field arithmetic libraries - prevent littering the code with modmul / addmul
@@ -2412,7 +2410,7 @@ abstract contract BaseZKHonkVerifier is IVerifier {
         }
 
         bool success = true;
-        assembly {
+        assembly ("memory-safe") {
             let free := mload(0x40)
 
             let count := 0x01
