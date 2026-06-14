@@ -24,9 +24,9 @@ This is distinct from view keys (Railgun, Panther) where you trade privately and
 
 Normative spec for each row (public/private inputs, validation rules, gas cost): [ERC-8262.md §Proof Types](ERC-8262.md#proof-types).
 
-The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values. The multi-signed variant (0x09) extends this to an M-of-N quorum across up to 5 registered signers, with a runtime `threshold_m`; US and Singapore enforce a jurisdiction floor of M >= 2.
+The signed variants verify a secp256k1 ECDSA signature in-circuit over the screening payload, so a user cannot submit fabricated signal values. The multi-signed variant (0x09) extends this to an M-of-N quorum across up to 5 registered signers, with a runtime `threshold_m`; US, Singapore, and UAE enforce a jurisdiction floor of M >= 2.
 
-Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA) and Singapore require signed; EU (AMLD6) and UK (MLR) accept either.
+Per-jurisdiction policy in `JurisdictionConfig.requireSignedSignals` decides whether unsigned proofs are acceptable: US (BSA), Singapore (MAS), and UAE (VARA) require signed; EU (AMLD6) and UK (MLR) accept either.
 
 The `signer_pubkey_hash` public input is validated against an on-chain registry (`registerSignerPubkeyHash`), so a compromised provider can be rotated without redeploying circuits.
 
@@ -48,31 +48,21 @@ The proof also commits to a timestamp and the screening providers used, enabling
 
 ## Architecture
 
-```solidity
-                +-------------------------+
-                |  ERC8262Oracle          |  submitCompliance / checkCompliance
-                |  attestation storage,   |  getHistoricalProof, 8 registries,
-                |  input validation,      |  ratchet, replay protection,
-                |  jurisdiction policy    |  signed-signals enforcement
-                +------------+------------+
-                             |
-                             | verify(proofType, proof, publicInputs)  (view)
-                             v
-                +-------------------------+
-                |  ERC8262Verifier        |  routes proofType -> UltraHonk verifier
-                +------------+------------+
-                             |
-   +----+-----+-----+-----+--+--+-----+-----+------+--------+
-   v    v     v     v     v     v     v     v      v
-  0x01 0x02  0x03  0x04  0x05  0x06  0x07  0x08   0x09
-  comp risk  patt  attst memb  non-  comp_ risk_  comp_
-  lian _scor ern   ation rship membr signed _sig  multi_
-  ce   e                       ship         ned   signed
+```mermaid
+flowchart TD
+    Client["client / dApp"]
+    Oracle["ERC8262Oracle<br/>attestation storage, 8 registries<br/>jurisdiction policy, replay, ratchet"]
+    Router["ERC8262Verifier<br/>proofType router"]
+    Verifiers["9 generated UltraHonk verifiers<br/>(0x01 .. 0x09)"]
+    Settlement["SettlementRegistry<br/>tradeId binding for split proofs"]
 
-  Generated UltraHonk verifiers (one per proof type, via bb write_solidity_verifier)
+    Client -->|"submitCompliance"| Oracle
+    Oracle -->|"verify (view)"| Router
+    Router --> Verifiers
+    Settlement -.->|"getHistoricalProof"| Oracle
 ```
 
-Each of the 9 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`).
+Each of the 9 proof types has its own Noir circuit and generates a separate UltraHonk verifier contract via Barretenberg (`bb write_solidity_verifier`). The router holds the proofType → verifier mapping; the Oracle never calls a verifier directly.
 
 ## SettlementRegistry
 
@@ -98,13 +88,6 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
       IUltraVerifier.sol          # Interface for generated verifiers
       ISettlementRegistry.sol     # Settlement registry interface
     libraries/
-      ProofTypes.sol              # Proof type definitions and encoding
-      JurisdictionConfig.sol      # Threshold configurations per jurisdiction
-    ERC8262Verifier.sol           # Verifier router (proofType -> generated UltraHonk verifier)
-    ERC8262Oracle.sol             # Oracle: attestation storage, 8 registries, ratchet, replay
-    SettlementRegistry.sol        # Immutable registry linking split settlement proofs to a tradeId
-    Timelock.sol                  # 2-tier (24h HIGH / 6h LOW) selector-gated admin delay
-    libraries/
       ProofTypes.sol              # Proof type IDs + public-input encoding/validation
       JurisdictionConfig.sol      # Per-jurisdiction thresholds + signed-signals policy
       AccessControl.sol           # GUARDIAN / REGISTRAR / CONFIG role split
@@ -112,6 +95,10 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
       EIP712CredentialRoot.sol    # EIP-712 typed data hashing for credential roots
       Ownable2Step.sol            # Two-step ownership transfer
       Pausable.sol                # Global + per-proof-type pause
+    ERC8262Verifier.sol           # Verifier router (proofType -> generated UltraHonk verifier)
+    ERC8262Oracle.sol             # Oracle: attestation storage, 8 registries, ratchet, replay
+    SettlementRegistry.sol        # Immutable registry linking split settlement proofs to a tradeId
+    Timelock.sol                  # 2-tier (24h HIGH / 6h LOW) selector-gated admin delay
     generated/                    # Auto-generated UltraHonk verifiers (do not edit)
   test/                           # Foundry tests (unit, fuzz, invariant, integration)
     Integration.t.sol             # End-to-end tests with real proofs
@@ -123,6 +110,7 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
     Bootstrap.s.sol               # Post-deploy registry seeding (publishers, thresholds, merkle roots)
   scripts/
     generate-fixtures.sh          # Recompiles circuits + regenerates verifiers + proof fixtures
+    patch-pairing-yul.sh          # Yul pairing rewrite for bb verifiers (EIP-170 + memory-safe)
     parity-check.py               # CI gate: circuit pub-input arity == Solidity expectations
   circuits/
     Nargo.toml                    # Workspace config (nargo compile/test --workspace)
@@ -156,7 +144,8 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 ## Jurisdiction thresholds
 
 Risk scores are in basis points (0-10000 = 0.00%-100.00%). Filing triggers
-range from 6600 bps (US BSA, strictest) to 7600 bps (Singapore). See the ERC
+range from 6600 bps (US BSA, strictest) to 7600 bps (Singapore), with EU,
+UK, and UAE all at 7100 bps. See the ERC
 [§Jurisdiction Configuration](ERC-8262.md#jurisdiction-configuration)
 for the normative table; the on-chain source of truth is
 [`src/libraries/JurisdictionConfig.sol`](src/libraries/JurisdictionConfig.sol).
@@ -249,10 +238,10 @@ export TIMELOCK_GUARDIAN=0x...   # optional cancel-only role
 
 # 3. Deploy
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
-    --disable-code-size-limit --sender $DEPLOYER_ADDRESS
+    --sender $DEPLOYER_ADDRESS
 ```
 
-**Why `--disable-code-size-limit`?** The bb-generated UltraHonk verifiers are 24,640-24,641 bytes -- 64-65 bytes over EIP-170's 24,576-byte runtime contract limit. EIP-170 is enforced on Ethereum mainnet and on the major OP-Stack L2s (Base, Optimism), so these verifiers will not deploy there as-is. The flag bypasses Foundry's local check; it does NOT bypass on-chain enforcement. Target either a chain that does not enforce EIP-170 (some app-chains, devnets) or wait for an upstream `bb` size reduction. Verify with `forge build --sizes` against the chain's policy before broadcasting.
+**EIP-170 note.** The bb-generated UltraHonk verifiers used to land 64-65 B over the 24,576 B runtime limit. `scripts/patch-pairing-yul.sh` rewrites the `pairing()` free function in inline Yul (single `staticcall` to the bn254 precompile), saving ~186 B per verifier and ~800 gas per `verifyProof`. All 9 verifiers now sit at 24,453-24,455 B with +121-123 B headroom, deployable on Ethereum mainnet and the OP-Stack L2s without flags. The patch runs idempotently inside `scripts/generate-fixtures.sh`, so any regenerated verifier picks it up automatically. Confirm with `forge build --sizes` before broadcasting.
 
 **Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
 
@@ -381,8 +370,9 @@ honest. Honesty either comes from somewhere else, or it is a gap you accept.
   (0x07) and RISK_SCORE_SIGNED (0x08) verify a secp256k1 ECDSA signature
   over the screening payload in-circuit; the Oracle's
   `_validSignerPubkeyHashes` registry authenticates the signer's pubkey.
-  Strict jurisdictions (US BSA, Singapore) reject the unsigned variants
-  via `JurisdictionConfig.requireSignedSignals`; EU and UK accept either.
+  Strict jurisdictions (US BSA, Singapore MAS, UAE VARA) reject the unsigned
+  variants via `JurisdictionConfig.requireSignedSignals`; EU and UK accept
+  either.
   The fix is mathematical, not operational: it is useful only when a real
   provider runs a signing daemon and registers their key. As of writing,
   no major AML provider (Chainalysis, TRM, Elliptic) does this. The
