@@ -37,7 +37,7 @@ Holds the `owner` key on `ERC8262Verifier`, `ERC8262Oracle`, and (transitively) 
 | Revoke a credential root (`revokeCredentialRoot`)                                                               | 0     | Owner can revoke any credential root; provider can revoke their own. Affects ATTESTATION proofs only |
 | Transfer ownership (`transferOwnership`)                                                                        | 24 h  | Two-step accept; 48-hour acceptance deadline (`Ownable2Step`)                                        |
 | Update attestation TTL (`updateAttestationTTL`)                                                                 | 6 h   | Bounded by `[1 hour, 30 days]`                                                                       |
-| Compact config history (`compactConfigHistory`)                                                                 | 24 h  | Removes revoked entries from on-chain history; preserves current                                     |
+| Compact config history (`compactConfigHistory`)                                                                 | 24 h  | Removes revoked entries from on-chain history; preserves current. Gas scales with history length (up to ~2.5M at the 256-entry cap -- fits a 30M mainnet block but should be scheduled standalone, not bundled). |
 
 **What the owner CANNOT do:**
 
