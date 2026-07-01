@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FOUNDRY_BIN="${HOME}/.config/.foundry/bin"
-FORGE="${FOUNDRY_BIN}/forge"
+FORGE="$(command -v forge 2>/dev/null || echo "${HOME}/.foundry/bin/forge")"
 
 echo "pre-commit: checking Solidity formatting..."
 "$FORGE" fmt --check
