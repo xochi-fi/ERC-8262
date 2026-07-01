@@ -51,4 +51,10 @@ interface IERC8262Verifier {
     /// @param proofType The proof type (0x01-0x09)
     /// @return version The current version (0 if no verifier set)
     function getVerifierVersion(uint8 proofType) external view returns (uint256 version);
+
+    /// @notice Check if a verifier address corresponds to a revoked version for a proof type
+    /// @param proofType The proof type (0x01-0x09)
+    /// @param verifierAddr The verifier contract address to check
+    /// @return revoked Whether the verifier address maps to a revoked version
+    function isVerifierAddressRevoked(uint8 proofType, address verifierAddr) external view returns (bool revoked);
 }
