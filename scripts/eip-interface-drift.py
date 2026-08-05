@@ -12,6 +12,10 @@ edits don't trigger drift. Struct field names and event arguments are checked
 because they are part of the ABI.
 
 Exits 0 on parity, 1 on drift, 2 on usage/parsing error.
+
+Usage:
+  eip-interface-drift.py [project-root]
+  eip-interface-drift.py --eip PATH --interfaces DIR
 """
 
 from __future__ import annotations
@@ -178,16 +182,37 @@ def compare(
     return drift
 
 
-def main(argv: list[str]) -> int:
+def resolve_paths(argv: list[str]) -> tuple[Path, Path]:
+    """Return (draft path, interfaces directory).
+
+    Defaults to this repository's layout. The overrides let the same check run
+    against the copy of the draft vendored into the ethereum/ERCs repository,
+    whose paths and filenames differ (`ERCS/erc-8262.md`, `assets/erc-8262/
+    contracts/interfaces/`).
+    """
+    if "--eip" in argv:
+        return (
+            Path(argv[argv.index("--eip") + 1]).resolve(),
+            Path(argv[argv.index("--interfaces") + 1]).resolve(),
+        )
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
-    eip_path = root / "ERC-8262.md"
+    return root / "ERC-8262.md", root / "src" / "interfaces"
+
+
+def main(argv: list[str]) -> int:
+    try:
+        eip_path, interfaces_dir = resolve_paths(argv)
+    except (IndexError, ValueError):
+        print(__doc__, file=sys.stderr)
+        return 2
+
     if not eip_path.is_file():
         print(f"error: ERC draft not found at {eip_path}", file=sys.stderr)
         return 2
 
     interfaces = {
-        "IERC8262Verifier": root / "src" / "interfaces" / "IERC8262Verifier.sol",
-        "IERC8262Oracle": root / "src" / "interfaces" / "IERC8262Oracle.sol",
+        "IERC8262Verifier": interfaces_dir / "IERC8262Verifier.sol",
+        "IERC8262Oracle": interfaces_dir / "IERC8262Oracle.sol",
     }
     for name, path in interfaces.items():
         if not path.is_file():

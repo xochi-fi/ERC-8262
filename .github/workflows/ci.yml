@@ -29,6 +29,9 @@ jobs:
       - name: EIP draft <-> src/interfaces drift check
         run: python3 scripts/eip-interface-drift.py .
 
+      - name: EIP draft <-> Oracle public-input validation drift check
+        run: python3 scripts/public-input-drift.py .
+
       - name: Build contracts
         run: |
           forge build --sizes 2>&1 | tee /tmp/sizes.txt || true

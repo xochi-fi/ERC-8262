@@ -1,9 +1,15 @@
-.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain parity-check clean help
+.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain parity-check drift-check clean help
 
 FOUNDRY_BIN := $(HOME)/.config/.foundry/bin
 FORGE := $(FOUNDRY_BIN)/forge
 NARGO := nargo
 CIRCUITS := compliance risk_score pattern attestation membership non_membership
+
+# Sibling checkout of ethereum/ERCs, where the submitted copy of the draft and
+# its vendored assets live. Optional: drift-check skips those when absent.
+ERCS_ROOT ?= ../ERCs
+ERCS_DRAFT := $(ERCS_ROOT)/ERCS/erc-8262.md
+ERCS_CONTRACTS := $(ERCS_ROOT)/assets/erc-8262/contracts
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -75,6 +81,22 @@ check-toolchain: ## Verify pinned nargo + bb versions match .tool-versions
 
 parity-check: ## Verify circuit <-> Solidity public-input arity parity (audit F-8)
 	python3 scripts/parity-check.py .
+
+drift-check: ## Verify ERC draft <-> src interfaces and public-input tables (both copies)
+	@echo "==> this repository"
+	python3 scripts/eip-interface-drift.py .
+	python3 scripts/public-input-drift.py .
+	@if [ -f "$(ERCS_DRAFT)" ]; then \
+	  echo "==> ethereum/ERCs checkout at $(ERCS_ROOT)"; \
+	  python3 scripts/eip-interface-drift.py \
+	    --eip "$(ERCS_DRAFT)" --interfaces "$(ERCS_CONTRACTS)/interfaces" || exit 1; \
+	  python3 scripts/public-input-drift.py \
+	    --eip "$(ERCS_DRAFT)" --oracle "$(ERCS_CONTRACTS)/ERC8262Oracle.sol" \
+	    --proof-types "$(ERCS_CONTRACTS)/libraries/ProofTypes.sol" || exit 1; \
+	else \
+	  echo "==> no ethereum/ERCs checkout at $(ERCS_ROOT) -- skipping submitted-copy checks"; \
+	  echo "    (set ERCS_ROOT=/path/to/ERCs to include them)"; \
+	fi
 
 fixtures: check-toolchain ## Generate proof fixtures for all circuits
 	./scripts/generate-fixtures.sh
