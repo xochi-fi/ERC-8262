@@ -2656,6 +2656,73 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
+    // Review #5: the 0x08 signed timestamp is the proof time and is freshness-checked
+    // like 0x07's, so a provider signature cannot mint attestations after MAX_PROOF_AGE.
+
+    function test_submitCompliance_riskScoreSigned_ratchetsOnSignedTimestamp() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.warp(1700000000);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 1800);
+        vm.prank(alice);
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(oracle.lastProofTimestamp(alice, 1), 1700000000 - 1800);
+    }
+
+    function test_submitCompliance_riskScoreSigned_staleness_exactBoundary() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.warp(1700000000);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 3600);
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+        assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
+    }
+
+    function test_submitCompliance_riskScoreSigned_revert_staleTimestamp() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.warp(1700000000);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 3601);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
+        );
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_riskScoreSigned_revert_futureTimestamp() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.warp(1700000000);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 + 1);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, 1700000000 + 1, 1700000000)
+        );
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_riskScoreSigned_revert_complianceSignedInputs() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        // A COMPLIANCE_SIGNED bundle is not a RISK_SCORE_SIGNED one: rejected as 0x08...
+        bytes memory inputs = _complianceSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        vm.expectRevert();
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+
+        // ...while the same inputs are accepted as the type they were built for.
+        vm.prank(alice);
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
     // -------------------------------------------------------------------------
     // Jurisdiction-flag enforcement (US, SG, UAE strict; EU, UK permissive)
     // -------------------------------------------------------------------------

@@ -260,8 +260,18 @@ abstract contract OracleTestBase is ERC8262TestBase {
         );
     }
 
-    /// @dev RISK_SCORE_SIGNED public inputs (11 slots: risk_score + signer_pubkey_hash + chain_id + oracle_address).
+    /// @dev RISK_SCORE_SIGNED public inputs (12 slots: risk_score + timestamp + signer_pubkey_hash
+    ///      + chain_id + oracle_address), signed at block.timestamp.
     function _riskScoreSignedInputs(bytes32 configHash, bytes32 signerPubkeyHash, address submitter)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _riskScoreSignedInputs(configHash, signerPubkeyHash, submitter, block.timestamp);
+    }
+
+    /// @dev RISK_SCORE_SIGNED public inputs with an explicit signed timestamp.
+    function _riskScoreSignedInputs(bytes32 configHash, bytes32 signerPubkeyHash, address submitter, uint256 timestamp)
         internal
         view
         returns (bytes memory)
@@ -274,6 +284,7 @@ abstract contract OracleTestBase is ERC8262TestBase {
             bytes32(uint256(1)), // result
             configHash,
             bytes32(uint256(0xeeff)), // provider_set_hash
+            bytes32(timestamp),
             signerPubkeyHash,
             bytes32(block.chainid),
             bytes32(uint256(uint160(address(oracle)))),
