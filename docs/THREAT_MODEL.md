@@ -27,8 +27,8 @@ Holds the `owner` key on `ERC8262Verifier`, `ERC8262Oracle`, and (transitively) 
 | Replace a verifier (`proposeVerifier` + `executeVerifierUpdate`)                                                | 24 h  | New verifier address must pass `code.length > 0`; `expectedCodehash` is pinned at proposal time and re-checked on execute |
 | Revoke a historical verifier version (timelocked path: `proposeVersionRevocation` + `executeVersionRevocation`) | 6 h   | Affects `verifyProofAtVersion` only; live verifications use the current verifier                     |
 | Revoke a historical verifier version (immediate emergency path: `revokeVerifierVersion`)                        | 0     | Documented as emergency-only; routine revocations should use the timelocked path                     |
-| Pause a single proof type (`pauseProofType`)                                                                    | 0     | Reversible, instant. On the Verifier: stops `verifyProof`, `verifyProofAtVersion`, and Oracle submissions (via `resolveVerifier`) |
-| Pause all proof types (`pause`)                                                                                 | 0     | Reversible. The Oracle's pause stops only the Oracle; the Verifier's also stops Oracle submissions   |
+| Pause a single proof type (`pauseProofType`)                                                                    | 0     | Reversible; instant via `GUARDIAN_ROLE`, 24 h via timelock. Verifier pause also stops Oracle submissions |
+| Pause all proof types (`pause`)                                                                                 | 0     | Reversible; instant via `GUARDIAN_ROLE`. Oracle pause stops only the Oracle; Verifier pause stops both |
 | Update provider config (`updateProviderConfig(bytes32,string,uint256[])`)                                       | 6 h   | Atomically writes the provider expansion alongside the new config hash (audit F-2 closure). Cannot re-register a previously revoked config. |
 | Revoke a config (`revokeConfig`)                                                                                | 6 h   | Permanent: a revoked config cannot be re-registered                                                  |
 | Register / revoke generic merkle root (membership / non-membership trees)                                       | 6 h   | Used for jurisdiction-managed sets like sanctions lists                                              |
@@ -273,7 +273,7 @@ We are **not engineering for PQ resistance in this draft**. Mainstream estimates
 
 **Response runbook.** Codified end-to-end as `test/Incident_VerifierSoundness.t.sol` (audit F-7); the test asserts the full sequence below plus the negative-control cases (`cannotRevokeCurrentVersion`, surgical-pause, global-pause).
 
-1. **Immediately:** `pauseProofType(affectedType)` from the owner. This stops both new `submitCompliance` calls and re-verifications via `verifyProofAtVersion`.
+1. **Immediately:** `pauseProofType(affectedType)` from the `GUARDIAN_ROLE` holder (the owner is the timelock, whose delay would apply). This stops both new `submitCompliance` calls and re-verifications via `verifyProofAtVersion`.
 2. **Within 24 h:** `proposeVerifier(affectedType, fixed)` — schedules the upgrade.
 3. **24 h later:** `executeVerifierUpdate(affectedType)` — replaces the buggy verifier.
 4. **Within 6 h:** `proposeVersionRevocation(affectedType, badVersion)` — schedules historical revocation.

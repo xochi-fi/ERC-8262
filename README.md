@@ -243,6 +243,7 @@ export INITIAL_PROVIDER_IDS=1,2,3   # comma-separated uint256s; weights for thes
 export USE_TIMELOCK=true
 export TIMELOCK_PROPOSER=0x...   # multisig that schedules ops
 export TIMELOCK_GUARDIAN=0x...   # optional cancel-only role
+export GUARDIAN_ADDRESS=0x...    # required: GUARDIAN_ROLE on Oracle + Verifier (instant pause)
 
 # 3. Deploy
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
@@ -251,7 +252,7 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
 
 **EIP-170 note.** The bb-generated UltraHonk verifiers used to land 64-65 B over the 24,576 B runtime limit. `scripts/patch-pairing-yul.sh` rewrites the `pairing()` free function in inline Yul (single `staticcall` to the bn254 precompile), saving ~186 B per verifier and ~800 gas per `verifyProof`. All 9 verifiers now sit at 24,452-24,455 B with +121-124 B headroom, deployable on Ethereum mainnet and the OP-Stack L2s without flags. The patch runs idempotently inside `scripts/generate-fixtures.sh`, so any regenerated verifier picks it up automatically. Confirm with `forge build --sizes` before broadcasting.
 
-**Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
+**Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy grants `GUARDIAN_ROLE` on both contracts to `GUARDIAN_ADDRESS` (required); under the timelock, owner `pause`/`pauseProofType`/`denyProvider` wait 24 hours, so the guardian is the only instant path. Deploy then initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
 
 ```text
 timelock.schedule(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)

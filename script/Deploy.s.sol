@@ -41,6 +41,8 @@ import {NonMembershipVerifier} from "../src/generated/non_membership_verifier.so
 ///                           (recommended for production deployments per docs/THREAT_MODEL.md)
 ///   TIMELOCK_PROPOSER    -- multisig EOA that schedules timelock ops (required if USE_TIMELOCK=true)
 ///   TIMELOCK_GUARDIAN    -- guardian EOA that can cancel scheduled ops (optional)
+///   GUARDIAN_ADDRESS     -- GUARDIAN_ROLE holder on Oracle and Verifier (required if
+///                           USE_TIMELOCK=true); otherwise pauses wait the 24h timelock.
 ///
 /// Post-deployment steps (NOT in this script -- see Bootstrap.s.sol):
 ///   - Register provider publishers via Oracle.setProviderPublisher
@@ -166,10 +168,18 @@ contract Deploy is Script {
     /// @dev Deploy Timelock and start the two-step ownership transfer.
     ///      The proposer must accept via the standard schedule + execute path
     ///      (audit F-5 closure).
+    ///      Grants GUARDIAN_ROLE to GUARDIAN_ADDRESS first: pause selectors are not in
+    ///      the timelock's LOW tier, so owner pausing would take HIGH_DELAY (24h).
     function _setupTimelock(ERC8262Verifier verifier, ERC8262Oracle oracle, bytes32 baseSalt) internal {
         address proposer = vm.envAddress("TIMELOCK_PROPOSER");
         address guardian = vm.envOr("TIMELOCK_GUARDIAN", address(0));
+        address incidentGuardian = vm.envOr("GUARDIAN_ADDRESS", address(0));
         require(proposer != address(0), "TIMELOCK_PROPOSER must be set when USE_TIMELOCK=true");
+        require(incidentGuardian != address(0), "GUARDIAN_ADDRESS must be set when USE_TIMELOCK=true");
+
+        verifier.grantRole(verifier.GUARDIAN_ROLE(), incidentGuardian);
+        oracle.grantRole(oracle.GUARDIAN_ROLE(), incidentGuardian);
+        console.log("GUARDIAN_ROLE granted on verifier + oracle:", incidentGuardian);
 
         Timelock timelock = new Timelock{salt: keccak256(abi.encodePacked(baseSalt, "timelock"))}(proposer, guardian);
         console.log("Timelock:", address(timelock));
@@ -228,6 +238,14 @@ contract Deploy is Script {
             require(oracle.owner() == deployer, "post-deploy: oracle owner not deployer pre-accept");
             require(verifier.pendingOwner() != address(0), "post-deploy: verifier pendingOwner unset");
             require(oracle.pendingOwner() != address(0), "post-deploy: oracle pendingOwner unset");
+            address incidentGuardian = vm.envAddress("GUARDIAN_ADDRESS");
+            require(
+                verifier.hasRole(verifier.GUARDIAN_ROLE(), incidentGuardian),
+                "post-deploy: verifier guardian not granted"
+            );
+            require(
+                oracle.hasRole(oracle.GUARDIAN_ROLE(), incidentGuardian), "post-deploy: oracle guardian not granted"
+            );
         } else {
             require(verifier.owner() == deployer, "post-deploy: verifier owner mismatch");
             require(oracle.owner() == deployer, "post-deploy: oracle owner mismatch");
