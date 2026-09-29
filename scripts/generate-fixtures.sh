@@ -46,10 +46,10 @@ generate_fixture() {
     fi
 
     # Verifier-only mode for circuits without Prover.toml.
-    # The signed-variant circuits (compliance_signed, risk_score_signed) require an
-    # off-chain ECDSA signature over an in-circuit Pedersen digest to populate
-    # Prover.toml; until that signing helper lands, we generate the verifier from
-    # the VK only and skip proof/fixture generation.
+    # compliance_signed and compliance_multi_signed need an off-chain ECDSA
+    # signature over an in-circuit Pedersen digest to populate Prover.toml; we
+    # generate their verifiers from the VK only and skip proof/fixture generation.
+    # risk_score_signed's Prover.toml carries a precomputed test-key signature.
     if [[ ! -f "$circuit_dir/Prover.toml" ]]; then
         echo "  no Prover.toml -- verifier-only mode"
         local vk_dir="$circuit_dir/target/vk"

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IERC8262Oracle} from "./interfaces/IERC8262Oracle.sol";
-import {IERC8262Verifier} from "./interfaces/IERC8262Verifier.sol";
+import {ERC8262Verifier} from "./ERC8262Verifier.sol";
 import {IUltraVerifier} from "./interfaces/IUltraVerifier.sol";
 import {IERC165} from "./interfaces/IERC165.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
@@ -23,7 +23,7 @@ import {EIP712CredentialRoot} from "./libraries/EIP712CredentialRoot.sol";
 ///      - owner: grant/revoke roles, transfer ownership
 contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @notice The verifier contract used to validate proofs
-    IERC8262Verifier public immutable verifier;
+    ERC8262Verifier public immutable verifier;
 
     /// @notice Hash of the current provider weight configuration
     bytes32 internal _providerConfigHash;
@@ -58,8 +58,10 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @notice Permanently-revoked provider config hashes; cannot be re-registered
     mapping(bytes32 configHash => bool revoked) internal _revokedConfigs;
 
-    /// @notice Set of valid merkle roots for MEMBERSHIP/NON_MEMBERSHIP/ATTESTATION proofs
-    mapping(bytes32 merkleRoot => bool valid) internal _validMerkleRoots;
+    /// @notice Valid merkle roots, per proof type (MEMBERSHIP or NON_MEMBERSHIP).
+    /// @dev Both circuits share a leaf format; a shared set would let a denylist root
+    ///      accept a MEMBERSHIP proof that the subject IS on the denylist.
+    mapping(uint8 proofType => mapping(bytes32 merkleRoot => bool valid)) internal _validMerkleRoots;
 
     /// @notice Registered reporting thresholds for PATTERN proofs (anti-structuring)
     /// @dev Maps threshold value (as bytes32) to validity. Prevents jurisdiction spoofing
@@ -96,13 +98,18 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     mapping(uint256 providerId => bool denied) internal _deniedProviders;
 
     /// @notice Highest proof-internal timestamp recorded per (subject, jurisdiction).
-    /// @dev Per-subject ratchet that prevents an old proof from overwriting a newer attestation.
-    ///      The stored value is the proof's `timestamp` public input (or `block.timestamp` for
-    ///      proof types without an internal timestamp -- RISK_SCORE and PATTERN). New proofs
-    ///      must be non-decreasing (>= last); equal timestamps are allowed so legitimate
-    ///      same-block submissions of different proof types can coexist for the same pair.
+    /// @dev `checkCompliance` slot ratchet on the proof's `timestamp` input (equal allowed).
+    ///      Only `_writesComplianceSlot` types advance it, so other types cannot lock it.
     mapping(address subject => mapping(uint8 jurisdictionId => uint256 lastProofTimestamp)) internal
         _lastProofTimestamp;
+
+    /// @dev Latest attestation per (subject, jurisdiction, proofType); read by `checkComplianceByType`.
+    mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => ComplianceAttestation)))
+        internal _typedAttestations;
+
+    /// @dev Ratchet for `_typedAttestations`; types without a proof timestamp use `block.timestamp`.
+    mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => uint256))) internal
+        _typedLastProofTimestamp;
 
     /// @notice Metadata for a published credential tree root
     struct CredentialRootInfo {
@@ -123,7 +130,12 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      replacement -- the registry intentionally has no reuse-after-revoke
     ///      protection because secp256k1 keys are externally generated and a re-issued
     ///      key is a fresh hash.
-    mapping(bytes32 signerPubkeyHash => bool valid) internal _validSignerPubkeyHashes;
+    /// @notice Provider operating each authorized signer key (0 = not authorized).
+    /// @dev M-of-N counts providers, not keys; `denyProvider` stops the provider's keys.
+    mapping(bytes32 signerPubkeyHash => uint256 providerId) internal _signerProvider;
+
+    /// @notice Attestations a guardian has invalidated after issue (key, config or root compromise).
+    mapping(bytes32 proofHash => bool invalidated) internal _invalidatedProofs;
 
     error ProofVerificationFailed();
     error ProofAlreadyUsed(bytes32 proofHash);
@@ -132,11 +144,11 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error PublicInputMismatch();
     error InvalidConfigHash(bytes32 configHash);
     error InvalidMerkleRoot(bytes32 merkleRoot);
+    error InvalidMerkleRootProofType(uint8 proofType);
     error InvalidReportingThreshold(bytes32 threshold);
     error CannotRevokeCurrentConfig();
     error ProofResultNegative();
     error SubmitterMismatch();
-    error ConfigHistoryFull();
     error ConfigAlreadyCurrent();
     error AlreadyRegistered();
     error NotRegistered();
@@ -167,6 +179,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error SignedSignalsRequired(uint8 jurisdictionId, uint8 proofType);
     error InvalidSignerPubkeyHash(bytes32 signerPubkeyHash);
     error InsufficientSigners(uint8 active, uint8 required);
+    error DuplicateSignerProvider(uint256 providerId);
+    error AttestationAlreadyInvalidated(bytes32 proofHash);
     error BelowJurisdictionMinProviders(uint8 jurisdictionId, uint8 m, uint8 floor);
     error DuplicateSigner(bytes32 signerPubkeyHash);
     error InvalidThresholdM(uint8 thresholdM);
@@ -180,6 +194,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error CredentialRootAlreadyRevoked(bytes32 root);
 
     event ConfigHistoryCompacted(uint256 entriesRemoved, uint256 newLength);
+    event ConfigEvicted(bytes32 indexed configHash);
+    event AttestationInvalidated(bytes32 indexed proofHash, address indexed subject);
     event ProviderPublisherSet(uint256 indexed providerId, address indexed previous, address indexed publisher);
     event CredentialSignerSet(uint256 indexed providerId, address indexed previous, address indexed signer);
     event CredentialRootPublished(uint256 indexed providerId, bytes32 indexed root, string cid, uint256 registeredAt);
@@ -187,16 +203,15 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     event ProviderConfigExpansionRegistered(bytes32 indexed configHash, uint256[] providerIds);
     event ProviderDeniedEvent(uint256 indexed providerId);
     event ProviderUndeniedEvent(uint256 indexed providerId);
-    event SignerPubkeyHashRegistered(bytes32 indexed signerPubkeyHash);
+    event SignerPubkeyHashRegistered(bytes32 indexed signerPubkeyHash, uint256 indexed providerId);
     event SignerPubkeyHashRevoked(bytes32 indexed signerPubkeyHash);
 
     /// @notice Maximum number of entries in the config history array
     uint256 public constant MAX_CONFIG_HISTORY = 256;
 
     /// @notice Maximum number of proofs in a single batch submission.
-    /// @dev Calibrated against the per-proof gas baseline in `.gas-snapshot`
-    ///      (~2.83M for submitCompliance). 10 × 2.83M ≈ 28.3M, just under the
-    ///      30M mainnet block gas target. Audit F-3.
+    /// @dev 10 entries ~24.1M gas (`test_gas_batch_atMaxSize_fitsBlockGasTarget`), under a
+    ///      30M block. Recalibrate per chain.
     uint256 public constant MAX_BATCH_SIZE = 10;
 
     /// @notice Minimum time window for PATTERN (anti-structuring) proofs in seconds
@@ -245,7 +260,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
         if (initialConfigHash == bytes32(0)) revert InvalidConfigHash(bytes32(0));
 
-        verifier = IERC8262Verifier(_verifier);
+        verifier = ERC8262Verifier(_verifier);
         owner = initialOwner;
         _providerConfigHash = initialConfigHash;
         _attestationTTL = 24 hours;
@@ -271,35 +286,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         bytes calldata publicInputs,
         bytes32 providerSetHash
     ) external whenNotPaused returns (ComplianceAttestation memory attestation) {
-        if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
         JurisdictionConfig.validateJurisdiction(jurisdictionId);
-
-        // Validate that caller-supplied parameters match what's in the proof's public inputs.
-        // This prevents submitting a proof generated for one context in a different context.
-        // Each validator returns the timestamp to ratchet on -- proof-internal for types that
-        // expose one, block.timestamp otherwise.
-        uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, publicInputs);
-        _ratchet(jurisdictionId, proofTimestamp);
-
-        // Verify proof and check replay (extracted to reduce stack depth)
-        (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, publicInputs);
-
-        // Build and store attestation (providerSetHash only meaningful for COMPLIANCE proofs)
-        bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
-                || proofType == ProofTypes.COMPLIANCE_SIGNED || proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED)
-            ? providerSetHash
-            : bytes32(0);
-        attestation = _buildAttestation(
-            jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(publicInputs), verifierUsed
-        );
-
-        uint256 previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
-        _attestations[msg.sender][jurisdictionId] = attestation;
-        _proofIndex[proofHash] = attestation;
-        _proofTypes[proofHash] = proofType;
-        _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
-
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+        attestation = _submitSingle(jurisdictionId, proofType, proof, publicInputs, providerSetHash);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -337,9 +325,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         returns (bool valid, ComplianceAttestation memory attestation)
     {
         attestation = _attestations[subject][jurisdictionId];
-
-        // Valid if attestation exists, threshold was met, and not expired
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
+        valid = _isLive(attestation);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -348,9 +334,43 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         view
         returns (bool valid, ComplianceAttestation memory attestation)
     {
-        attestation = _attestations[subject][jurisdictionId];
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
-            && attestation.proofType == proofType;
+        attestation = _typedAttestations[subject][jurisdictionId][proofType];
+        valid = _isLive(attestation);
+    }
+
+    /// @notice Whether the attestation for `proofHash` exists, met its threshold, is unexpired and not revoked.
+    /// @dev Use instead of `getHistoricalProof`, which ignores current validity.
+    function isAttestationValid(bytes32 proofHash) external view returns (bool valid) {
+        return _isLive(_proofIndex[proofHash]);
+    }
+
+    /// @notice Permanently invalidate an issued attestation (e.g. compromised key, config or root).
+    /// @dev Revoking a key, config or root blocks only new submissions. Revoked verifier
+    ///      versions are handled automatically (`_isLive`).
+    function invalidateAttestation(bytes32 proofHash) external onlyRole(GUARDIAN_ROLE) {
+        ComplianceAttestation storage attestation = _proofIndex[proofHash];
+        if (attestation.timestamp == 0) revert AttestationNotFound(proofHash);
+        if (_invalidatedProofs[proofHash]) revert AttestationAlreadyInvalidated(proofHash);
+        _invalidatedProofs[proofHash] = true;
+        emit AttestationInvalidated(proofHash, attestation.subject);
+    }
+
+    /// @notice Whether `proofHash` was guardian-invalidated or verified by a revoked version.
+    /// @dev Ignores expiry, for consumers with their own freshness window.
+    function isAttestationRevoked(bytes32 proofHash) external view returns (bool) {
+        return _isRevoked(_proofIndex[proofHash]);
+    }
+
+    /// @dev Current validity of a stored attestation.
+    function _isLive(ComplianceAttestation memory attestation) internal view returns (bool) {
+        return attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
+            && !_isRevoked(attestation);
+    }
+
+    /// @dev Checks the router so a revoked verifier version invalidates everything it minted.
+    function _isRevoked(ComplianceAttestation memory attestation) internal view returns (bool) {
+        return _invalidatedProofs[attestation.proofHash]
+            || verifier.isVerifierRevoked(attestation.proofType, attestation.verifierUsed);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -451,11 +471,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Update the provider weight configuration AND atomically register
     ///         its provider expansion (audit F-2 closure).
-    /// @dev A previously-revoked config hash cannot be re-registered. Mistaken
-    ///      revocations require deploying a fresh hash (hash of new metadata),
-    ///      not re-using the old one. The expansion is written in the same call
-    ///      so `denyProvider` enforcement is never silently disabled by a
-    ///      partially-applied rotation.
+    /// @dev Registered or ever-revoked hashes are rejected (reuse merges provider expansions);
+    ///      roll back with a fresh hash. Expansion is written atomically so `denyProvider`
+    ///      always applies. A full history evicts its oldest (non-current) entry.
     /// @param newConfigHash The new configuration hash
     /// @param metadataURI URI pointing to the full config (IPFS, Arweave, etc.)
     /// @param providerIds Provider IDs whose weights are committed-to by
@@ -464,15 +482,34 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         external
         onlyRole(CONFIG_ROLE)
     {
+        if (newConfigHash == bytes32(0)) revert InvalidConfigHash(newConfigHash);
         if (newConfigHash == _providerConfigHash) revert ConfigAlreadyCurrent();
         if (_revokedConfigs[newConfigHash]) revert ConfigPermanentlyRevoked(newConfigHash);
-        if (_configHistory.length >= MAX_CONFIG_HISTORY) revert ConfigHistoryFull();
+        if (_validConfigs[newConfigHash]) revert AlreadyRegistered();
+        if (_configHistory.length >= MAX_CONFIG_HISTORY) _evictOldestConfig();
         _providerConfigHash = newConfigHash;
         _configHistory.push(newConfigHash);
         _validConfigs[newConfigHash] = true;
         _writeConfigExpansion(newConfigHash, providerIds);
         emit ProviderWeightsUpdated(newConfigHash, block.timestamp, metadataURI);
         emit ProviderConfigExpansionRegistered(newConfigHash, providerIds);
+    }
+
+    /// @dev Evict `_configHistory[0]` (never current: current is last, full history holds >= 2).
+    ///      Not marked revoked; expansion cleared so re-registration starts clean.
+    function _evictOldestConfig() internal {
+        bytes32 evicted = _configHistory[0];
+        uint256 len = _configHistory.length;
+        for (uint256 i = 1; i < len;) {
+            _configHistory[i - 1] = _configHistory[i];
+            unchecked {
+                ++i;
+            }
+        }
+        _configHistory.pop();
+        _validConfigs[evicted] = false;
+        delete _configProviders[evicted];
+        emit ConfigEvicted(evicted);
     }
 
     /// @notice Update the attestation TTL
@@ -503,6 +540,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @param configHash The config hash to revoke (cannot be the current active config)
     function revokeConfig(bytes32 configHash) external onlyRole(GUARDIAN_ROLE) {
         if (configHash == _providerConfigHash) revert CannotRevokeCurrentConfig();
+        if (!_validConfigs[configHash]) revert NotRegistered();
         _validConfigs[configHash] = false;
         _revokedConfigs[configHash] = true;
         emit ConfigRevoked(configHash);
@@ -643,25 +681,37 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         set[key] = false;
     }
 
-    /// @notice Register a merkle root as valid for MEMBERSHIP/NON_MEMBERSHIP/ATTESTATION proofs
+    /// @notice Register a merkle root as valid for one set-proof type
+    /// @param proofType ProofTypes.MEMBERSHIP or ProofTypes.NON_MEMBERSHIP
     /// @param merkleRoot The merkle root to register
-    function registerMerkleRoot(bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
-        _addBoolEntry(_validMerkleRoots, merkleRoot);
-        emit MerkleRootRegistered(merkleRoot);
+    function registerMerkleRoot(uint8 proofType, bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
+        _assertSetProofType(proofType);
+        _addBoolEntry(_validMerkleRoots[proofType], merkleRoot);
+        emit MerkleRootRegistered(proofType, merkleRoot);
     }
 
-    /// @notice Revoke a merkle root so proofs using it are no longer accepted
+    /// @notice Revoke a merkle root so proofs of that type using it are no longer accepted
+    /// @param proofType ProofTypes.MEMBERSHIP or ProofTypes.NON_MEMBERSHIP
     /// @param merkleRoot The merkle root to revoke
-    function revokeMerkleRoot(bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
-        _removeBoolEntry(_validMerkleRoots, merkleRoot);
-        emit MerkleRootRevoked(merkleRoot);
+    function revokeMerkleRoot(uint8 proofType, bytes32 merkleRoot) external onlyRole(REGISTRAR_ROLE) {
+        _assertSetProofType(proofType);
+        _removeBoolEntry(_validMerkleRoots[proofType], merkleRoot);
+        emit MerkleRootRevoked(proofType, merkleRoot);
     }
 
-    /// @notice Check if a merkle root is valid
+    /// @notice Check if a merkle root is valid for a set-proof type
+    /// @param proofType ProofTypes.MEMBERSHIP or ProofTypes.NON_MEMBERSHIP
     /// @param merkleRoot The merkle root to check
-    /// @return valid Whether the merkle root has been registered and not revoked
-    function isValidMerkleRoot(bytes32 merkleRoot) external view returns (bool valid) {
-        return _validMerkleRoots[merkleRoot];
+    /// @return valid Whether the root is registered for that type and not revoked
+    function isValidMerkleRoot(uint8 proofType, bytes32 merkleRoot) external view returns (bool valid) {
+        return _validMerkleRoots[proofType][merkleRoot];
+    }
+
+    /// @dev Reverts unless `proofType` uses the merkle-root registry.
+    function _assertSetProofType(uint8 proofType) internal pure {
+        if (proofType != ProofTypes.MEMBERSHIP && proofType != ProofTypes.NON_MEMBERSHIP) {
+            revert InvalidMerkleRootProofType(proofType);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -829,21 +879,39 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      to produce a registry-matching hash. Rotating a key: revoke the outgoing hash,
     ///      register the new one; in-flight proofs from the outgoing key are rejected the
     ///      moment its hash is revoked.
-    function registerSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
+    /// @param signerPubkeyHash The signer's key commitment
+    /// @param providerId The provider that operates this key (non-zero). A provider may hold
+    ///        several keys; COMPLIANCE_MULTI_SIGNED counts providers, not keys.
+    function registerSignerPubkeyHash(bytes32 signerPubkeyHash, uint256 providerId) external onlyRole(REGISTRAR_ROLE) {
         if (signerPubkeyHash == bytes32(0)) revert InvalidSignerPubkeyHash(signerPubkeyHash);
-        _addBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
-        emit SignerPubkeyHashRegistered(signerPubkeyHash);
+        if (providerId == 0) revert InvalidProviderId();
+        if (_signerProvider[signerPubkeyHash] != 0) revert AlreadyRegistered();
+        _signerProvider[signerPubkeyHash] = providerId;
+        emit SignerPubkeyHashRegistered(signerPubkeyHash, providerId);
     }
 
     /// @notice Revoke a previously-authorized signer pubkey hash.
     function revokeSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
-        _removeBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
+        if (_signerProvider[signerPubkeyHash] == 0) revert NotRegistered();
+        delete _signerProvider[signerPubkeyHash];
         emit SignerPubkeyHashRevoked(signerPubkeyHash);
     }
 
     /// @notice Whether a signer pubkey hash is currently authorized.
     function isValidSignerPubkeyHash(bytes32 signerPubkeyHash) external view returns (bool valid) {
-        return _validSignerPubkeyHashes[signerPubkeyHash];
+        return _signerProvider[signerPubkeyHash] != 0;
+    }
+
+    /// @notice Provider that operates an authorized signer key (0 if not authorized).
+    function signerProvider(bytes32 signerPubkeyHash) external view returns (uint256 providerId) {
+        return _signerProvider[signerPubkeyHash];
+    }
+
+    /// @dev Resolve an authorized, non-denied signer to its provider, or revert.
+    function _assertSignerAuthorized(bytes32 signerPubkeyHash) internal view returns (uint256 providerId) {
+        providerId = _signerProvider[signerPubkeyHash];
+        if (providerId == 0) revert InvalidSignerPubkeyHash(signerPubkeyHash);
+        if (_deniedProviders[providerId]) revert ProviderDenied(providerId);
     }
 
     /// @notice Register a reporting threshold for PATTERN (anti-structuring) proofs
@@ -913,8 +981,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     // Internal
     // -------------------------------------------------------------------------
 
-    /// @dev Process a single entry in a batch (or standalone) submission.
-    ///      Extracted to avoid stack-too-deep in the batch loop.
+    /// @dev Every accepted proof writes its per-type slot; only `_writesComplianceSlot`
+    ///      types also write the `checkCompliance` slot.
     function _submitSingle(
         uint8 jurisdictionId,
         uint8 proofType,
@@ -924,7 +992,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ) internal returns (ComplianceAttestation memory attestation) {
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
         uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, inputs);
-        _ratchet(jurisdictionId, proofTimestamp);
+        bool writesComplianceSlot = _writesComplianceSlot(jurisdictionId, proofType);
+        _ratchetTyped(jurisdictionId, proofType, proofTimestamp);
+        if (writesComplianceSlot) _ratchet(jurisdictionId, proofTimestamp);
 
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, inputs);
 
@@ -936,23 +1006,52 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
             jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(inputs), verifierUsed
         );
 
-        uint256 previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
-        _attestations[msg.sender][jurisdictionId] = attestation;
-        _proofIndex[proofHash] = attestation;
-        _proofTypes[proofHash] = proofType;
-        _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
+        _storeAttestation(jurisdictionId, proofType, attestation, writesComplianceSlot);
+    }
 
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+    /// @dev Split out of `_submitSingle` for stack depth.
+    function _storeAttestation(
+        uint8 jurisdictionId,
+        uint8 proofType,
+        ComplianceAttestation memory attestation,
+        bool writesComplianceSlot
+    ) internal {
+        uint256 previousExpiresAt;
+        if (writesComplianceSlot) {
+            previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
+            _attestations[msg.sender][jurisdictionId] = attestation;
+        } else {
+            previousExpiresAt = _typedAttestations[msg.sender][jurisdictionId][proofType].expiresAt;
+        }
+        _typedAttestations[msg.sender][jurisdictionId][proofType] = attestation;
+        _proofIndex[attestation.proofHash] = attestation;
+        _proofTypes[attestation.proofHash] = proofType;
+        _attestationHistory[msg.sender][jurisdictionId].push(attestation.proofHash);
+
+        emit ComplianceVerified(
+            msg.sender, jurisdictionId, true, attestation.proofHash, attestation.expiresAt, previousExpiresAt
+        );
+    }
+
+    /// @dev Whether `proofType` may write the `checkCompliance` slot. MULTI_SIGNED always
+    ///      (validator enforces the provider floor); COMPLIANCE / COMPLIANCE_SIGNED only where
+    ///      the floor is 1. No other type binds the jurisdiction's risk threshold.
+    function _writesComplianceSlot(uint8 jurisdictionId, uint8 proofType) internal pure returns (bool) {
+        if (proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED) return true;
+        if (proofType == ProofTypes.COMPLIANCE || proofType == ProofTypes.COMPLIANCE_SIGNED) {
+            return JurisdictionConfig.minMultiProviderThreshold(jurisdictionId) == 1;
+        }
+        return false;
     }
 
     /// @dev Verify the ZK proof and record replay protection.
-    ///      Resolves verifier address once to eliminate TOCTOU.
+    ///      Resolves the verifier once (no TOCTOU with `verifierUsed`); `resolveVerifier`
+    ///      reverts while the router is paused.
     function _verifyAndRecordProof(uint8 proofType, bytes calldata proof, bytes calldata publicInputs)
         internal
         returns (address verifierUsed, bytes32 proofHash)
     {
-        verifierUsed = verifier.getVerifier(proofType);
-        if (verifierUsed == address(0)) revert ProofVerificationFailed();
+        verifierUsed = verifier.resolveVerifier(proofType);
         ProofTypes.validatePublicInputs(proofType, publicInputs);
         bytes32[] memory inputs = ProofTypes.decodePublicInputs(publicInputs);
         bool valid = IUltraVerifier(verifierUsed).verify(proof, inputs);
@@ -1029,14 +1128,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @dev Per-(subject, jurisdiction) non-decreasing ratchet on the proof timestamp.
-    ///      Blocks an older proof from overwriting a newer attestation -- the canonical
-    ///      replay-extension attack where an attacker holds a "passed" proof and re-submits
-    ///      it after state has degraded. The ratchet's effective value is the proof's
-    ///      internal timestamp for types that expose one (COMPLIANCE/ATTESTATION/MEMBERSHIP/
-    ///      NON_MEMBERSHIP), or `block.timestamp` for types that don't (RISK_SCORE/PATTERN).
-    ///      Equal timestamps are allowed: legitimate same-block submissions of different
-    ///      proof types for the same (subject, jurisdiction) must remain possible.
+    /// @dev Non-decreasing (subject, jurisdiction) ratchet; blocks replaying an older
+    ///      "passed" proof after state degrades. Equal timestamps allowed.
     function _ratchet(uint8 jurisdictionId, uint256 proofTimestamp) internal {
         uint256 last = _lastProofTimestamp[msg.sender][jurisdictionId];
         if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
@@ -1045,10 +1138,28 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
+    /// @dev Per-type ratchet; RISK_SCORE and PATTERN have no proof timestamp and use `block.timestamp`.
+    function _ratchetTyped(uint8 jurisdictionId, uint8 proofType, uint256 proofTimestamp) internal {
+        uint256 last = _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType];
+        if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
+        if (proofTimestamp != last) {
+            _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType] = proofTimestamp;
+        }
+    }
+
     /// @notice Last ratcheted proof timestamp for a (subject, jurisdiction) pair.
     /// @dev Returns 0 when no proof has been recorded yet for the pair.
     function lastProofTimestamp(address subject, uint8 jurisdictionId) external view returns (uint256) {
         return _lastProofTimestamp[subject][jurisdictionId];
+    }
+
+    /// @notice Last ratcheted proof timestamp for a (subject, jurisdiction, proofType) slot.
+    function lastProofTimestampByType(address subject, uint8 jurisdictionId, uint8 proofType)
+        external
+        view
+        returns (uint256)
+    {
+        return _typedLastProofTimestamp[subject][jurisdictionId][proofType];
     }
 
     /// @dev Check that a proof timestamp is within MAX_PROOF_AGE in the past and
@@ -1067,9 +1178,11 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @dev Assert that the encoded submitter equals msg.sender.
+    /// @dev Assert that the encoded submitter equals msg.sender. Compares the full
+    ///      word: the circuit's `submitter` is a Field, so a value with bits above 160
+    ///      set is a different subject even though its low 160 bits match.
     function _assertSubmitter(bytes32 raw) internal view {
-        if (address(uint160(uint256(raw))) != msg.sender) revert SubmitterMismatch();
+        if (raw != bytes32(uint256(uint160(msg.sender)))) revert SubmitterMismatch();
     }
 
     /// @dev Assert that the encoded boolean result is canonical true.
@@ -1084,7 +1197,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @dev Assert that none of the providers expanded from `configHash` have been denied.
     ///      Centralizes the `_configContainsDeniedProvider` -> `_firstDeniedProviderInConfig`
-    ///      revert pattern shared by every compliance validator.
+    ///      revert pattern shared by every validator that consumes a `config_hash`
+    ///      (0x01, 0x02, 0x07, 0x08, 0x09).
     function _assertConfigNotDenied(bytes32 configHash) internal view {
         if (_configContainsDeniedProvider(configHash)) {
             revert ProviderDenied(_firstDeniedProviderInConfig(configHash));
@@ -1195,6 +1309,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [7]: submitter
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertValidConfig(bytes32(publicInputs[160:192]));
+        _assertConfigNotDenied(bytes32(publicInputs[160:192]));
         _assertSubmitter(bytes32(publicInputs[224:256]));
         _validateRiskBounds(
             uint256(bytes32(publicInputs[0:32])),
@@ -1288,7 +1403,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [3]: is_member
         //   [4]: submitter
         bytes32 merkleRoot = bytes32(publicInputs[0:32]);
-        if (!_validMerkleRoots[merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
+        if (!_validMerkleRoots[ProofTypes.MEMBERSHIP][merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
         proofTimestamp = uint256(bytes32(publicInputs[64:96]));
         _validateProofTimestamp(proofTimestamp);
         _assertResultPositive(bytes32(publicInputs[96:128]));
@@ -1305,7 +1420,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [3]: is_non_member
         //   [4]: submitter
         bytes32 merkleRoot = bytes32(publicInputs[0:32]);
-        if (!_validMerkleRoots[merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
+        if (!_validMerkleRoots[ProofTypes.NON_MEMBERSHIP][merkleRoot]) revert InvalidMerkleRoot(merkleRoot);
         proofTimestamp = uint256(bytes32(publicInputs[64:96]));
         _validateProofTimestamp(proofTimestamp);
         _assertResultPositive(bytes32(publicInputs[96:128]));
@@ -1341,9 +1456,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
         _assertValidConfig(proofConfigHash);
         _assertResultPositive(bytes32(publicInputs[128:160]));
-        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
-            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
-        }
+        _assertSignerAuthorized(proofSignerPubkeyHash);
         _assertChainAndOracleBinding(publicInputs, 192);
         _assertSubmitter(bytes32(publicInputs[256:288]));
         _assertConfigNotDenied(proofConfigHash);
@@ -1396,14 +1509,18 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
             bytes32(publicInputs[288:320]),
             bytes32(publicInputs[320:352])
         ];
+        // M-of-N counts providers: active slots must be distinct providers.
+        uint256[5] memory slotProviders;
         uint8 activeCount;
         for (uint256 i; i < 5; ++i) {
             bytes32 h = signerHashes[i];
             if (h == bytes32(0)) continue;
-            if (!_validSignerPubkeyHashes[h]) revert InvalidSignerPubkeyHash(h);
+            uint256 providerId = _assertSignerAuthorized(h);
             for (uint256 j; j < i; ++j) {
                 if (signerHashes[j] == h) revert DuplicateSigner(h);
+                if (slotProviders[j] == providerId) revert DuplicateSignerProvider(providerId);
             }
+            slotProviders[i] = providerId;
             unchecked {
                 ++activeCount;
             }
@@ -1421,14 +1538,15 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @dev Validate RISK_SCORE_SIGNED public inputs (audit I-1).
     ///      Identical semantic checks to _validateRiskScoreInputs but with an additional
-    ///      `signer_pubkey_hash` slot validated against the on-chain registry.
+    ///      `signer_pubkey_hash` slot validated against the on-chain registry, and the
+    ///      signed `timestamp` enforced within MAX_PROOF_AGE exactly as for
+    ///      COMPLIANCE_SIGNED. The circuit commits the timestamp to the provider's
+    ///      signature, so this bounds how long a signature can mint attestations.
     function _validateRiskScoreSignedInputs(bytes calldata publicInputs)
         internal
         view
         returns (uint256 proofTimestamp)
     {
-        // RISK_SCORE_SIGNED has no proof-internal timestamp; ratchet uses block.timestamp.
-        proofTimestamp = block.timestamp;
         // RISK_SCORE_SIGNED public inputs layout (each 32 bytes):
         //   [0]:  proof_type
         //   [1]:  direction
@@ -1437,25 +1555,27 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [4]:  result
         //   [5]:  config_hash
         //   [6]:  provider_set_hash
-        //   [7]:  signer_pubkey_hash
-        //   [8]:  chain_id            (audit F-6)
-        //   [9]:  oracle_address      (audit F-6)
-        //   [10]: submitter
-        bytes32 proofSignerPubkeyHash = bytes32(publicInputs[224:256]);
+        //   [7]:  timestamp           (signed by the provider)
+        //   [8]:  signer_pubkey_hash
+        //   [9]:  chain_id            (audit F-6)
+        //   [10]: oracle_address      (audit F-6)
+        //   [11]: submitter
+        bytes32 proofSignerPubkeyHash = bytes32(publicInputs[256:288]);
 
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertValidConfig(bytes32(publicInputs[160:192]));
-        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
-            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
-        }
-        _assertChainAndOracleBinding(publicInputs, 256);
-        _assertSubmitter(bytes32(publicInputs[320:352]));
+        _assertConfigNotDenied(bytes32(publicInputs[160:192]));
+        _assertSignerAuthorized(proofSignerPubkeyHash);
+        _assertChainAndOracleBinding(publicInputs, 288);
+        _assertSubmitter(bytes32(publicInputs[352:384]));
         _validateRiskBounds(
             uint256(bytes32(publicInputs[0:32])),
             uint256(bytes32(publicInputs[32:64])),
             uint256(bytes32(publicInputs[64:96])),
             uint256(bytes32(publicInputs[96:128]))
         );
+        proofTimestamp = uint256(bytes32(publicInputs[224:256]));
+        _validateProofTimestamp(proofTimestamp);
     }
 
     // -------------------------------------------------------------------------

@@ -50,6 +50,19 @@ contract IntegrationTest is Test {
     /// @dev Provider id used in the attestation fixture
     uint256 internal constant FIXTURE_PROVIDER_ID = 42;
 
+    /// @dev Oracle address the RISK_SCORE_SIGNED fixture signature commits to: the
+    ///      second contract this test deploys (CREATE from the default test address,
+    ///      nonce 2). Moving the Oracle deployment in setUp invalidates the fixture.
+    address internal constant FIXTURE_ORACLE = 0x2e234DAe75C793f67A35089C9d99245E1C58470b;
+
+    /// @dev signer_pubkey_hash of the RISK_SCORE_SIGNED fixture's provider key
+    ///      (secp256k1 key keccak256("erc8262-integration-fixture-provider-signer")).
+    bytes32 internal constant FIXTURE_SIGNER_PUBKEY_HASH =
+        0x294fc7a4edbc711b1c3ceceb89474957aea2974dbf3d27efe759a1ecef35d6dc;
+
+    /// @dev Timestamp the RISK_SCORE_SIGNED fixture's provider signed (public input 7).
+    uint256 internal constant FIXTURE_SIGNED_TIMESTAMP = 1700000000;
+
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
         ps = new uint256[](1);
         ps[0] = 1;
@@ -59,30 +72,34 @@ contract IntegrationTest is Test {
         verifier = new ERC8262Verifier(owner);
         oracle = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
-        // Deploy all generated verifiers and register them
-        string[6] memory circuits =
-            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];
-        uint8[6] memory types = [
+        // Deploy all generated verifiers that have a fixture and register them
+        string[7] memory circuits =
+            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership", "risk_score_signed"];
+        uint8[7] memory types = [
             ProofTypes.COMPLIANCE,
             ProofTypes.RISK_SCORE,
             ProofTypes.PATTERN,
             ProofTypes.ATTESTATION,
             ProofTypes.MEMBERSHIP,
-            ProofTypes.NON_MEMBERSHIP
+            ProofTypes.NON_MEMBERSHIP,
+            ProofTypes.RISK_SCORE_SIGNED
         ];
 
         vm.startPrank(owner);
-        for (uint256 i; i < 6; i++) {
+        for (uint256 i; i < 7; i++) {
             address v = _deployGeneratedVerifier(circuits[i]);
             verifier.setVerifierInitial(types[i], v);
         }
 
         // Register merkle roots needed by membership/non_membership fixtures
-        oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
 
         // Register reporting threshold needed by pattern fixture (10000)
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
+
+        // RISK_SCORE_SIGNED fixture signer (circuits/risk_score_signed/Prover.toml)
+        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
 
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA submits the tx; a separate signing key
@@ -288,6 +305,65 @@ contract IntegrationTest is Test {
     }
 
     // -------------------------------------------------------------------------
+    // End-to-end: risk_score_signed proof (review #5)
+    //
+    // The fixture's provider signature commits to chain_id 31337, this test's Oracle
+    // address, timestamp 1700000000 and submitter 0xdead (Prover.toml). The
+    // timestamp is a public input the Oracle freshness-checks, so the same bundle
+    // mints attestations only within MAX_PROOF_AGE of its signing time.
+    // -------------------------------------------------------------------------
+
+    function test_realProof_riskScoreSigned_submitAndCheck() public {
+        assertEq(address(oracle), FIXTURE_ORACLE, "fixture signature binds this Oracle address");
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
+
+        vm.warp(FIXTURE_SIGNED_TIMESTAMP + 30 minutes);
+        vm.prank(FIXTURE_SUBMITTER);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            1, // US: strict jurisdiction, signed signals required
+            ProofTypes.RISK_SCORE_SIGNED,
+            proof,
+            publicInputs,
+            bytes32(0)
+        );
+        assertEq(att.subject, FIXTURE_SUBMITTER);
+        assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
+        // The proof time is the provider's signed timestamp, not the block time.
+        assertEq(
+            oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 1, ProofTypes.RISK_SCORE_SIGNED),
+            FIXTURE_SIGNED_TIMESTAMP
+        );
+    }
+
+    function test_realProof_riskScoreSigned_revert_stale() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
+
+        uint256 later = FIXTURE_SIGNED_TIMESTAMP + oracle.MAX_PROOF_AGE() + 1;
+        vm.warp(later);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, FIXTURE_SIGNED_TIMESTAMP, later)
+        );
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs, bytes32(0));
+    }
+
+    function test_realProof_riskScoreSigned_redatedTimestampFailsVerification() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
+        assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs));
+
+        // Relabel the stale proof with a fresh timestamp (word 7): the Oracle's window
+        // would accept it, but the proof no longer verifies.
+        bytes memory redated = bytes.concat(
+            _slice(publicInputs, 0, 7 * 32),
+            bytes32(FIXTURE_SIGNED_TIMESTAMP + 1 days),
+            _slice(publicInputs, 8 * 32, publicInputs.length)
+        );
+        try verifier.verifyProof(ProofTypes.RISK_SCORE_SIGNED, proof, redated) returns (bool valid) {
+            assertFalse(valid, "re-dated RISK_SCORE_SIGNED proof verified");
+        } catch { /* revert acceptable */ }
+    }
+
+    // -------------------------------------------------------------------------
     // Frozen-Heart variant tests
     //
     // Background: the "Frozen Heart" class of ZK soundness bugs (TrailOfBits, 2022)
@@ -458,17 +534,18 @@ contract IntegrationTest is Test {
         // Every fixture verifies cleanly => its logical input count matches
         // the verifier's expected (vk.publicInputsSize - 16). This is implicitly
         // tested by every existing real-proof test, but we make it explicit here.
-        string[6] memory circuits =
-            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership"];
-        uint8[6] memory types = [
+        string[7] memory circuits =
+            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership", "risk_score_signed"];
+        uint8[7] memory types = [
             ProofTypes.COMPLIANCE,
             ProofTypes.RISK_SCORE,
             ProofTypes.PATTERN,
             ProofTypes.ATTESTATION,
             ProofTypes.MEMBERSHIP,
-            ProofTypes.NON_MEMBERSHIP
+            ProofTypes.NON_MEMBERSHIP,
+            ProofTypes.RISK_SCORE_SIGNED
         ];
-        for (uint256 i; i < 6; i++) {
+        for (uint256 i; i < 7; i++) {
             (bytes memory proof, bytes memory publicInputs) = _loadFixture(circuits[i]);
             // The verifier will revert with InvalidPublicInputLength if the count
             // ProofTypes reports differs from what the verifier expects.
@@ -482,6 +559,13 @@ contract IntegrationTest is Test {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    function _slice(bytes memory data, uint256 start, uint256 end) internal pure returns (bytes memory out) {
+        out = new bytes(end - start);
+        for (uint256 i = start; i < end; i++) {
+            out[i - start] = data[i];
+        }
+    }
 
     function _loadFixture(string memory circuit) internal view returns (bytes memory proof, bytes memory publicInputs) {
         string memory proofPath = string.concat("test/fixtures/", circuit, "/proof");
@@ -510,6 +594,7 @@ contract IntegrationTest is Test {
         if (keccak256(bytes(circuit)) == keccak256("attestation")) return "AttestationVerifier";
         if (keccak256(bytes(circuit)) == keccak256("membership")) return "MembershipVerifier";
         if (keccak256(bytes(circuit)) == keccak256("non_membership")) return "NonMembershipVerifier";
+        if (keccak256(bytes(circuit)) == keccak256("risk_score_signed")) return "RiskScoreSignedVerifier";
         revert("unknown circuit");
     }
 }

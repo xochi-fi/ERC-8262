@@ -539,6 +539,36 @@ contract ERC8262VerifierTest is ERC8262TestBase {
         verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
     }
 
+    /// An old version sharing the live verifier address cannot be revoked.
+    function test_revokeVerifierVersion_revert_sameAddressAsCurrent() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier)); // v2
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(passingVerifier)); // v3 == v1's address
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Verifier.CannotRevokeCurrentVersion.selector, ProofTypes.COMPLIANCE)
+        );
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+    }
+
+    /// A revoked verifier address cannot be reinstalled; attestations it minted stay revoked.
+    function test_proposeVerifier_revert_revokedAddress() public {
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        vm.startPrank(owner);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+        assertTrue(verifier.isVerifierRevoked(ProofTypes.COMPLIANCE, address(passingVerifier)));
+        assertFalse(verifier.isVerifierRevoked(ProofTypes.COMPLIANCE, address(failingVerifier)));
+
+        bytes32 codehash = address(passingVerifier).codehash;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC8262Verifier.VerifierAddressRevoked.selector, ProofTypes.COMPLIANCE, address(passingVerifier)
+            )
+        );
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(passingVerifier), codehash);
+        vm.stopPrank();
+    }
+
     function test_revokeVerifierVersion_revert_alreadyRevoked() public {
         _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
 
