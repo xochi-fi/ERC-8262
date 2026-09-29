@@ -299,7 +299,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         _proofTypes[proofHash] = proofType;
         _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
 
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+        emit ComplianceVerified(
+            msg.sender, jurisdictionId, true, proofHash, attestation.proofType, attestation.expiresAt, previousExpiresAt
+        );
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -338,8 +340,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     {
         attestation = _attestations[subject][jurisdictionId];
 
-        // Valid if attestation exists, threshold was met, and not expired
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
+        // Valid if attestation exists, threshold was met, not expired, and verifier not revoked
+        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
+            && !verifier.isVerifierAddressRevoked(attestation.proofType, attestation.verifierUsed);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -350,7 +353,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     {
         attestation = _attestations[subject][jurisdictionId];
         valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
-            && attestation.proofType == proofType;
+            && attestation.proofType == proofType
+            && !verifier.isVerifierAddressRevoked(attestation.proofType, attestation.verifierUsed);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -942,7 +946,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         _proofTypes[proofHash] = proofType;
         _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
 
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+        emit ComplianceVerified(
+            msg.sender, jurisdictionId, true, proofHash, attestation.proofType, attestation.expiresAt, previousExpiresAt
+        );
     }
 
     /// @dev Verify the ZK proof and record replay protection.
@@ -1427,7 +1433,11 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         view
         returns (uint256 proofTimestamp)
     {
-        // RISK_SCORE_SIGNED has no proof-internal timestamp; ratchet uses block.timestamp.
+        // SECURITY TODO (Critical): signed_timestamp is PRIVATE in the risk_score_signed circuit.
+        // The Oracle cannot verify freshness of the provider's signature. A holder of an arbitrarily
+        // old signature can regenerate a fresh proof and submit it. Fix: promote signed_timestamp to
+        // a public input in circuits/risk_score_signed/src/main.nr and add _validateProofTimestamp
+        // here, mirroring COMPLIANCE_SIGNED (0x07) at line 1350. See TODO.md.
         proofTimestamp = block.timestamp;
         // RISK_SCORE_SIGNED public inputs layout (each 32 bytes):
         //   [0]:  proof_type

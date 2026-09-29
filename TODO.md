@@ -114,6 +114,33 @@ Two new proof types (`COMPLIANCE_SIGNED = 0x07`, `RISK_SCORE_SIGNED = 0x08`) ver
 - Infrastructure: `generate-fixtures.sh` (incl. verifier-only mode for circuits without `Prover.toml`), `Makefile`, pre-commit `forge fmt`, e2e harness, TS consumer SDK + on-chain integration tests, CI jobs, gas-snapshot regression.
 </details>
 
+## Reviewer Findings -- Deferred
+
+### Critical
+
+- [ ] **Promote `signed_timestamp` to public in 0x08 risk_score_signed circuit**: `signed_timestamp` is currently a private witness in `circuits/risk_score_signed/src/main.nr`. The Oracle cannot verify freshness of the provider's signature -- a holder of an arbitrarily old signature can regenerate a fresh proof. Fix: make `signed_timestamp` a public input and add `_validateProofTimestamp` in the Oracle's `_validateRiskScoreSignedInputs`, mirroring COMPLIANCE_SIGNED (0x07).
+
+### High
+
+- [ ] **Universal in-circuit chain binding for all 9 types**: unsigned types (0x01-0x06) need `chain_id` + `oracle_address` as public inputs to prevent in-circuit cross-chain replay. Currently only signed variants (0x07-0x09) have this binding.
+- [ ] **Move jurisdiction thresholds from circuits to public inputs**: Oracle validates `threshold_input == registry` rather than hard-coding thresholds in circuit constants. Enables threshold governance without circuit redeployment.
+
+### Medium
+
+- [ ] `submitComplianceFor` with EIP-712/ERC-1271 for AA/relayer support
+- [ ] Recursive proof aggregation (Groth16 wrapper or recursive UltraHonk)
+- [ ] EIP-7907 code-size fallback for generated verifiers
+- [ ] `signals_commitment` public input for unsigned tier non-repudiability
+
+### Low
+
+- [ ] `MerkleRootRegistered` metadataURI + `registeredAt` view
+- [ ] SettlementRegistry migration story
+- [ ] Reference provider signing daemon + mock testnet provider
+- [ ] ERC-3643 compliance-module adapter / Uniswap v4 hook demo
+- [ ] Proof-of-innocence data retention guidance in spec
+- [ ] Merkle root staleness bounds
+
 ## Medium-priority hardening
 
 - [ ] **Jurisdiction threshold timelock**: route `JurisdictionConfig` updates through `Timelock LOW_DELAY` (6h). Today the thresholds and `requireSignedSignals` flag are compile-time constants; relevant only if/when these become governed.

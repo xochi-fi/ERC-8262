@@ -573,6 +573,28 @@ contract ERC8262VerifierTest is ERC8262TestBase {
     }
 
     // -------------------------------------------------------------------------
+    // isVerifierAddressRevoked (Finding 4)
+    // -------------------------------------------------------------------------
+
+    function test_isVerifierAddressRevoked_trueForRevokedVersion() public {
+        // v1 = passingVerifier; upgrade to v2 so v1 can be revoked
+        _upgradeVerifier(ProofTypes.COMPLIANCE, address(failingVerifier));
+        vm.prank(owner);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+
+        assertTrue(verifier.isVerifierAddressRevoked(ProofTypes.COMPLIANCE, address(passingVerifier)));
+    }
+
+    function test_isVerifierAddressRevoked_falseForCurrentVersion() public {
+        // v1 = passingVerifier (current); should not be revoked
+        assertFalse(verifier.isVerifierAddressRevoked(ProofTypes.COMPLIANCE, address(passingVerifier)));
+    }
+
+    function test_isVerifierAddressRevoked_falseForUnknownAddress() public view {
+        assertFalse(verifier.isVerifierAddressRevoked(ProofTypes.COMPLIANCE, address(0xdead)));
+    }
+
+    // -------------------------------------------------------------------------
     // I-3: Timelocked propose/execute revocation
     // -------------------------------------------------------------------------
 

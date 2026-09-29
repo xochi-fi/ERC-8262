@@ -353,6 +353,21 @@ contract ERC8262Verifier is IERC8262Verifier, IERC165, AccessControl, Pausable {
         return _revokedVersions[proofType][version];
     }
 
+    /// @inheritdoc IERC8262Verifier
+    function isVerifierAddressRevoked(uint8 proofType, address verifierAddr) external view returns (bool revoked) {
+        address[] storage history = _verifierHistory[proofType];
+        uint256 length = history.length;
+        for (uint256 i; i < length;) {
+            if (history[i] == verifierAddr && _revokedVersions[proofType][i + 1]) {
+                return true;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return false;
+    }
+
     /// @notice Pause the contract, blocking all proof verification
     function pause() external override onlyRole(GUARDIAN_ROLE) {
         if (paused) revert ContractPaused();

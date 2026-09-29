@@ -71,7 +71,9 @@ contract ERC8262OracleTest is OracleTestBase {
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IERC8262Oracle.ComplianceVerified(alice, 0, true, expectedHash, block.timestamp + 24 hours, 0);
+        emit IERC8262Oracle.ComplianceVerified(
+            alice, 0, true, expectedHash, ProofTypes.COMPLIANCE, block.timestamp + 24 hours, 0
+        );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -85,7 +87,9 @@ contract ERC8262OracleTest is OracleTestBase {
         bytes32 expectedHash = oracle.computeProofHash(proof2, ProofTypes.COMPLIANCE);
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IERC8262Oracle.ComplianceVerified(alice, 0, true, expectedHash, block.timestamp + 24 hours, firstExpiresAt);
+        emit IERC8262Oracle.ComplianceVerified(
+            alice, 0, true, expectedHash, ProofTypes.COMPLIANCE, block.timestamp + 24 hours, firstExpiresAt
+        );
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof2, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -2375,7 +2379,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
         Vm.Log[] memory entries = vm.getRecordedLogs();
         uint256 complianceVerifiedCount;
-        bytes32 eventSig = keccak256("ComplianceVerified(address,uint8,bool,bytes32,uint256,uint256)");
+        bytes32 eventSig = keccak256("ComplianceVerified(address,uint8,bool,bytes32,uint8,uint256,uint256)");
         for (uint256 i; i < entries.length; i++) {
             if (entries[i].topics[0] == eventSig) {
                 complianceVerifiedCount++;
@@ -2946,6 +2950,70 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(
             0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Verifier revocation invalidation (Finding 4)
+    // -------------------------------------------------------------------------
+
+    function test_checkCompliance_invalidWhenVerifierRevoked() public {
+        _submitForAlice(0);
+
+        // Verify valid before revocation
+        (bool valid,) = oracle.checkCompliance(alice, 0);
+        assertTrue(valid);
+
+        // Upgrade verifier to v2 so v1 can be revoked
+        address v2 = address(new PassingVerifier());
+        vm.prank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2, v2.codehash);
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(owner);
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+
+        // Revoke v1 (the verifier used for Alice's attestation)
+        vm.prank(owner);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+
+        // Attestation should now be invalid
+        (valid,) = oracle.checkCompliance(alice, 0);
+        assertFalse(valid);
+    }
+
+    function test_checkComplianceByType_invalidWhenVerifierRevoked() public {
+        _submitForAlice(0);
+
+        // Upgrade verifier to v2 so v1 can be revoked
+        address v2 = address(new PassingVerifier());
+        vm.prank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2, v2.codehash);
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(owner);
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+
+        // Revoke v1
+        vm.prank(owner);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+
+        // checkComplianceByType should also return invalid
+        (bool valid,) = oracle.checkComplianceByType(alice, 0, ProofTypes.COMPLIANCE);
+        assertFalse(valid);
+    }
+
+    function test_checkCompliance_validWhenVerifierNotRevoked() public {
+        _submitForAlice(0);
+
+        // Upgrade verifier to v2 but do NOT revoke v1
+        address v2 = address(new PassingVerifier());
+        vm.prank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, v2, v2.codehash);
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(owner);
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+
+        // Attestation made with v1 should still be valid (v1 not revoked)
+        (bool valid,) = oracle.checkCompliance(alice, 0);
+        assertTrue(valid);
     }
 
     // -------------------------------------------------------------------------
