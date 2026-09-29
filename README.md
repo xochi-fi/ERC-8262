@@ -69,8 +69,10 @@ Each of the 9 proof types has its own Noir circuit and generates a separate Ultr
 Standalone immutable contract that links split settlement proofs to a tradeId (XIP-1). When a large trade is split into sub-trades for privacy, the registry records each sub-trade's compliance proof and enforces an anti-structuring pattern proof at finalization.
 
 - No admin, no pause, no upgradability. Fully immutable.
-- References the Oracle via `getHistoricalProof()` to validate proof existence.
+- References the Oracle via `getHistoricalProof()` to validate proof existence; historical lookups never expire, so the registry enforces freshness.
 - `recordSubSettlement` rejects any proof type other than COMPLIANCE / COMPLIANCE_SIGNED / COMPLIANCE_MULTI_SIGNED. Substituting a MEMBERSHIP, RISK_SCORE, ATTESTATION, or PATTERN attestation reverts with `NonComplianceProofType`.
+- Each leg's attestation must be unexpired at record time (`AttestationExpired`), recorded no earlier than `registerTrade` (`AttestationPredatesTrade`), and unique within the trade (`DuplicateSubSettlementProof`).
+- `expireTrade` sets `Settlement.expired`; only a successful `finalizeTrade` sets `finalized`.
 - `finalizeTrade` binds the pattern proof to the specific settlement: the PATTERN circuit's `settlement_root` public input must equal `computeSettlementRoot(tradeId)` (keccak commitment over the recorded sub-settlement hashes, reduced into the BN254 scalar field). The same pattern proof cannot finalize two trades (`_usedPatternProofs`).
 - Interface: `ISettlementRegistry`
 

@@ -39,6 +39,9 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         finalizing more than one settlement.
     mapping(bytes32 patternProofHash => bool used) internal _usedPatternProofs;
 
+    /// @notice Compliance proof hashes already backing a leg of each trade.
+    mapping(bytes32 tradeId => mapping(bytes32 proofHash => bool used)) internal _usedLegProofs;
+
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
     ///         Solidity check matches the in-circuit representation.
@@ -70,7 +73,8 @@ contract SettlementRegistry is ISettlementRegistry {
             settledCount: 0,
             createdAt: block.timestamp,
             expiresAt: block.timestamp + TRADE_TTL,
-            finalized: false
+            finalized: false,
+            expired: false
         });
 
         emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount);
@@ -109,6 +113,16 @@ contract SettlementRegistry is ISettlementRegistry {
         if (attestation.jurisdictionId != settlement.jurisdictionId) {
             revert JurisdictionMismatch(settlement.jurisdictionId, attestation.jurisdictionId);
         }
+
+        // Historical lookups never expire: require live now (`expiresAt`
+        // inclusive) and recorded no earlier than registration.
+        if (block.timestamp > attestation.expiresAt) revert AttestationExpired(proofHash, attestation.expiresAt);
+        if (attestation.timestamp < settlement.createdAt) {
+            revert AttestationPredatesTrade(proofHash, attestation.timestamp, settlement.createdAt);
+        }
+        if (_usedLegProofs[tradeId][proofHash]) revert DuplicateSubSettlementProof(tradeId, proofHash);
+
+        _usedLegProofs[tradeId][proofHash] = true;
 
         _subSettlements[tradeId][index] =
             SubSettlement({index: index, proofHash: proofHash, settledAt: block.timestamp});
@@ -232,9 +246,11 @@ contract SettlementRegistry is ISettlementRegistry {
         Settlement storage settlement = _settlements[tradeId];
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (settlement.finalized) revert TradeAlreadyFinalized(tradeId);
+        if (settlement.expired) revert TradeExpiredError(tradeId);
         if (block.timestamp <= settlement.expiresAt) revert TradeNotExpired(tradeId);
 
-        settlement.finalized = true;
+        // Record/finalize are already closed by the `block.timestamp > expiresAt` guard.
+        settlement.expired = true;
 
         emit TradeExpired(tradeId, block.timestamp);
     }
