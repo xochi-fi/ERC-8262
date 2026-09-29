@@ -53,8 +53,8 @@ else
     fi
 fi
 
-# foundry (informational only -- we don't pin a specific commit since stable
-# is the most-tested config; just ensure it's installed)
+# foundry (informational only; CI pins FOUNDRY_VERSION, and .gas-snapshot
+# drifts across forge releases, so match it when regenerating the snapshot)
 if ! command -v forge &>/dev/null; then
     echo "warn: forge not found in PATH" >&2
     failed=1

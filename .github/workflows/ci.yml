@@ -10,6 +10,8 @@ env:
   FOUNDRY_PROFILE: ci
   NARGO_VERSION: 1.0.0-beta.20
   BB_VERSION: 4.0.0-nightly.20260120
+  # .gas-snapshot is version-sensitive: floating `stable` broke `forge snapshot --check`.
+  FOUNDRY_VERSION: v1.5.1
 
 jobs:
   solidity:
@@ -22,6 +24,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Check formatting
         run: forge fmt --check
@@ -59,6 +63,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Move generated verifiers
         run: mv src/generated /tmp/generated-backup
@@ -117,6 +123,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Install nargo
         run: |
