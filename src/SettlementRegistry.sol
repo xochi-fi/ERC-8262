@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {ISettlementRegistry} from "./interfaces/ISettlementRegistry.sol";
 import {IERC8262Oracle} from "./interfaces/IERC8262Oracle.sol";
+import {ERC8262Oracle} from "./ERC8262Oracle.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
 
 /// @dev Mirror of ERC8262Oracle.PATTERN_STRUCTURING constant. Must match circuits/pattern.
@@ -117,6 +118,7 @@ contract SettlementRegistry is ISettlementRegistry {
         // Historical lookups never expire: require live now (`expiresAt`
         // inclusive) and recorded no earlier than registration.
         if (block.timestamp > attestation.expiresAt) revert AttestationExpired(proofHash, attestation.expiresAt);
+        if (ERC8262Oracle(address(oracle)).isAttestationRevoked(proofHash)) revert AttestationRevoked(proofHash);
         if (attestation.timestamp < settlement.createdAt) {
             revert AttestationPredatesTrade(proofHash, attestation.timestamp, settlement.createdAt);
         }
@@ -169,6 +171,9 @@ contract SettlementRegistry is ISettlementRegistry {
             revert SubjectMismatch(settlement.subject, patternAttestation.subject);
         }
         if (patternAttestation.timestamp < settlement.createdAt) revert PatternProofRequired(tradeId);
+        if (ERC8262Oracle(address(oracle)).isAttestationRevoked(patternProofHash)) {
+            revert AttestationRevoked(patternProofHash);
+        }
 
         bytes32 inputsHash = keccak256(patternPublicInputs);
         if (inputsHash != patternAttestation.publicInputsHash) {

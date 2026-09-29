@@ -355,17 +355,22 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         emit AttestationInvalidated(proofHash, attestation.subject);
     }
 
-    /// @notice Whether a guardian has invalidated the attestation for `proofHash`.
-    function isAttestationInvalidated(bytes32 proofHash) external view returns (bool) {
-        return _invalidatedProofs[proofHash];
+    /// @notice Whether `proofHash` was guardian-invalidated or verified by a revoked version.
+    /// @dev Ignores expiry, for consumers with their own freshness window.
+    function isAttestationRevoked(bytes32 proofHash) external view returns (bool) {
+        return _isRevoked(_proofIndex[proofHash]);
     }
 
-    /// @dev Current validity of a stored attestation. Reads the router for verifier-version
-    ///      revocation so a soundness incident invalidates everything the bad verifier minted.
+    /// @dev Current validity of a stored attestation.
     function _isLive(ComplianceAttestation memory attestation) internal view returns (bool) {
         return attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
-            && !_invalidatedProofs[attestation.proofHash]
-            && !verifier.isVerifierRevoked(attestation.proofType, attestation.verifierUsed);
+            && !_isRevoked(attestation);
+    }
+
+    /// @dev Checks the router so a revoked verifier version invalidates everything it minted.
+    function _isRevoked(ComplianceAttestation memory attestation) internal view returns (bool) {
+        return _invalidatedProofs[attestation.proofHash]
+            || verifier.isVerifierRevoked(attestation.proofType, attestation.verifierUsed);
     }
 
     /// @inheritdoc IERC8262Oracle

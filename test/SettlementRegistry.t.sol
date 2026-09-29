@@ -298,6 +298,42 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 0, proofHash);
     }
 
+    /// @notice A leg backed by an attestation a guardian has since invalidated is rejected.
+    function test_recordSubSettlement_revert_revokedAttestation() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        vm.prank(owner);
+        oracle.invalidateAttestation(proofHash);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.AttestationRevoked.selector, proofHash));
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+    }
+
+    /// @notice Finalization rejects a PATTERN proof whose attestation has been invalidated.
+    function test_finalizeTrade_revert_revokedPatternAttestation() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+        bytes32 proof1 = _submitComplianceForAlice(0);
+        bytes32 proof2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proof1);
+        registry.recordSubSettlement(tradeId, 1, proof2);
+        vm.stopPrank();
+
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
+        vm.prank(owner);
+        oracle.invalidateAttestation(patternProof);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.AttestationRevoked.selector, patternProof));
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
     /// @notice `expiresAt` is inclusive: an attestation is usable at exactly its expiry second.
     function test_recordSubSettlement_acceptsAttestationAtExactExpiry() public {
         bytes32 tradeId = keccak256("trade-1");

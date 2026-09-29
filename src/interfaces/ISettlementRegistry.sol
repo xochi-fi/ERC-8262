@@ -83,6 +83,7 @@ interface ISettlementRegistry {
     error NonComplianceProofType(bytes32 proofHash, uint8 proofType);
     /// @notice Leg attestation is past its oracle `expiresAt`.
     error AttestationExpired(bytes32 proofHash, uint256 expiresAt);
+    error AttestationRevoked(bytes32 proofHash);
     /// @notice Leg attestation was recorded before the trade was registered.
     error AttestationPredatesTrade(bytes32 proofHash, uint256 attestedAt, uint256 tradeCreatedAt);
     /// @notice Proof hash already backs another leg of this trade.
