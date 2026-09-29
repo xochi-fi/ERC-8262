@@ -199,19 +199,19 @@ export async function deployContracts(): Promise<DeployedContracts> {
     address: oracleAddress,
     abi: oracleArtifact.abi,
     functionName: "registerMerkleRoot",
-    args: [FIXTURE_HASHES.MEMBERSHIP_ROOT],
+    args: [PROOF_TYPES.MEMBERSHIP, FIXTURE_HASHES.MEMBERSHIP_ROOT],
   });
   await walletClient.writeContract({
     address: oracleAddress,
     abi: oracleArtifact.abi,
     functionName: "registerMerkleRoot",
-    args: [FIXTURE_HASHES.NON_MEMBERSHIP_ROOT],
+    args: [PROOF_TYPES.NON_MEMBERSHIP, FIXTURE_HASHES.NON_MEMBERSHIP_ROOT],
   });
   await walletClient.writeContract({
     address: oracleAddress,
     abi: oracleArtifact.abi,
     functionName: "registerMerkleRoot",
-    args: [FIXTURE_HASHES.TIER_MERKLE_ROOT],
+    args: [PROOF_TYPES.MEMBERSHIP, FIXTURE_HASHES.TIER_MERKLE_ROOT],
   });
   await walletClient.writeContract({
     address: oracleAddress,

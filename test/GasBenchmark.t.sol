@@ -55,8 +55,8 @@ contract GasBenchmarkTest is Test {
             address v = _deployGeneratedVerifier(circuits[i]);
             verifier.setVerifierInitial(types[i], v);
         }
-        oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA for tx submission; separate signer for content auth.

@@ -903,7 +903,7 @@ contract SettlementRegistryTest is Test {
     function _submitMembershipForAlice(uint8 jurisdictionId) internal returns (bytes32 proofHash) {
         bytes32 merkleRoot = keccak256(abi.encodePacked("test-merkle-root-", _proofNonce));
         vm.prank(owner);
-        oracle.registerMerkleRoot(merkleRoot);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, merkleRoot);
 
         bytes memory proof = _uniqueProof();
         bytes memory publicInputs = abi.encodePacked(

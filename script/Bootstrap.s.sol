@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
 import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
+import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 
 /// @title Bootstrap -- Post-deployment registry seeding for ERC-8262
 /// @notice Registers the initial set of provider publishers, reporting thresholds,
@@ -26,7 +27,8 @@ import {ERC8262Oracle} from "../src/ERC8262Oracle.sol";
 ///                           e.g., '[{"providerId":42,"publisher":"0xAB..."}]'
 ///   REPORTING_THRESHOLDS -- comma-separated list of u64 thresholds to register
 ///                           e.g., "10000,5000"
-///   MERKLE_ROOTS         -- comma-separated list of merkle roots (bytes32 hex) to register
+///   MEMBERSHIP_ROOTS     -- comma-separated merkle roots (bytes32 hex) to register for MEMBERSHIP
+///   NON_MEMBERSHIP_ROOTS -- comma-separated merkle roots (bytes32 hex) to register for NON_MEMBERSHIP
 ///                           e.g., "0xabcd...,0x1234..."
 ///   SIGNER_PUBKEY_HASHES -- comma-separated list of signer pubkey hashes (bytes32 hex)
 ///                           authorized for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs.
@@ -94,18 +96,23 @@ contract Bootstrap is Script {
         }
     }
 
-    /// @dev Register merkle roots from a comma-separated env var of bytes32 hex strings.
+    /// @dev Roots are per proof type; a root is accepted only by the type it was registered for.
     function _bootstrapMerkleRoots(ERC8262Oracle oracle) internal {
-        string memory raw = vm.envOr("MERKLE_ROOTS", string(""));
+        _bootstrapMerkleRootsFor(oracle, ProofTypes.MEMBERSHIP, "MEMBERSHIP_ROOTS");
+        _bootstrapMerkleRootsFor(oracle, ProofTypes.NON_MEMBERSHIP, "NON_MEMBERSHIP_ROOTS");
+    }
+
+    function _bootstrapMerkleRootsFor(ERC8262Oracle oracle, uint8 proofType, string memory envVar) internal {
+        string memory raw = vm.envOr(envVar, string(""));
         if (bytes(raw).length == 0) {
-            console.log("No MERKLE_ROOTS; skipping merkle root registration.");
+            console.log("No roots in env var; skipping:", envVar);
             return;
         }
         string[] memory parts = vm.split(raw, ",");
         for (uint256 i; i < parts.length; i++) {
             bytes32 root = vm.parseBytes32(parts[i]);
-            oracle.registerMerkleRoot(root);
-            console.log("Registered merkle root:");
+            oracle.registerMerkleRoot(proofType, root);
+            console.log("Registered merkle root for", envVar);
             console.logBytes32(root);
         }
     }

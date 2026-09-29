@@ -92,8 +92,8 @@ contract IntegrationTest is Test {
         }
 
         // Register merkle roots needed by membership/non_membership fixtures
-        oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
 
         // Register reporting threshold needed by pattern fixture (10000)
         oracle.registerReportingThreshold(bytes32(uint256(10000)));

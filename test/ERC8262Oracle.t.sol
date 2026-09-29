@@ -733,7 +733,7 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_submitCompliance_membershipProof_registeredRoot() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
 
         bytes memory publicInputs = _membershipInputs(root);
         vm.prank(alice);
@@ -755,7 +755,7 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_submitCompliance_revert_submitterHighBitsSet() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, root);
 
         bytes memory publicInputs = _nonMembershipInputs(root);
         uint256 aliased = uint256(uint160(alice)) + (uint256(1) << 160);
@@ -925,7 +925,7 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_submitCompliance_revert_membershipNotMember() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
 
         // is_member = 0 (not a member)
         bytes memory publicInputs = abi.encodePacked(
@@ -943,7 +943,7 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_submitCompliance_revert_nonMembershipFailed() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, root);
 
         // is_non_member = 0 (element IS in set)
         bytes memory publicInputs = abi.encodePacked(
@@ -1549,24 +1549,44 @@ contract ERC8262OracleTest is OracleTestBase {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
         vm.expectEmit(true, false, false, false);
-        emit IERC8262Oracle.MerkleRootRegistered(root);
-        oracle.registerMerkleRoot(root);
-        assertTrue(oracle.isValidMerkleRoot(root));
+        emit IERC8262Oracle.MerkleRootRegistered(ProofTypes.MEMBERSHIP, root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
+        assertTrue(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root));
     }
 
     function test_revokeMerkleRoot() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.startPrank(owner);
-        oracle.registerMerkleRoot(root);
-        oracle.revokeMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
+        oracle.revokeMerkleRoot(ProofTypes.MEMBERSHIP, root);
         vm.stopPrank();
-        assertFalse(oracle.isValidMerkleRoot(root));
+        assertFalse(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root));
     }
 
     function test_registerMerkleRoot_revert_notOwner() public {
         vm.prank(alice);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.registerMerkleRoot(bytes32(uint256(0xbeef)));
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, bytes32(uint256(0xbeef)));
+    }
+
+    /// A NON_MEMBERSHIP root must not accept a MEMBERSHIP proof.
+    function test_submitCompliance_membership_revert_rootRegisteredForNonMembership() public {
+        bytes32 denylistRoot = bytes32(uint256(0xbad));
+        vm.prank(owner);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, denylistRoot);
+
+        bytes memory publicInputs = _membershipInputs(denylistRoot);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidMerkleRoot.selector, denylistRoot));
+        oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_registerMerkleRoot_revert_nonSetProofType() public {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.InvalidMerkleRootProofType.selector, ProofTypes.COMPLIANCE)
+        );
+        oracle.registerMerkleRoot(ProofTypes.COMPLIANCE, bytes32(uint256(0xbeef)));
     }
 
     // -------------------------------------------------------------------------
@@ -1678,7 +1698,7 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_submitCompliance_revert_staleMembershipTimestamp() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.prank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
 
         vm.warp(1700000000);
         bytes memory publicInputs = abi.encodePacked(
@@ -1823,12 +1843,12 @@ contract ERC8262OracleTest is OracleTestBase {
         } else if (proofType == ProofTypes.MEMBERSHIP) {
             bytes32 root = bytes32(uint256(0xbeef));
             vm.prank(owner);
-            oracle.registerMerkleRoot(root);
+            oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
             publicInputs = _membershipInputs(root);
         } else {
             bytes32 root = bytes32(uint256(0xbeef));
             vm.prank(owner);
-            oracle.registerMerkleRoot(root);
+            oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, root);
             publicInputs = _nonMembershipInputs(root);
         }
 
@@ -2111,16 +2131,16 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_registerMerkleRoot_revert_alreadyRegistered() public {
         bytes32 root = bytes32(uint256(0xbeef));
         vm.startPrank(owner);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
         vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
         vm.stopPrank();
     }
 
     function test_revokeMerkleRoot_revert_notRegistered() public {
         vm.prank(owner);
         vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
-        oracle.revokeMerkleRoot(bytes32(uint256(0xdead)));
+        oracle.revokeMerkleRoot(ProofTypes.MEMBERSHIP, bytes32(uint256(0xdead)));
     }
 
     function test_registerReportingThreshold_revert_alreadyRegistered() public {
@@ -2233,7 +2253,7 @@ contract ERC8262OracleTest is OracleTestBase {
         } else if (proofType == ProofTypes.MEMBERSHIP) {
             bytes32 root = bytes32(uint256(0xbeef));
             vm.prank(owner);
-            oracle.registerMerkleRoot(root);
+            oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
             publicInputs = abi.encodePacked(
                 root,
                 bytes32(uint256(1)),
@@ -2244,7 +2264,7 @@ contract ERC8262OracleTest is OracleTestBase {
         } else {
             bytes32 root = bytes32(uint256(0xbeef));
             vm.prank(owner);
-            oracle.registerMerkleRoot(root);
+            oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, root);
             publicInputs = abi.encodePacked(
                 root,
                 bytes32(uint256(1)),

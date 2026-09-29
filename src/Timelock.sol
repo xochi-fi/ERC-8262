@@ -152,8 +152,8 @@ contract Timelock {
         if (
             selector == bytes4(keccak256("updateProviderConfig(bytes32,string,uint256[])"))
                 || selector == bytes4(keccak256("updateAttestationTTL(uint256)"))
-                || selector == bytes4(keccak256("registerMerkleRoot(bytes32)"))
-                || selector == bytes4(keccak256("revokeMerkleRoot(bytes32)"))
+                || selector == bytes4(keccak256("registerMerkleRoot(uint8,bytes32)"))
+                || selector == bytes4(keccak256("revokeMerkleRoot(uint8,bytes32)"))
                 || selector == bytes4(keccak256("registerReportingThreshold(bytes32)"))
                 || selector == bytes4(keccak256("revokeReportingThreshold(bytes32)"))
                 || selector == bytes4(keccak256("revokeConfig(bytes32)"))

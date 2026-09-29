@@ -264,7 +264,8 @@ Both schedules must be issued and executed within Ownable2Step's 48-hour accepta
 ```bash
 export ORACLE_ADDRESS=0x...      # from Deploy output
 export REPORTING_THRESHOLDS=10000,5000
-export MERKLE_ROOTS=0xabcd...,0x1234...
+export MEMBERSHIP_ROOTS=0xabcd...      # allowlist sets
+export NON_MEMBERSHIP_ROOTS=0x1234...  # denylist sets (e.g. sanctions)
 export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
 
 forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS

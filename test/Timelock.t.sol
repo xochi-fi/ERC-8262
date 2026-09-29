@@ -138,8 +138,8 @@ contract TimelockTest is Test {
     function test_delay_lowDelay_configOps() public view {
         assertEq(timelock.getDelay(bytes4(keccak256("updateProviderConfig(bytes32,string,uint256[])"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("updateAttestationTTL(uint256)"))), 6 hours);
-        assertEq(timelock.getDelay(bytes4(keccak256("registerMerkleRoot(bytes32)"))), 6 hours);
-        assertEq(timelock.getDelay(bytes4(keccak256("revokeMerkleRoot(bytes32)"))), 6 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("registerMerkleRoot(uint8,bytes32)"))), 6 hours);
+        assertEq(timelock.getDelay(bytes4(keccak256("revokeMerkleRoot(uint8,bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("registerReportingThreshold(bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("revokeReportingThreshold(bytes32)"))), 6 hours);
         assertEq(timelock.getDelay(bytes4(keccak256("revokeConfig(bytes32)"))), 6 hours);
@@ -319,7 +319,7 @@ contract TimelockTest is Test {
 
     function test_e2e_registerMerkleRoot() public {
         bytes32 root = bytes32(uint256(0xdeadbeef));
-        bytes memory data = abi.encodeWithSignature("registerMerkleRoot(bytes32)", root);
+        bytes memory data = abi.encodeWithSignature("registerMerkleRoot(uint8,bytes32)", ProofTypes.MEMBERSHIP, root);
         bytes32 salt = bytes32(uint256(11));
 
         vm.prank(multisig);
@@ -328,7 +328,7 @@ contract TimelockTest is Test {
         vm.warp(block.timestamp + 6 hours);
         timelock.execute(address(oracle), 0, data, salt);
 
-        assertTrue(oracle.isValidMerkleRoot(root));
+        assertTrue(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root));
     }
 
     // -------------------------------------------------------------------------
