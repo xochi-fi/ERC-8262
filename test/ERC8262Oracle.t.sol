@@ -774,7 +774,7 @@ contract ERC8262OracleTest is OracleTestBase {
     /// RISK_SCORE_SIGNED does not satisfy checkCompliance.
     function test_riskScoreSigned_recordedByTypeOnly() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.warp(1700000000);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000);
@@ -790,7 +790,7 @@ contract ERC8262OracleTest is OracleTestBase {
     /// US needs >= 2 providers: single-signer COMPLIANCE_SIGNED does not satisfy checkCompliance.
     function test_complianceSigned_belowMultiProviderFloor_recordedByTypeOnly() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _complianceSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
@@ -804,7 +804,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_complianceSigned_floorOfOne_writesComplianceSlot() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
@@ -1525,10 +1525,6 @@ contract ERC8262OracleTest is OracleTestBase {
         }
         assertEq(oracle.configHistoryLength(), oracle.MAX_CONFIG_HISTORY());
 
-        // Cannot add more
-        vm.expectRevert(ERC8262Oracle.ConfigHistoryFull.selector);
-        oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
-
         // Revoke a few old entries and compact
         oracle.revokeConfig(INITIAL_CONFIG);
         oracle.revokeConfig(keccak256(abi.encode(uint256(1))));
@@ -2118,7 +2114,8 @@ contract ERC8262OracleTest is OracleTestBase {
     // Config history bounds
     // -------------------------------------------------------------------------
 
-    function test_updateProviderConfig_revert_historyFull() public {
+    /// A full history evicts its oldest entry (FIFO) instead of blocking weight rotation.
+    function test_updateProviderConfig_historyFull_evictsOldest() public {
         vm.startPrank(owner);
         // setUp already pushed 1 (initial config). Push 255 more to reach 256.
         for (uint256 i; i < 255; i++) {
@@ -2126,10 +2123,38 @@ contract ERC8262OracleTest is OracleTestBase {
         }
         assertEq(oracle.configHistoryLength(), 256);
 
-        // 257th should revert
-        vm.expectRevert(ERC8262Oracle.ConfigHistoryFull.selector);
-        oracle.updateProviderConfig(keccak256("overflow"), "", _defaultProviders());
+        bytes32 next = keccak256("overflow");
+        vm.expectEmit(true, false, false, false);
+        emit ERC8262Oracle.ConfigEvicted(INITIAL_CONFIG);
+        oracle.updateProviderConfig(next, "", _defaultProviders());
         vm.stopPrank();
+
+        assertEq(oracle.configHistoryLength(), 256);
+        assertEq(oracle.configHistoryAt(0), keccak256(abi.encodePacked("fill-", uint256(0))));
+        assertEq(oracle.configHistoryAt(255), next);
+        assertFalse(oracle.isValidConfig(INITIAL_CONFIG));
+        assertEq(oracle.getProviderConfigExpansion(INITIAL_CONFIG).length, 0);
+    }
+
+    /// Re-registering a historical hash reverts.
+    function test_updateProviderConfig_revert_historicalHash() public {
+        vm.startPrank(owner);
+        oracle.updateProviderConfig(keccak256("second"), "", _defaultProviders());
+        vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
+        oracle.updateProviderConfig(INITIAL_CONFIG, "", _defaultProviders());
+        vm.stopPrank();
+    }
+
+    function test_updateProviderConfig_revert_zeroHash() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, bytes32(0)));
+        oracle.updateProviderConfig(bytes32(0), "", _defaultProviders());
+    }
+
+    function test_revokeConfig_revert_unregistered() public {
+        vm.prank(owner);
+        vm.expectRevert(ERC8262Oracle.NotRegistered.selector);
+        oracle.revokeConfig(keccak256("never-registered"));
     }
 
     function test_updateProviderConfig_revert_duplicateConfig() public {
@@ -2654,35 +2679,35 @@ contract ERC8262OracleTest is OracleTestBase {
     function test_registerSignerPubkeyHash_happy() public {
         assertFalse(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
         vm.prank(owner);
-        vm.expectEmit(true, false, false, false);
-        emit ERC8262Oracle.SignerPubkeyHashRegistered(TEST_SIGNER_PUBKEY_HASH);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.expectEmit(true, true, false, false);
+        emit ERC8262Oracle.SignerPubkeyHashRegistered(TEST_SIGNER_PUBKEY_HASH, 1);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         assertTrue(oracle.isValidSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH));
     }
 
     function test_registerSignerPubkeyHash_revert_zero() public {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, bytes32(0)));
-        oracle.registerSignerPubkeyHash(bytes32(0));
+        oracle.registerSignerPubkeyHash(bytes32(0), 1);
     }
 
     function test_registerSignerPubkeyHash_revert_alreadyRegistered() public {
         vm.startPrank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.expectRevert(ERC8262Oracle.AlreadyRegistered.selector);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.stopPrank();
     }
 
     function test_registerSignerPubkeyHash_revert_notRegistrar() public {
         vm.prank(alice);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
     }
 
     function test_revokeSignerPubkeyHash_happy() public {
         vm.startPrank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.expectEmit(true, false, false, false);
         emit ERC8262Oracle.SignerPubkeyHashRevoked(TEST_SIGNER_PUBKEY_HASH);
         oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
@@ -2698,7 +2723,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_revokeSignerPubkeyHash_revert_notRegistrar() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.prank(alice);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
         oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
@@ -2710,7 +2735,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_signed_happy() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
@@ -2731,7 +2756,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_signed_revert_revokedSignerPubkeyHash() public {
         vm.startPrank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         oracle.revokeSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
         vm.stopPrank();
 
@@ -2743,7 +2768,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_signed_revert_submitterMismatch() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         // Inputs claim alice; caller is bob. Submitter check fires inside the signed validator.
         bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
@@ -2759,7 +2784,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_happy() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice);
         vm.prank(alice);
@@ -2784,7 +2809,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_ratchetsOnSignedTimestamp() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.warp(1700000000);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 1800);
@@ -2795,7 +2820,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_staleness_exactBoundary() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.warp(1700000000);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 3600);
@@ -2807,7 +2832,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_revert_staleTimestamp() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.warp(1700000000);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 3601);
@@ -2820,7 +2845,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_revert_futureTimestamp() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
         vm.warp(1700000000);
 
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 + 1);
@@ -2833,7 +2858,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_submitCompliance_riskScoreSigned_revert_complianceSignedInputs() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         // A COMPLIANCE_SIGNED bundle is not a RISK_SCORE_SIGNED one: rejected as 0x08...
         bytes memory inputs = _complianceSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
@@ -2878,7 +2903,7 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_strictJurisdiction_acceptsSignedCompliance() public {
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _complianceSignedInputs(
             1,
@@ -2897,7 +2922,7 @@ contract ERC8262OracleTest is OracleTestBase {
         // Permissive jurisdictions also accept signed proofs (signed is a stricter
         // proof and never rejected on policy grounds).
         vm.prank(owner);
-        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 1);
 
         bytes memory inputs = _complianceSignedInputs(
             0,
@@ -2924,19 +2949,19 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function _registerThreeSigners() internal {
         vm.startPrank(owner);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_A);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_B);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_C);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_A, 1);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_B, 2);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_C, 3);
         vm.stopPrank();
     }
 
     function _registerFiveSigners() internal {
         vm.startPrank(owner);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_A);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_B);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_C);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_D);
-        oracle.registerSignerPubkeyHash(SIGNER_HASH_E);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_A, 1);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_B, 2);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_C, 3);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_D, 4);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_E, 5);
         vm.stopPrank();
     }
 
@@ -3156,5 +3181,110 @@ contract ERC8262OracleTest is OracleTestBase {
 
     function test_supportsInterface_unknownSelector_returnsFalse() public view {
         assertFalse(oracle.supportsInterface(0xdeadbeef));
+    }
+
+    // -------------------------------------------------------------------------
+    // Revocation and denial reach issued attestations and every config consumer
+    // -------------------------------------------------------------------------
+
+    /// Denying a provider must also stop RISK_SCORE proofs built on a config that expands to it.
+    function test_riskScore_revert_configExpandsToDeniedProvider() public {
+        vm.prank(owner);
+        oracle.denyProvider(DEFAULT_PROVIDER_ID);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProviderDenied.selector, DEFAULT_PROVIDER_ID));
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), _riskScoreInputs(INITIAL_CONFIG), bytes32(0));
+    }
+
+    /// Attestations minted by a verifier version that is later revoked stop counting.
+    function test_checkCompliance_falseAfterVerifierVersionRevoked() public {
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
+        );
+        (bool validBefore,) = oracle.checkCompliance(alice, 0);
+        assertTrue(validBefore);
+
+        PassingVerifier replacement = new PassingVerifier();
+        vm.startPrank(owner);
+        verifier.proposeVerifier(ProofTypes.COMPLIANCE, address(replacement), address(replacement).codehash);
+        vm.warp(block.timestamp + verifier.VERIFIER_TIMELOCK());
+        verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
+        verifier.revokeVerifierVersion(ProofTypes.COMPLIANCE, 1);
+        vm.stopPrank();
+
+        (bool validAfter,) = oracle.checkCompliance(alice, 0);
+        assertFalse(validAfter);
+        assertFalse(oracle.isAttestationValid(att.proofHash));
+    }
+
+    function test_invalidateAttestation_guardianRevokesIssuedAttestation() public {
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
+        );
+
+        vm.prank(owner);
+        oracle.invalidateAttestation(att.proofHash);
+
+        (bool valid,) = oracle.checkCompliance(alice, 0);
+        assertFalse(valid);
+        (bool validByType,) = oracle.checkComplianceByType(alice, 0, ProofTypes.COMPLIANCE);
+        assertFalse(validByType);
+        assertFalse(oracle.isAttestationValid(att.proofHash));
+        // The historical record itself is kept for audit.
+        assertEq(oracle.getHistoricalProof(att.proofHash).subject, alice);
+    }
+
+    function test_invalidateAttestation_revert_notGuardian() public {
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
+        );
+        vm.prank(alice);
+        vm.expectPartialRevert(AccessControl.NotRole.selector);
+        oracle.invalidateAttestation(att.proofHash);
+    }
+
+    function test_invalidateAttestation_revert_unknownProof() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.AttestationNotFound.selector, bytes32(uint256(1))));
+        oracle.invalidateAttestation(bytes32(uint256(1)));
+    }
+
+    /// Two keys held by one provider are one provider: they must not satisfy threshold_m = 2.
+    function test_multiSigned_revert_twoKeysSameProvider() public {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_A, 7);
+        oracle.registerSignerPubkeyHash(SIGNER_HASH_B, 7);
+        vm.stopPrank();
+        bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
+
+        bytes memory inputs = _complianceMultiSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, 2, hashes, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.DuplicateSignerProvider.selector, uint256(7)));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE_MULTI_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    /// Denying the provider that operates a signer key stops that key's signed proofs.
+    function test_complianceSigned_revert_signerProviderDenied() public {
+        vm.startPrank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 9);
+        oracle.denyProvider(9);
+        vm.stopPrank();
+
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProviderDenied.selector, uint256(9)));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_registerSignerPubkeyHash_revert_zeroProvider() public {
+        vm.prank(owner);
+        vm.expectRevert(ERC8262Oracle.InvalidProviderId.selector);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH, 0);
     }
 }

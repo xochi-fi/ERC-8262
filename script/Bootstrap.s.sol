@@ -30,7 +30,7 @@ import {ProofTypes} from "../src/libraries/ProofTypes.sol";
 ///   MEMBERSHIP_ROOTS     -- comma-separated merkle roots (bytes32 hex) to register for MEMBERSHIP
 ///   NON_MEMBERSHIP_ROOTS -- comma-separated merkle roots (bytes32 hex) to register for NON_MEMBERSHIP
 ///                           e.g., "0xabcd...,0x1234..."
-///   SIGNER_PUBKEY_HASHES -- comma-separated list of signer pubkey hashes (bytes32 hex)
+///   SIGNER_PUBKEY_HASHES -- comma-separated `hash:providerId` pairs (bytes32 hex : decimal id)
 ///                           authorized for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs.
 ///                           e.g., "0xabcd...,0x1234..."
 ///
@@ -117,7 +117,7 @@ contract Bootstrap is Script {
         }
     }
 
-    /// @dev Register signer pubkey hashes for provider-signed-signals proofs (audit I-1).
+    /// @dev The provider ID lets COMPLIANCE_MULTI_SIGNED count providers and `denyProvider` stop the key.
     function _bootstrapSignerPubkeyHashes(ERC8262Oracle oracle) internal {
         string memory raw = vm.envOr("SIGNER_PUBKEY_HASHES", string(""));
         if (bytes(raw).length == 0) {
@@ -126,9 +126,12 @@ contract Bootstrap is Script {
         }
         string[] memory parts = vm.split(raw, ",");
         for (uint256 i; i < parts.length; i++) {
-            bytes32 hash = vm.parseBytes32(parts[i]);
-            oracle.registerSignerPubkeyHash(hash);
-            console.log("Registered signer pubkey hash:");
+            string[] memory pair = vm.split(parts[i], ":");
+            require(pair.length == 2, "SIGNER_PUBKEY_HASHES entries must be hash:providerId");
+            bytes32 hash = vm.parseBytes32(pair[0]);
+            uint256 providerId = vm.parseUint(pair[1]);
+            oracle.registerSignerPubkeyHash(hash, providerId);
+            console.log("Registered signer pubkey hash for provider", providerId);
             console.logBytes32(hash);
         }
     }

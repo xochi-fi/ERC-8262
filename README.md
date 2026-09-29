@@ -267,6 +267,7 @@ export REPORTING_THRESHOLDS=10000,5000
 export MEMBERSHIP_ROOTS=0xabcd...      # allowlist sets
 export NON_MEMBERSHIP_ROOTS=0x1234...  # denylist sets (e.g. sanctions)
 export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
+export SIGNER_PUBKEY_HASHES=0xabcd...:42      # signer key hash : operating provider ID
 
 forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS
 ```

@@ -130,7 +130,12 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      replacement -- the registry intentionally has no reuse-after-revoke
     ///      protection because secp256k1 keys are externally generated and a re-issued
     ///      key is a fresh hash.
-    mapping(bytes32 signerPubkeyHash => bool valid) internal _validSignerPubkeyHashes;
+    /// @notice Provider operating each authorized signer key (0 = not authorized).
+    /// @dev M-of-N counts providers, not keys; `denyProvider` stops the provider's keys.
+    mapping(bytes32 signerPubkeyHash => uint256 providerId) internal _signerProvider;
+
+    /// @notice Attestations a guardian has invalidated after issue (key, config or root compromise).
+    mapping(bytes32 proofHash => bool invalidated) internal _invalidatedProofs;
 
     error ProofVerificationFailed();
     error ProofAlreadyUsed(bytes32 proofHash);
@@ -144,7 +149,6 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error CannotRevokeCurrentConfig();
     error ProofResultNegative();
     error SubmitterMismatch();
-    error ConfigHistoryFull();
     error ConfigAlreadyCurrent();
     error AlreadyRegistered();
     error NotRegistered();
@@ -175,6 +179,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error SignedSignalsRequired(uint8 jurisdictionId, uint8 proofType);
     error InvalidSignerPubkeyHash(bytes32 signerPubkeyHash);
     error InsufficientSigners(uint8 active, uint8 required);
+    error DuplicateSignerProvider(uint256 providerId);
+    error AttestationAlreadyInvalidated(bytes32 proofHash);
     error BelowJurisdictionMinProviders(uint8 jurisdictionId, uint8 m, uint8 floor);
     error DuplicateSigner(bytes32 signerPubkeyHash);
     error InvalidThresholdM(uint8 thresholdM);
@@ -188,6 +194,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error CredentialRootAlreadyRevoked(bytes32 root);
 
     event ConfigHistoryCompacted(uint256 entriesRemoved, uint256 newLength);
+    event ConfigEvicted(bytes32 indexed configHash);
+    event AttestationInvalidated(bytes32 indexed proofHash, address indexed subject);
     event ProviderPublisherSet(uint256 indexed providerId, address indexed previous, address indexed publisher);
     event CredentialSignerSet(uint256 indexed providerId, address indexed previous, address indexed signer);
     event CredentialRootPublished(uint256 indexed providerId, bytes32 indexed root, string cid, uint256 registeredAt);
@@ -195,7 +203,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     event ProviderConfigExpansionRegistered(bytes32 indexed configHash, uint256[] providerIds);
     event ProviderDeniedEvent(uint256 indexed providerId);
     event ProviderUndeniedEvent(uint256 indexed providerId);
-    event SignerPubkeyHashRegistered(bytes32 indexed signerPubkeyHash);
+    event SignerPubkeyHashRegistered(bytes32 indexed signerPubkeyHash, uint256 indexed providerId);
     event SignerPubkeyHashRevoked(bytes32 indexed signerPubkeyHash);
 
     /// @notice Maximum number of entries in the config history array
@@ -317,9 +325,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         returns (bool valid, ComplianceAttestation memory attestation)
     {
         attestation = _attestations[subject][jurisdictionId];
-
-        // Valid if attestation exists, threshold was met, and not expired
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
+        valid = _isLive(attestation);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -329,7 +335,37 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         returns (bool valid, ComplianceAttestation memory attestation)
     {
         attestation = _typedAttestations[subject][jurisdictionId][proofType];
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
+        valid = _isLive(attestation);
+    }
+
+    /// @notice Whether the attestation for `proofHash` exists, met its threshold, is unexpired and not revoked.
+    /// @dev Use instead of `getHistoricalProof`, which ignores current validity.
+    function isAttestationValid(bytes32 proofHash) external view returns (bool valid) {
+        return _isLive(_proofIndex[proofHash]);
+    }
+
+    /// @notice Permanently invalidate an issued attestation (e.g. compromised key, config or root).
+    /// @dev Revoking a key, config or root blocks only new submissions. Revoked verifier
+    ///      versions are handled automatically (`_isLive`).
+    function invalidateAttestation(bytes32 proofHash) external onlyRole(GUARDIAN_ROLE) {
+        ComplianceAttestation storage attestation = _proofIndex[proofHash];
+        if (attestation.timestamp == 0) revert AttestationNotFound(proofHash);
+        if (_invalidatedProofs[proofHash]) revert AttestationAlreadyInvalidated(proofHash);
+        _invalidatedProofs[proofHash] = true;
+        emit AttestationInvalidated(proofHash, attestation.subject);
+    }
+
+    /// @notice Whether a guardian has invalidated the attestation for `proofHash`.
+    function isAttestationInvalidated(bytes32 proofHash) external view returns (bool) {
+        return _invalidatedProofs[proofHash];
+    }
+
+    /// @dev Current validity of a stored attestation. Reads the router for verifier-version
+    ///      revocation so a soundness incident invalidates everything the bad verifier minted.
+    function _isLive(ComplianceAttestation memory attestation) internal view returns (bool) {
+        return attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
+            && !_invalidatedProofs[attestation.proofHash]
+            && !verifier.isVerifierRevoked(attestation.proofType, attestation.verifierUsed);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -430,11 +466,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Update the provider weight configuration AND atomically register
     ///         its provider expansion (audit F-2 closure).
-    /// @dev A previously-revoked config hash cannot be re-registered. Mistaken
-    ///      revocations require deploying a fresh hash (hash of new metadata),
-    ///      not re-using the old one. The expansion is written in the same call
-    ///      so `denyProvider` enforcement is never silently disabled by a
-    ///      partially-applied rotation.
+    /// @dev Registered or ever-revoked hashes are rejected (reuse merges provider expansions);
+    ///      roll back with a fresh hash. Expansion is written atomically so `denyProvider`
+    ///      always applies. A full history evicts its oldest (non-current) entry.
     /// @param newConfigHash The new configuration hash
     /// @param metadataURI URI pointing to the full config (IPFS, Arweave, etc.)
     /// @param providerIds Provider IDs whose weights are committed-to by
@@ -443,15 +477,34 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         external
         onlyRole(CONFIG_ROLE)
     {
+        if (newConfigHash == bytes32(0)) revert InvalidConfigHash(newConfigHash);
         if (newConfigHash == _providerConfigHash) revert ConfigAlreadyCurrent();
         if (_revokedConfigs[newConfigHash]) revert ConfigPermanentlyRevoked(newConfigHash);
-        if (_configHistory.length >= MAX_CONFIG_HISTORY) revert ConfigHistoryFull();
+        if (_validConfigs[newConfigHash]) revert AlreadyRegistered();
+        if (_configHistory.length >= MAX_CONFIG_HISTORY) _evictOldestConfig();
         _providerConfigHash = newConfigHash;
         _configHistory.push(newConfigHash);
         _validConfigs[newConfigHash] = true;
         _writeConfigExpansion(newConfigHash, providerIds);
         emit ProviderWeightsUpdated(newConfigHash, block.timestamp, metadataURI);
         emit ProviderConfigExpansionRegistered(newConfigHash, providerIds);
+    }
+
+    /// @dev Evict `_configHistory[0]` (never current: current is last, full history holds >= 2).
+    ///      Not marked revoked; expansion cleared so re-registration starts clean.
+    function _evictOldestConfig() internal {
+        bytes32 evicted = _configHistory[0];
+        uint256 len = _configHistory.length;
+        for (uint256 i = 1; i < len;) {
+            _configHistory[i - 1] = _configHistory[i];
+            unchecked {
+                ++i;
+            }
+        }
+        _configHistory.pop();
+        _validConfigs[evicted] = false;
+        delete _configProviders[evicted];
+        emit ConfigEvicted(evicted);
     }
 
     /// @notice Update the attestation TTL
@@ -482,6 +535,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @param configHash The config hash to revoke (cannot be the current active config)
     function revokeConfig(bytes32 configHash) external onlyRole(GUARDIAN_ROLE) {
         if (configHash == _providerConfigHash) revert CannotRevokeCurrentConfig();
+        if (!_validConfigs[configHash]) revert NotRegistered();
         _validConfigs[configHash] = false;
         _revokedConfigs[configHash] = true;
         emit ConfigRevoked(configHash);
@@ -819,21 +873,39 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      to produce a registry-matching hash. Rotating a key: revoke the outgoing hash,
     ///      register the new one; in-flight proofs from the outgoing key are rejected the
     ///      moment its hash is revoked.
-    function registerSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
+    /// @param signerPubkeyHash The signer's key commitment
+    /// @param providerId The provider that operates this key (non-zero). A provider may hold
+    ///        several keys; COMPLIANCE_MULTI_SIGNED counts providers, not keys.
+    function registerSignerPubkeyHash(bytes32 signerPubkeyHash, uint256 providerId) external onlyRole(REGISTRAR_ROLE) {
         if (signerPubkeyHash == bytes32(0)) revert InvalidSignerPubkeyHash(signerPubkeyHash);
-        _addBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
-        emit SignerPubkeyHashRegistered(signerPubkeyHash);
+        if (providerId == 0) revert InvalidProviderId();
+        if (_signerProvider[signerPubkeyHash] != 0) revert AlreadyRegistered();
+        _signerProvider[signerPubkeyHash] = providerId;
+        emit SignerPubkeyHashRegistered(signerPubkeyHash, providerId);
     }
 
     /// @notice Revoke a previously-authorized signer pubkey hash.
     function revokeSignerPubkeyHash(bytes32 signerPubkeyHash) external onlyRole(REGISTRAR_ROLE) {
-        _removeBoolEntry(_validSignerPubkeyHashes, signerPubkeyHash);
+        if (_signerProvider[signerPubkeyHash] == 0) revert NotRegistered();
+        delete _signerProvider[signerPubkeyHash];
         emit SignerPubkeyHashRevoked(signerPubkeyHash);
     }
 
     /// @notice Whether a signer pubkey hash is currently authorized.
     function isValidSignerPubkeyHash(bytes32 signerPubkeyHash) external view returns (bool valid) {
-        return _validSignerPubkeyHashes[signerPubkeyHash];
+        return _signerProvider[signerPubkeyHash] != 0;
+    }
+
+    /// @notice Provider that operates an authorized signer key (0 if not authorized).
+    function signerProvider(bytes32 signerPubkeyHash) external view returns (uint256 providerId) {
+        return _signerProvider[signerPubkeyHash];
+    }
+
+    /// @dev Resolve an authorized, non-denied signer to its provider, or revert.
+    function _assertSignerAuthorized(bytes32 signerPubkeyHash) internal view returns (uint256 providerId) {
+        providerId = _signerProvider[signerPubkeyHash];
+        if (providerId == 0) revert InvalidSignerPubkeyHash(signerPubkeyHash);
+        if (_deniedProviders[providerId]) revert ProviderDenied(providerId);
     }
 
     /// @notice Register a reporting threshold for PATTERN (anti-structuring) proofs
@@ -1119,7 +1191,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @dev Assert that none of the providers expanded from `configHash` have been denied.
     ///      Centralizes the `_configContainsDeniedProvider` -> `_firstDeniedProviderInConfig`
-    ///      revert pattern shared by every compliance validator.
+    ///      revert pattern shared by every validator that consumes a `config_hash`
+    ///      (0x01, 0x02, 0x07, 0x08, 0x09).
     function _assertConfigNotDenied(bytes32 configHash) internal view {
         if (_configContainsDeniedProvider(configHash)) {
             revert ProviderDenied(_firstDeniedProviderInConfig(configHash));
@@ -1230,6 +1303,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [7]: submitter
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertValidConfig(bytes32(publicInputs[160:192]));
+        _assertConfigNotDenied(bytes32(publicInputs[160:192]));
         _assertSubmitter(bytes32(publicInputs[224:256]));
         _validateRiskBounds(
             uint256(bytes32(publicInputs[0:32])),
@@ -1376,9 +1450,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         if (proofProviderSet != providerSetHash) revert PublicInputMismatch();
         _assertValidConfig(proofConfigHash);
         _assertResultPositive(bytes32(publicInputs[128:160]));
-        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
-            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
-        }
+        _assertSignerAuthorized(proofSignerPubkeyHash);
         _assertChainAndOracleBinding(publicInputs, 192);
         _assertSubmitter(bytes32(publicInputs[256:288]));
         _assertConfigNotDenied(proofConfigHash);
@@ -1431,14 +1503,18 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
             bytes32(publicInputs[288:320]),
             bytes32(publicInputs[320:352])
         ];
+        // M-of-N counts providers: active slots must be distinct providers.
+        uint256[5] memory slotProviders;
         uint8 activeCount;
         for (uint256 i; i < 5; ++i) {
             bytes32 h = signerHashes[i];
             if (h == bytes32(0)) continue;
-            if (!_validSignerPubkeyHashes[h]) revert InvalidSignerPubkeyHash(h);
+            uint256 providerId = _assertSignerAuthorized(h);
             for (uint256 j; j < i; ++j) {
                 if (signerHashes[j] == h) revert DuplicateSigner(h);
+                if (slotProviders[j] == providerId) revert DuplicateSignerProvider(providerId);
             }
+            slotProviders[i] = providerId;
             unchecked {
                 ++activeCount;
             }
@@ -1482,9 +1558,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertValidConfig(bytes32(publicInputs[160:192]));
-        if (!_validSignerPubkeyHashes[proofSignerPubkeyHash]) {
-            revert InvalidSignerPubkeyHash(proofSignerPubkeyHash);
-        }
+        _assertConfigNotDenied(bytes32(publicInputs[160:192]));
+        _assertSignerAuthorized(proofSignerPubkeyHash);
         _assertChainAndOracleBinding(publicInputs, 288);
         _assertSubmitter(bytes32(publicInputs[352:384]));
         _validateRiskBounds(

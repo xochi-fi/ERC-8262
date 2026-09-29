@@ -99,7 +99,7 @@ contract IntegrationTest is Test {
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
 
         // RISK_SCORE_SIGNED fixture signer (circuits/risk_score_signed/Prover.toml)
-        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
 
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA submits the tx; a separate signing key
