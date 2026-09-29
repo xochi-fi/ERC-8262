@@ -1944,6 +1944,29 @@ contract ERC8262OracleTest is OracleTestBase {
     // Pause mechanism
     // -------------------------------------------------------------------------
 
+    /// Pausing the Verifier stops Oracle submissions.
+    function test_verifierRouterPause_blocksSubmitCompliance() public {
+        vm.prank(owner);
+        verifier.pause();
+
+        vm.prank(alice);
+        vm.expectRevert(Pausable.ContractPaused.selector);
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
+    function test_verifierRouterProofTypePause_blocksSubmitCompliance() public {
+        vm.prank(owner);
+        verifier.pauseProofType(ProofTypes.COMPLIANCE);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Verifier.ProofTypePaused.selector, ProofTypes.COMPLIANCE));
+        oracle.submitCompliance(
+            0, ProofTypes.COMPLIANCE, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH
+        );
+    }
+
     function test_pause_blocksSubmitCompliance() public {
         vm.prank(owner);
         oracle.pause();
