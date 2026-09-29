@@ -749,6 +749,24 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
+    /// A submitter word with bits set above 160 is a different field element from
+    /// msg.sender, so the circuit proved a claim about another value (e.g. a
+    /// non-membership bracket around A + 2^160 rather than A).
+    function test_submitCompliance_revert_submitterHighBitsSet() public {
+        bytes32 root = bytes32(uint256(0xbeef));
+        vm.prank(owner);
+        oracle.registerMerkleRoot(root);
+
+        bytes memory publicInputs = _nonMembershipInputs(root);
+        uint256 aliased = uint256(uint160(alice)) + (uint256(1) << 160);
+        assembly {
+            mstore(add(publicInputs, 0xa0), aliased) // index 4: submitter
+        }
+        vm.prank(alice);
+        vm.expectRevert(ERC8262Oracle.SubmitterMismatch.selector);
+        oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
     function test_submitCompliance_attestationProof_revert_unregisteredCredentialRoot() public {
         bytes32 unregistered = bytes32(uint256(0xdead));
         bytes memory publicInputs = _attestationInputs(unregistered);
