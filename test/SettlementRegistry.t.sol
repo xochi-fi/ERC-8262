@@ -279,6 +279,111 @@ contract SettlementRegistryTest is Test {
         registry.recordSubSettlement(tradeId, 0, proofHash);
     }
 
+    /// @notice A compliance attestation past its oracle `expiresAt` must not back a leg.
+    function test_recordSubSettlement_revert_expiredAttestation() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        uint256 attExpiresAt = oracle.getHistoricalProof(proofHash).expiresAt;
+
+        // Still inside the 7-day trade window, one second past the attestation TTL.
+        vm.warp(attExpiresAt + 1);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.AttestationExpired.selector, proofHash, attExpiresAt)
+        );
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+    }
+
+    /// @notice A leg backed by an attestation a guardian has since invalidated is rejected.
+    function test_recordSubSettlement_revert_revokedAttestation() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        vm.prank(owner);
+        oracle.invalidateAttestation(proofHash);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.AttestationRevoked.selector, proofHash));
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+    }
+
+    /// @notice Finalization rejects a PATTERN proof whose attestation has been invalidated.
+    function test_finalizeTrade_revert_revokedPatternAttestation() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+        bytes32 proof1 = _submitComplianceForAlice(0);
+        bytes32 proof2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proof1);
+        registry.recordSubSettlement(tradeId, 1, proof2);
+        vm.stopPrank();
+
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
+        vm.prank(owner);
+        oracle.invalidateAttestation(patternProof);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.AttestationRevoked.selector, patternProof));
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    /// @notice `expiresAt` is inclusive: an attestation is usable at exactly its expiry second.
+    function test_recordSubSettlement_acceptsAttestationAtExactExpiry() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        vm.warp(oracle.getHistoricalProof(proofHash).expiresAt);
+
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+        assertEq(registry.getSettlement(tradeId).settledCount, 1);
+    }
+
+    /// @notice An unexpired attestation recorded before trade registration must not back a leg.
+    function test_recordSubSettlement_revert_attestationPredatesTrade() public {
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        uint256 attestedAt = block.timestamp;
+
+        vm.warp(block.timestamp + 1);
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.AttestationPredatesTrade.selector, proofHash, attestedAt, block.timestamp
+            )
+        );
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+    }
+
+    /// @notice One compliance attestation must not fill more than one leg of a trade.
+    function test_recordSubSettlement_revert_sameProofOnTwoLegs() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.DuplicateSubSettlementProof.selector, tradeId, proofHash)
+        );
+        registry.recordSubSettlement(tradeId, 1, proofHash);
+        vm.stopPrank();
+    }
+
     /// @notice Sub-settlements MUST be one of the compliance variants.
     /// @dev Without the proof-type guard, a MEMBERSHIP proof (subject in some
     ///      registered set) satisfies `subject` + `jurisdictionId` matching and
@@ -738,7 +843,8 @@ contract SettlementRegistryTest is Test {
         registry.expireTrade(tradeId);
 
         ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
-        assertTrue(s.finalized);
+        assertFalse(s.finalized, "expired trade must not report finalized");
+        assertTrue(s.expired);
     }
 
     function test_expireTrade_permissionless() public {
@@ -752,7 +858,32 @@ contract SettlementRegistryTest is Test {
         vm.prank(bob);
         registry.expireTrade(tradeId);
 
-        assertTrue(registry.getSettlement(tradeId).finalized);
+        ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
+        assertFalse(s.finalized);
+        assertTrue(s.expired);
+    }
+
+    /// @notice An expired trade is terminal: no further legs, finalization, or re-expiry.
+    function test_expireTrade_blocksFurtherTransitions() public {
+        bytes32 tradeId = keccak256("trade-1");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        registry.expireTrade(tradeId);
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
+
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeExpiredError.selector, tradeId));
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeExpiredError.selector, tradeId));
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+        vm.stopPrank();
+
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeExpiredError.selector, tradeId));
+        registry.expireTrade(tradeId);
     }
 
     function test_expireTrade_revert_beforeExpiry() public {
@@ -903,7 +1034,7 @@ contract SettlementRegistryTest is Test {
     function _submitMembershipForAlice(uint8 jurisdictionId) internal returns (bytes32 proofHash) {
         bytes32 merkleRoot = keccak256(abi.encodePacked("test-merkle-root-", _proofNonce));
         vm.prank(owner);
-        oracle.registerMerkleRoot(merkleRoot);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, merkleRoot);
 
         bytes memory proof = _uniqueProof();
         bytes memory publicInputs = abi.encodePacked(

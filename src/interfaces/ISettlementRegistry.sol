@@ -8,6 +8,8 @@ import {IERC8262Oracle} from "./IERC8262Oracle.sol";
 ///         attestation in the ERC-8262 Oracle before the trade can be finalized
 interface ISettlementRegistry {
     /// @notice A registered trade awaiting sub-settlement completion
+    /// @dev pending -> finalized (`finalizeTrade`) or pending -> expired (`expireTrade`);
+    ///      terminal flags are mutually exclusive.
     struct Settlement {
         bytes32 tradeId;
         address subject; // address that registered the trade
@@ -16,7 +18,8 @@ interface ISettlementRegistry {
         uint8 settledCount; // sub-trades settled so far
         uint256 createdAt;
         uint256 expiresAt;
-        bool finalized;
+        bool finalized; // true only after a successful finalizeTrade
+        bool expired; // true only after expireTrade closed the trade unfinalized
     }
 
     /// @notice A single sub-settlement linked to a compliance proof
@@ -78,6 +81,13 @@ interface ISettlementRegistry {
     ///      jurisdiction would otherwise satisfy `recordSubSettlement` and silently
     ///      substitute a non-AML guarantee.
     error NonComplianceProofType(bytes32 proofHash, uint8 proofType);
+    /// @notice Leg attestation is past its oracle `expiresAt`.
+    error AttestationExpired(bytes32 proofHash, uint256 expiresAt);
+    error AttestationRevoked(bytes32 proofHash);
+    /// @notice Leg attestation was recorded before the trade was registered.
+    error AttestationPredatesTrade(bytes32 proofHash, uint256 attestedAt, uint256 tradeCreatedAt);
+    /// @notice Proof hash already backs another leg of this trade.
+    error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
 
     // -------------------------------------------------------------------------
     // Functions
@@ -90,6 +100,8 @@ interface ISettlementRegistry {
     function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external;
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
+    /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,
+    ///      `block.timestamp <= expiresAt`, `timestamp >= createdAt`, unused in this trade.
     /// @param tradeId The trade to record against
     /// @param index The sub-trade index (0-based, must be < subTradeCount)
     /// @param proofHash The proof hash from a prior oracle submission
@@ -107,7 +119,7 @@ interface ISettlementRegistry {
     function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external;
 
     /// @notice Expire a trade that has passed its expiry window without finalization
-    /// @dev Permissionless -- anyone can call this after expiry
+    /// @dev Permissionless after expiry. Sets `expired`, never `finalized`.
     /// @param tradeId The trade to expire
     function expireTrade(bytes32 tradeId) external;
 

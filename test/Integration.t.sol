@@ -92,14 +92,14 @@ contract IntegrationTest is Test {
         }
 
         // Register merkle roots needed by membership/non_membership fixtures
-        oracle.registerMerkleRoot(FIXTURE_MEMBERSHIP_ROOT);
-        oracle.registerMerkleRoot(FIXTURE_NON_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
+        oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
 
         // Register reporting threshold needed by pattern fixture (10000)
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
 
         // RISK_SCORE_SIGNED fixture signer (circuits/risk_score_signed/Prover.toml)
-        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
 
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA submits the tx; a separate signing key
@@ -329,7 +329,10 @@ contract IntegrationTest is Test {
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
         // The proof time is the provider's signed timestamp, not the block time.
-        assertEq(oracle.lastProofTimestamp(FIXTURE_SUBMITTER, 1), FIXTURE_SIGNED_TIMESTAMP);
+        assertEq(
+            oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 1, ProofTypes.RISK_SCORE_SIGNED),
+            FIXTURE_SIGNED_TIMESTAMP
+        );
     }
 
     function test_realProof_riskScoreSigned_revert_stale() public {

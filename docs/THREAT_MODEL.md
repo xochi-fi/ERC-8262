@@ -27,8 +27,8 @@ Holds the `owner` key on `ERC8262Verifier`, `ERC8262Oracle`, and (transitively) 
 | Replace a verifier (`proposeVerifier` + `executeVerifierUpdate`)                                                | 24 h  | New verifier address must pass `code.length > 0`; `expectedCodehash` is pinned at proposal time and re-checked on execute |
 | Revoke a historical verifier version (timelocked path: `proposeVersionRevocation` + `executeVersionRevocation`) | 6 h   | Affects `verifyProofAtVersion` only; live verifications use the current verifier                     |
 | Revoke a historical verifier version (immediate emergency path: `revokeVerifierVersion`)                        | 0     | Documented as emergency-only; routine revocations should use the timelocked path                     |
-| Pause a single proof type (`pauseProofType`)                                                                    | 0     | Reversible, instant. Stops both `verifyProof` and `verifyProofAtVersion`                             |
-| Pause all proof types (`pause`)                                                                                 | 0     | Reversible. Affects oracle and verifier independently                                                |
+| Pause a single proof type (`pauseProofType`)                                                                    | 0     | Reversible; instant via `GUARDIAN_ROLE`, 24 h via timelock. Verifier pause also stops Oracle submissions |
+| Pause all proof types (`pause`)                                                                                 | 0     | Reversible; instant via `GUARDIAN_ROLE`. Oracle pause stops only the Oracle; Verifier pause stops both |
 | Update provider config (`updateProviderConfig(bytes32,string,uint256[])`)                                       | 6 h   | Atomically writes the provider expansion alongside the new config hash (audit F-2 closure). Cannot re-register a previously revoked config. |
 | Revoke a config (`revokeConfig`)                                                                                | 6 h   | Permanent: a revoked config cannot be re-registered                                                  |
 | Register / revoke generic merkle root (membership / non-membership trees)                                       | 6 h   | Used for jurisdiction-managed sets like sanctions lists                                              |
@@ -85,7 +85,7 @@ A second per-provider authority distinct from the publisher EOA. The signing key
 
 ### Provider signing daemon (per signer key)
 
-A provider that signs screening payloads for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs runs a daemon holding a secp256k1 private key. The daemon's `signer_pubkey_hash` is registered on-chain via `registerSignerPubkeyHash(bytes32)` (REGISTRAR role). The reference implementation lives at `xochi-sdk/daemon/`.
+A provider that signs screening payloads for COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs runs a daemon holding a secp256k1 private key. The daemon's `signer_pubkey_hash` is registered on-chain via `registerSignerPubkeyHash(bytes32, providerId)` (REGISTRAR role), binding the key to its provider. The reference implementation lives at `xochi-sdk/daemon/`.
 
 | Capability                            | Notes                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------ |
@@ -95,7 +95,9 @@ A provider that signs screening payloads for COMPLIANCE_SIGNED / RISK_SCORE_SIGN
 **What the signing daemon CANNOT do:**
 
 - Forge an attestation. The signature only proves that signals were attested by this signer; the proof still has to verify in-circuit and clear the Oracle's other checks.
-- Bypass the Oracle registry. If the daemon's `signer_pubkey_hash` is not in `_validSignerPubkeyHashes`, every signed proof reverts at the Oracle.
+- Bypass the Oracle registry: an unregistered `signer_pubkey_hash` makes every signed proof revert.
+- Count twice toward COMPLIANCE_MULTI_SIGNED: two slots from one provider revert (`DuplicateSignerProvider`).
+- Keep signing after `denyProvider(providerId)`.
 - Sign for a provider that has been revoked. Owner calls `revokeSignerPubkeyHash` and any in-flight proofs from that key revert immediately.
 
 **What a compromised signing key allows:**
@@ -103,7 +105,7 @@ A provider that signs screening payloads for COMPLIANCE_SIGNED / RISK_SCORE_SIGN
 - Mint signed COMPLIANCE_SIGNED / RISK_SCORE_SIGNED proofs with arbitrary signal values until the hash is revoked.
 - Does NOT allow forging proofs for a different submitter. `submitter` is bound into the signed payload, and the Oracle separately enforces `submitter == msg.sender`.
 
-Mitigations: keys held in HSM/KMS via `KeyLoader` interface (the dev `HexKeyLoader` is not for production); `revokeSignerPubkeyHash` on suspicion of compromise; threshold signing (FROST-secp256k1) is tracked as V2.
+Mitigations: keys held in HSM/KMS via `KeyLoader` interface (the dev `HexKeyLoader` is not for production); `revokeSignerPubkeyHash` on suspicion of compromise, plus GUARDIAN `invalidateAttestation(proofHash)` for already-minted attestations; threshold signing (FROST-secp256k1) is tracked as V2.
 
 ### Submitter (end user / dApp)
 
@@ -158,7 +160,7 @@ The unsigned COMPLIANCE (0x01) and RISK_SCORE (0x02) circuits accept `signals[]`
 - Bind the proof type and the signing time. Each type signs under its own domain tag (`DOMAIN_SIGNED_SIGNALS` for 0x07, `DOMAIN_RISK_SIGNED_SIGNALS` for 0x08), so a bundle signed for one cannot mint the other. The signed `timestamp` is a public input the Oracle holds to `MAX_PROOF_AGE` (1 hour) and uses as the proof time, so a signature stops minting attestations an hour after issuance. Before this, 0x08 kept the timestamp private and used `block.timestamp`, so any bundle a provider ever signed (including one issued for 0x07) could mint fresh 0x08 attestations indefinitely.
 - Are mandatory in strict jurisdictions. `JurisdictionConfig.requireSignedSignals(US) == true` and `requireSignedSignals(SG) == true`; the Oracle reverts with `SignedSignalsRequired` if a caller submits the unsigned variants for those jurisdictions. Permissive jurisdictions (EU, UK) accept either; integrators that care about signal honesty there should pick the signed variant explicitly.
 
-Off-chain, providers run a signing daemon (reference implementation at `xochi-sdk/daemon/`) holding the secp256k1 key. The daemon's `signer_pubkey_hash` is registered once on-chain via `ERC8262Oracle.registerSignerPubkeyHash(bytes32)`. Provider key rotation is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the new key.
+Off-chain, providers run a signing daemon (reference implementation at `xochi-sdk/daemon/`) holding the secp256k1 key. The daemon's `signer_pubkey_hash` is registered once on-chain via `ERC8262Oracle.registerSignerPubkeyHash(bytes32, providerId)`. Provider key rotation is `revokeSignerPubkeyHash` followed by `registerSignerPubkeyHash` for the new key.
 
 **Multi-provider quorum (COMPLIANCE_MULTI_SIGNED, 0x09).** Reduces single-provider trust to M-of-N. A single signed proof bundles up to `MAX_PROVIDERS_MULTI = 5` parallel signer slots; each active slot independently verifies a secp256k1 signature over a slot-specific Pedersen digest (distinct `DOMAIN_MULTI_SIGNED_SIGNALS` tag plus `slot_index` to prevent cross-proof and cross-slot replay), and each active slot independently asserts the per-provider risk score is below the jurisdiction high-risk floor. The Oracle additionally enforces `threshold_m >= JurisdictionConfig.minMultiProviderThreshold(jurisdictionId)` (US/SG require >= 2 distinct signers; EU/UK accept >= 1). Forging an attestation requires compromising at least `M` of the `N` registered signing keys simultaneously; with M=2, two independent provider compromises are needed.
 
@@ -271,12 +273,14 @@ We are **not engineering for PQ resistance in this draft**. Mainstream estimates
 
 **Response runbook.** Codified end-to-end as `test/Incident_VerifierSoundness.t.sol` (audit F-7); the test asserts the full sequence below plus the negative-control cases (`cannotRevokeCurrentVersion`, surgical-pause, global-pause).
 
-1. **Immediately:** `pauseProofType(affectedType)` from the owner. This stops both new `submitCompliance` calls and re-verifications via `verifyProofAtVersion`.
+1. **Immediately:** `pauseProofType(affectedType)` from the `GUARDIAN_ROLE` holder (the owner is the timelock, whose delay would apply). This stops both new `submitCompliance` calls and re-verifications via `verifyProofAtVersion`.
 2. **Within 24 h:** `proposeVerifier(affectedType, fixed)` — schedules the upgrade.
 3. **24 h later:** `executeVerifierUpdate(affectedType)` — replaces the buggy verifier.
 4. **Within 6 h:** `proposeVersionRevocation(affectedType, badVersion)` — schedules historical revocation.
 5. **6 h later:** `executeVersionRevocation(affectedType, badVersion)` — finalizes revocation.
 6. **Optional:** `unpauseProofType(affectedType)` once the new verifier is live.
+
+Revoking the version invalidates everything it minted: `checkCompliance`, `checkComplianceByType` and `isAttestationValid` return false when `verifierUsed` is revoked. A revoked address cannot be proposed again.
 
 **Note:** the immediate `revokeVerifierVersion` is available if waiting 6 h is unacceptable, but using it gives up the protection against malicious owner mass-revocation. Prefer the timelocked path unless the bug is being actively exploited _via re-verification_ (which is rare — most exploits go through fresh submissions, which the pause already blocks).
 
@@ -383,6 +387,8 @@ The following invariants are protected by regression tests; breaking them indica
 | EIP-712 digest parity between Solidity and TS                                           | `test_parity_credentialRootDigest` (Forge), `eip712-credential-root.test.ts` (vitest)                                          |
 | RISK_SCORE trivial bounds rejected                                                      | `test_submitCompliance_revert_riskScore_*` family                                                                              |
 | PATTERN analysis_type bound to STRUCTURING for SettlementRegistry                       | `test_finalizeTrade_revert_velocityAnalysisRejected`, `test_finalizeTrade_revert_publicInputsMismatch`                         |
+| SettlementRegistry legs need a fresh, post-registration, per-trade-unique compliance attestation | `test_recordSubSettlement_revert_expiredAttestation`, `test_recordSubSettlement_revert_attestationPredatesTrade`, `test_recordSubSettlement_revert_sameProofOnTwoLegs` |
+| Expired trades are distinguishable from finalized ones and terminal                     | `test_expireTrade_afterExpiry`, `test_expireTrade_blocksFurtherTransitions`                                                    |
 | Credential root TTL window                                                              | `test_credentialRoot_expiresAfterTTL`, `test_credentialRoot_overlapWindow`                                                     |
 | Pedersen parity between bb.js and Noir                                                  | `test_parity_with_sdk_signed_payload_hash`, `test_parity_with_sdk_signer_pubkey_hash` (Noir); `provider-pedersen.test.ts` (TS) |
 | Strict jurisdictions reject unsigned screening proofs                                   | `test_strictJurisdiction_rejects_unsignedCompliance`, `test_strictJurisdiction_rejects_unsignedRiskScore`                      |

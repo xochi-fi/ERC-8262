@@ -160,8 +160,8 @@ contract AccessControlTest is Test {
         oracle.grantRole(REGISTRAR, registrar);
 
         vm.prank(registrar);
-        oracle.registerMerkleRoot(keccak256("root"));
-        assertTrue(oracle.isValidMerkleRoot(keccak256("root")));
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, keccak256("root"));
+        assertTrue(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, keccak256("root")));
     }
 
     function test_guardian_cannotRegisterMerkleRoot() public {
@@ -170,7 +170,7 @@ contract AccessControlTest is Test {
 
         vm.prank(guardian);
         vm.expectPartialRevert(AccessControl.NotRole.selector);
-        oracle.registerMerkleRoot(keccak256("root"));
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, keccak256("root"));
     }
 
     // -------------------------------------------------------------------------

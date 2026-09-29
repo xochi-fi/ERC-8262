@@ -69,8 +69,10 @@ Each of the 9 proof types has its own Noir circuit and generates a separate Ultr
 Standalone immutable contract that links split settlement proofs to a tradeId (XIP-1). When a large trade is split into sub-trades for privacy, the registry records each sub-trade's compliance proof and enforces an anti-structuring pattern proof at finalization.
 
 - No admin, no pause, no upgradability. Fully immutable.
-- References the Oracle via `getHistoricalProof()` to validate proof existence.
+- References the Oracle via `getHistoricalProof()` to validate proof existence; historical lookups never expire, so the registry enforces freshness.
 - `recordSubSettlement` rejects any proof type other than COMPLIANCE / COMPLIANCE_SIGNED / COMPLIANCE_MULTI_SIGNED. Substituting a MEMBERSHIP, RISK_SCORE, ATTESTATION, or PATTERN attestation reverts with `NonComplianceProofType`.
+- Each leg's attestation must be unexpired at record time (`AttestationExpired`), recorded no earlier than `registerTrade` (`AttestationPredatesTrade`), and unique within the trade (`DuplicateSubSettlementProof`).
+- `expireTrade` sets `Settlement.expired`; only a successful `finalizeTrade` sets `finalized`.
 - `finalizeTrade` binds the pattern proof to the specific settlement: the PATTERN circuit's `settlement_root` public input must equal `computeSettlementRoot(tradeId)` (keccak commitment over the recorded sub-settlement hashes, reduced into the BN254 scalar field). The same pattern proof cannot finalize two trades (`_usedPatternProofs`).
 - Interface: `ISettlementRegistry`
 
@@ -241,6 +243,7 @@ export INITIAL_PROVIDER_IDS=1,2,3   # comma-separated uint256s; weights for thes
 export USE_TIMELOCK=true
 export TIMELOCK_PROPOSER=0x...   # multisig that schedules ops
 export TIMELOCK_GUARDIAN=0x...   # optional cancel-only role
+export GUARDIAN_ADDRESS=0x...    # required: GUARDIAN_ROLE on Oracle + Verifier (instant pause)
 
 # 3. Deploy
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
@@ -249,7 +252,7 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast \
 
 **EIP-170 note.** The bb-generated UltraHonk verifiers used to land 64-65 B over the 24,576 B runtime limit. `scripts/patch-pairing-yul.sh` rewrites the `pairing()` free function in inline Yul (single `staticcall` to the bn254 precompile), saving ~186 B per verifier and ~800 gas per `verifyProof`. All 9 verifiers now sit at 24,452-24,455 B with +121-124 B headroom, deployable on Ethereum mainnet and the OP-Stack L2s without flags. The patch runs idempotently inside `scripts/generate-fixtures.sh`, so any regenerated verifier picks it up automatically. Confirm with `forge build --sizes` before broadcasting.
 
-**Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
+**Post-deployment ownership handoff (`USE_TIMELOCK=true`).** Deploy grants `GUARDIAN_ROLE` on both contracts to `GUARDIAN_ADDRESS` (required); under the timelock, owner `pause`/`pauseProofType`/`denyProvider` wait 24 hours, so the guardian is the only instant path. Deploy then initiates `Ownable2Step.transferOwnership(timelock)` for both the verifier and oracle. To complete the handoff, the proposer multisig must drive each `acceptOwnership()` call through the timelock itself (no shortcut exists -- the permissive `acceptOwnership(address)` was removed in audit fix F-5):
 
 ```text
 timelock.schedule(target, 0, abi.encodeWithSignature("acceptOwnership()"), salt)
@@ -264,8 +267,10 @@ Both schedules must be issued and executed within Ownable2Step's 48-hour accepta
 ```bash
 export ORACLE_ADDRESS=0x...      # from Deploy output
 export REPORTING_THRESHOLDS=10000,5000
-export MERKLE_ROOTS=0xabcd...,0x1234...
+export MEMBERSHIP_ROOTS=0xabcd...      # allowlist sets
+export NON_MEMBERSHIP_ROOTS=0x1234...  # denylist sets (e.g. sanctions)
 export PROVIDERS_JSON='[{"providerId":42,"publisher":"0xPUB..."}]'
+export SIGNER_PUBKEY_HASHES=0xabcd...:42      # signer key hash : operating provider ID
 
 forge script script/Bootstrap.s.sol --rpc-url $RPC_URL --broadcast --sender $ADMIN_ADDRESS
 ```

@@ -111,11 +111,11 @@ contract Handler is Test {
 
     function registerMerkleRoot(bytes32 salt) external {
         bytes32 root = keccak256(abi.encodePacked("root-", salt, registeredMerkleRoots.length));
-        if (oracle.isValidMerkleRoot(root)) return;
+        if (oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root)) return;
         if (merkleRootEverRevoked[root]) return;
 
         vm.prank(oracle.owner());
-        oracle.registerMerkleRoot(root);
+        oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, root);
         if (!merkleRootEverRegistered[root]) {
             registeredMerkleRoots.push(root);
             merkleRootEverRegistered[root] = true;
@@ -126,10 +126,10 @@ contract Handler is Test {
         if (registeredMerkleRoots.length == 0) return;
         index = index % registeredMerkleRoots.length;
         bytes32 root = registeredMerkleRoots[index];
-        if (!oracle.isValidMerkleRoot(root)) return;
+        if (!oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root)) return;
 
         vm.prank(oracle.owner());
-        oracle.revokeMerkleRoot(root);
+        oracle.revokeMerkleRoot(ProofTypes.MEMBERSHIP, root);
         if (!merkleRootEverRevoked[root]) {
             revokedMerkleRoots.push(root);
             merkleRootEverRevoked[root] = true;
@@ -268,10 +268,12 @@ contract InvariantTest is Test {
     function invariant_merkleRootStateMachine() public view {
         for (uint256 i; i < handler.registeredMerkleRootsLength(); i++) {
             bytes32 root = handler.registeredMerkleRoots(i);
+            // A root registered for MEMBERSHIP must never satisfy NON_MEMBERSHIP.
+            assertFalse(oracle.isValidMerkleRoot(ProofTypes.NON_MEMBERSHIP, root));
             if (handler.merkleRootEverRevoked(root)) {
-                assertFalse(oracle.isValidMerkleRoot(root));
+                assertFalse(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root));
             } else {
-                assertTrue(oracle.isValidMerkleRoot(root));
+                assertTrue(oracle.isValidMerkleRoot(ProofTypes.MEMBERSHIP, root));
             }
         }
     }
