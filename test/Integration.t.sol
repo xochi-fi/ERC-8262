@@ -329,7 +329,10 @@ contract IntegrationTest is Test {
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertEq(att.proofType, ProofTypes.RISK_SCORE_SIGNED);
         // The proof time is the provider's signed timestamp, not the block time.
-        assertEq(oracle.lastProofTimestamp(FIXTURE_SUBMITTER, 1), FIXTURE_SIGNED_TIMESTAMP);
+        assertEq(
+            oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 1, ProofTypes.RISK_SCORE_SIGNED),
+            FIXTURE_SIGNED_TIMESTAMP
+        );
     }
 
     function test_realProof_riskScoreSigned_revert_stale() public {

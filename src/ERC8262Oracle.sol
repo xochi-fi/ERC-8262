@@ -96,13 +96,18 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     mapping(uint256 providerId => bool denied) internal _deniedProviders;
 
     /// @notice Highest proof-internal timestamp recorded per (subject, jurisdiction).
-    /// @dev Per-subject ratchet that prevents an old proof from overwriting a newer attestation.
-    ///      The stored value is the proof's `timestamp` public input (or `block.timestamp` for
-    ///      proof types without an internal timestamp -- RISK_SCORE and PATTERN). New proofs
-    ///      must be non-decreasing (>= last); equal timestamps are allowed so legitimate
-    ///      same-block submissions of different proof types can coexist for the same pair.
+    /// @dev `checkCompliance` slot ratchet on the proof's `timestamp` input (equal allowed).
+    ///      Only `_writesComplianceSlot` types advance it, so other types cannot lock it.
     mapping(address subject => mapping(uint8 jurisdictionId => uint256 lastProofTimestamp)) internal
         _lastProofTimestamp;
+
+    /// @dev Latest attestation per (subject, jurisdiction, proofType); read by `checkComplianceByType`.
+    mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => ComplianceAttestation)))
+        internal _typedAttestations;
+
+    /// @dev Ratchet for `_typedAttestations`; types without a proof timestamp use `block.timestamp`.
+    mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => uint256))) internal
+        _typedLastProofTimestamp;
 
     /// @notice Metadata for a published credential tree root
     struct CredentialRootInfo {
@@ -271,35 +276,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         bytes calldata publicInputs,
         bytes32 providerSetHash
     ) external whenNotPaused returns (ComplianceAttestation memory attestation) {
-        if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
         JurisdictionConfig.validateJurisdiction(jurisdictionId);
-
-        // Validate that caller-supplied parameters match what's in the proof's public inputs.
-        // This prevents submitting a proof generated for one context in a different context.
-        // Each validator returns the timestamp to ratchet on -- proof-internal for types that
-        // expose one, block.timestamp otherwise.
-        uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, publicInputs);
-        _ratchet(jurisdictionId, proofTimestamp);
-
-        // Verify proof and check replay (extracted to reduce stack depth)
-        (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, publicInputs);
-
-        // Build and store attestation (providerSetHash only meaningful for COMPLIANCE proofs)
-        bytes32 effectiveProviderSetHash = (proofType == ProofTypes.COMPLIANCE
-                || proofType == ProofTypes.COMPLIANCE_SIGNED || proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED)
-            ? providerSetHash
-            : bytes32(0);
-        attestation = _buildAttestation(
-            jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(publicInputs), verifierUsed
-        );
-
-        uint256 previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
-        _attestations[msg.sender][jurisdictionId] = attestation;
-        _proofIndex[proofHash] = attestation;
-        _proofTypes[proofHash] = proofType;
-        _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
-
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+        attestation = _submitSingle(jurisdictionId, proofType, proof, publicInputs, providerSetHash);
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -348,9 +326,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         view
         returns (bool valid, ComplianceAttestation memory attestation)
     {
-        attestation = _attestations[subject][jurisdictionId];
-        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt
-            && attestation.proofType == proofType;
+        attestation = _typedAttestations[subject][jurisdictionId][proofType];
+        valid = attestation.timestamp > 0 && attestation.meetsThreshold && block.timestamp <= attestation.expiresAt;
     }
 
     /// @inheritdoc IERC8262Oracle
@@ -913,8 +890,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     // Internal
     // -------------------------------------------------------------------------
 
-    /// @dev Process a single entry in a batch (or standalone) submission.
-    ///      Extracted to avoid stack-too-deep in the batch loop.
+    /// @dev Every accepted proof writes its per-type slot; only `_writesComplianceSlot`
+    ///      types also write the `checkCompliance` slot.
     function _submitSingle(
         uint8 jurisdictionId,
         uint8 proofType,
@@ -924,7 +901,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ) internal returns (ComplianceAttestation memory attestation) {
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
         uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, inputs);
-        _ratchet(jurisdictionId, proofTimestamp);
+        bool writesComplianceSlot = _writesComplianceSlot(jurisdictionId, proofType);
+        _ratchetTyped(jurisdictionId, proofType, proofTimestamp);
+        if (writesComplianceSlot) _ratchet(jurisdictionId, proofTimestamp);
 
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, inputs);
 
@@ -936,13 +915,42 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
             jurisdictionId, proofType, proofHash, effectiveProviderSetHash, keccak256(inputs), verifierUsed
         );
 
-        uint256 previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
-        _attestations[msg.sender][jurisdictionId] = attestation;
-        _proofIndex[proofHash] = attestation;
-        _proofTypes[proofHash] = proofType;
-        _attestationHistory[msg.sender][jurisdictionId].push(proofHash);
+        _storeAttestation(jurisdictionId, proofType, attestation, writesComplianceSlot);
+    }
 
-        emit ComplianceVerified(msg.sender, jurisdictionId, true, proofHash, attestation.expiresAt, previousExpiresAt);
+    /// @dev Split out of `_submitSingle` for stack depth.
+    function _storeAttestation(
+        uint8 jurisdictionId,
+        uint8 proofType,
+        ComplianceAttestation memory attestation,
+        bool writesComplianceSlot
+    ) internal {
+        uint256 previousExpiresAt;
+        if (writesComplianceSlot) {
+            previousExpiresAt = _attestations[msg.sender][jurisdictionId].expiresAt;
+            _attestations[msg.sender][jurisdictionId] = attestation;
+        } else {
+            previousExpiresAt = _typedAttestations[msg.sender][jurisdictionId][proofType].expiresAt;
+        }
+        _typedAttestations[msg.sender][jurisdictionId][proofType] = attestation;
+        _proofIndex[attestation.proofHash] = attestation;
+        _proofTypes[attestation.proofHash] = proofType;
+        _attestationHistory[msg.sender][jurisdictionId].push(attestation.proofHash);
+
+        emit ComplianceVerified(
+            msg.sender, jurisdictionId, true, attestation.proofHash, attestation.expiresAt, previousExpiresAt
+        );
+    }
+
+    /// @dev Whether `proofType` may write the `checkCompliance` slot. MULTI_SIGNED always
+    ///      (validator enforces the provider floor); COMPLIANCE / COMPLIANCE_SIGNED only where
+    ///      the floor is 1. No other type binds the jurisdiction's risk threshold.
+    function _writesComplianceSlot(uint8 jurisdictionId, uint8 proofType) internal pure returns (bool) {
+        if (proofType == ProofTypes.COMPLIANCE_MULTI_SIGNED) return true;
+        if (proofType == ProofTypes.COMPLIANCE || proofType == ProofTypes.COMPLIANCE_SIGNED) {
+            return JurisdictionConfig.minMultiProviderThreshold(jurisdictionId) == 1;
+        }
+        return false;
     }
 
     /// @dev Verify the ZK proof and record replay protection.
@@ -1029,14 +1037,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @dev Per-(subject, jurisdiction) non-decreasing ratchet on the proof timestamp.
-    ///      Blocks an older proof from overwriting a newer attestation -- the canonical
-    ///      replay-extension attack where an attacker holds a "passed" proof and re-submits
-    ///      it after state has degraded. The ratchet's effective value is the proof's
-    ///      internal timestamp for types that expose one (COMPLIANCE/ATTESTATION/MEMBERSHIP/
-    ///      NON_MEMBERSHIP), or `block.timestamp` for types that don't (RISK_SCORE/PATTERN).
-    ///      Equal timestamps are allowed: legitimate same-block submissions of different
-    ///      proof types for the same (subject, jurisdiction) must remain possible.
+    /// @dev Non-decreasing (subject, jurisdiction) ratchet; blocks replaying an older
+    ///      "passed" proof after state degrades. Equal timestamps allowed.
     function _ratchet(uint8 jurisdictionId, uint256 proofTimestamp) internal {
         uint256 last = _lastProofTimestamp[msg.sender][jurisdictionId];
         if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
@@ -1045,10 +1047,28 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
+    /// @dev Per-type ratchet; RISK_SCORE and PATTERN have no proof timestamp and use `block.timestamp`.
+    function _ratchetTyped(uint8 jurisdictionId, uint8 proofType, uint256 proofTimestamp) internal {
+        uint256 last = _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType];
+        if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
+        if (proofTimestamp != last) {
+            _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType] = proofTimestamp;
+        }
+    }
+
     /// @notice Last ratcheted proof timestamp for a (subject, jurisdiction) pair.
     /// @dev Returns 0 when no proof has been recorded yet for the pair.
     function lastProofTimestamp(address subject, uint8 jurisdictionId) external view returns (uint256) {
         return _lastProofTimestamp[subject][jurisdictionId];
+    }
+
+    /// @notice Last ratcheted proof timestamp for a (subject, jurisdiction, proofType) slot.
+    function lastProofTimestampByType(address subject, uint8 jurisdictionId, uint8 proofType)
+        external
+        view
+        returns (uint256)
+    {
+        return _typedLastProofTimestamp[subject][jurisdictionId][proofType];
     }
 
     /// @dev Check that a proof timestamp is within MAX_PROOF_AGE in the past and

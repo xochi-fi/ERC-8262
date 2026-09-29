@@ -767,6 +767,68 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.NON_MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
     }
 
+    // -------------------------------------------------------------------------
+    // checkCompliance slot: only jurisdictional compliance claims write it
+    // -------------------------------------------------------------------------
+
+    /// RISK_SCORE_SIGNED does not satisfy checkCompliance.
+    function test_riskScoreSigned_recordedByTypeOnly() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+        vm.warp(1700000000);
+
+        bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000);
+        vm.prank(alice);
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+
+        (bool valid,) = oracle.checkCompliance(alice, 1);
+        assertFalse(valid);
+        (bool validByType,) = oracle.checkComplianceByType(alice, 1, ProofTypes.RISK_SCORE_SIGNED);
+        assertTrue(validByType);
+    }
+
+    /// US needs >= 2 providers: single-signer COMPLIANCE_SIGNED does not satisfy checkCompliance.
+    function test_complianceSigned_belowMultiProviderFloor_recordedByTypeOnly() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _complianceSignedInputs(1, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+
+        (bool valid,) = oracle.checkCompliance(alice, 1);
+        assertFalse(valid);
+        (bool validByType,) = oracle.checkComplianceByType(alice, 1, ProofTypes.COMPLIANCE_SIGNED);
+        assertTrue(validByType);
+    }
+
+    function test_complianceSigned_floorOfOne_writesComplianceSlot() public {
+        vm.prank(owner);
+        oracle.registerSignerPubkeyHash(TEST_SIGNER_PUBKEY_HASH);
+
+        bytes memory inputs = _complianceSignedInputs(0, DEFAULT_PROVIDER_SET_HASH, TEST_SIGNER_PUBKEY_HASH, alice);
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
+
+        (bool valid,) = oracle.checkCompliance(alice, 0);
+        assertTrue(valid);
+    }
+
+    /// A block.timestamp-ratcheted type must not block a slightly older compliance proof.
+    function test_ratchet_untimestampedTypeDoesNotBlockCompliance() public {
+        vm.warp(1700000000 - 10);
+        bytes memory complianceInputs = _complianceInputs();
+        vm.warp(1700000000);
+
+        vm.startPrank(alice);
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), _riskScoreInputs(INITIAL_CONFIG), bytes32(0));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), complianceInputs, DEFAULT_PROVIDER_SET_HASH);
+        vm.stopPrank();
+
+        (bool valid,) = oracle.checkCompliance(alice, 0);
+        assertTrue(valid);
+    }
+
     function test_submitCompliance_attestationProof_revert_unregisteredCredentialRoot() public {
         bytes32 unregistered = bytes32(uint256(0xdead));
         bytes memory publicInputs = _attestationInputs(unregistered);
@@ -2685,7 +2747,7 @@ contract ERC8262OracleTest is OracleTestBase {
         bytes memory inputs = _riskScoreSignedInputs(INITIAL_CONFIG, TEST_SIGNER_PUBKEY_HASH, alice, 1700000000 - 1800);
         vm.prank(alice);
         oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, _uniqueProof(), inputs, DEFAULT_PROVIDER_SET_HASH);
-        assertEq(oracle.lastProofTimestamp(alice, 1), 1700000000 - 1800);
+        assertEq(oracle.lastProofTimestampByType(alice, 1, ProofTypes.RISK_SCORE_SIGNED), 1700000000 - 1800);
     }
 
     function test_submitCompliance_riskScoreSigned_staleness_exactBoundary() public {
