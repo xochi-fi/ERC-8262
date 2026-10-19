@@ -150,6 +150,7 @@ const RISK_SCORE_GT_INPUTS = {
   result: true, // 55*100/100 = 5500 bps > 4000
   config_hash: FIXTURE_HASHES.CONFIG_HASH,
   provider_set_hash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+  timestamp: "1700000000",
   submitter: ALICE_ADDRESS,
 };
 
@@ -300,8 +301,9 @@ describe("SDK layer (no chain)", () => {
         RISK_SCORE_GT_INPUTS,
         api,
       );
-      // 8 public inputs: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, submitter
-      expect(publicInputs).toHaveLength(8);
+      // 9 public inputs: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash,
+      // timestamp, submitter
+      expect(publicInputs).toHaveLength(9);
     });
 
     it("threshold proof: score < bound (LT)", async () => {
@@ -317,7 +319,7 @@ describe("SDK layer (no chain)", () => {
         },
         api,
       );
-      expect(publicInputs).toHaveLength(8);
+      expect(publicInputs).toHaveLength(9);
     });
 
     it("range proof: score in [lower, upper]", async () => {
@@ -333,7 +335,7 @@ describe("SDK layer (no chain)", () => {
         },
         api,
       );
-      expect(publicInputs).toHaveLength(8);
+      expect(publicInputs).toHaveLength(9);
     });
 
     it("rejects contradictory result", async () => {

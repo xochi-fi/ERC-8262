@@ -11,3 +11,4 @@ submitter = "0xdead"
 # settlement_root = 0 means "no downstream binding"; SettlementRegistry overrides this
 # off-chain when binding a pattern proof to a specific trade.
 settlement_root = "0x0"
+timestamp = "1700000000"

@@ -179,9 +179,9 @@ contract SettlementRegistry is ISettlementRegistry {
         if (inputsHash != patternAttestation.publicInputsHash) {
             revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
         }
-        // PATTERN public inputs layout (32 bytes each, 7 fields total after audit H-1):
+        // PATTERN public inputs layout (32 bytes each, 8 fields total):
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
-        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root
+        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
         // Length is enforced by the Oracle on submission.
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
         if (analysisType != PATTERN_STRUCTURING) {

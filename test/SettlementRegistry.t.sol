@@ -683,7 +683,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xbeef)), // tx_set_hash (different from original 0xabcd)
             bytes32(uint256(uint160(alice))),
-            registry.computeSettlementRoot(tradeId) // settlement_root
+            registry.computeSettlementRoot(tradeId), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
 
         vm.prank(alice);
@@ -820,7 +821,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))),
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidAnalysisType.selector, 99));
@@ -1073,7 +1075,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(who))), // submitter
-            settlementRoot // audit H-1 binding (0 for standalone)
+            settlementRoot, // audit H-1 binding (0 for standalone)
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(who);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
