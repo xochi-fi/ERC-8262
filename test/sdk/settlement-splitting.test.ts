@@ -177,6 +177,8 @@ describe("settlement splitting E2E", () => {
       txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
       submitter: alice.address,
       settlementRoot,
+      // Proof timestamp (ERC-8262#25), bound to the anvil clock like the compliance legs.
+      timestamp: String(FIXTURE_TIMESTAMP),
     });
 
     const patternSubmitTx = await oracle.submitCompliance({

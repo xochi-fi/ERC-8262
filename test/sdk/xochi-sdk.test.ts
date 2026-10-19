@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
@@ -34,6 +34,7 @@ import {
   ALICE_KEY,
   ALICE_ADDRESS,
   DEPLOYER_ADDRESS,
+  FIXTURE_TIMESTAMP,
 } from "./anvil";
 import {
   deployContracts,
@@ -103,13 +104,15 @@ describe("SDK typed proof generation", () => {
       direction: "gt",
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
+      timestamp: String(FIXTURE_TIMESTAMP),
       submitter: ALICE_ADDRESS,
     };
 
     const result = await prover.proveRiskScore(input);
     expect(result.proofHex).toMatch(/^0x[0-9a-f]+$/);
-    // risk_score has 8 public inputs (+ submitter)
-    expect(result.publicInputs).toHaveLength(8);
+    // risk_score has 9 public inputs (timestamp at index 7, then submitter)
+    expect(result.publicInputs).toHaveLength(9);
+    expect(BigInt(result.publicInputs[7])).toBe(BigInt(FIXTURE_TIMESTAMP));
   });
 
   it("proveRiskScore range", async () => {
@@ -120,11 +123,12 @@ describe("SDK typed proof generation", () => {
       upperBound: 7000,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
+      timestamp: String(FIXTURE_TIMESTAMP),
       submitter: ALICE_ADDRESS,
     };
 
     const result = await prover.proveRiskScore(input);
-    expect(result.publicInputs).toHaveLength(8);
+    expect(result.publicInputs).toHaveLength(9);
   });
 
   it("rejects non-compliant score via input builder", async () => {
@@ -225,6 +229,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP),
         submitter: ALICE_ADDRESS,
       });
 
@@ -446,6 +451,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP),
         submitter: ALICE_ADDRESS,
       });
 
@@ -469,6 +475,109 @@ describe("SDK -> anvil on-chain verification", () => {
         hash: txHash,
       });
       expect(receipt.status).toBe("success");
+    });
+
+    // ERC-8262#25: the risk_score public timestamp is held to MAX_PROOF_AGE.
+    // The anvil clock starts at FIXTURE_TIMESTAMP, so a proof dated one second
+    // past the 1h window is stale and one dated a day ahead is in the future.
+    // The SDK's ORACLE_ABI does not decode these reverts, so match the selector.
+    const STALE = new RegExp(toFunctionSelector("ProofTimestampStale(uint256,uint256)"));
+    const FUTURE = new RegExp(toFunctionSelector("ProofTimestampInFuture(uint256,uint256)"));
+
+    it("risk_score proof older than MAX_PROOF_AGE is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore({
+        type: "threshold",
+        score: 40,
+        threshold: 3000,
+        direction: "gt",
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP - 3601),
+        submitter: ALICE_ADDRESS,
+      });
+      expect(
+        await verifier.verifyProof(PROOF_TYPES.RISK_SCORE, proofHex, publicInputsHex),
+      ).toBe(true);
+
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(STALE);
+    });
+
+    it("future-dated risk_score proof is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore({
+        type: "threshold",
+        score: 40,
+        threshold: 3000,
+        direction: "gt",
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP + 86400),
+        submitter: ALICE_ADDRESS,
+      });
+
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(FUTURE);
+    });
+
+    // PATTERN (0x03) gets the same bound. Fixture data from circuits/pattern/Prover.toml.
+    const patternInput = (timestamp: number) => ({
+      amounts: [500, 1200, 3000, 7500],
+      timestamps: [1700000000, 1700001000, 1700002000, 1700003000],
+      numTransactions: 4,
+      analysisType: 1 as const, // structuring
+      reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
+      timeWindow: 86400, // SDK minimum
+      txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
+      submitter: ALICE_ADDRESS,
+      settlementRoot: "0", // standalone, no SettlementRegistry binding
+      timestamp: String(timestamp),
+    });
+
+    it("pattern proof with a fresh timestamp submits", async () => {
+      const { proofHex, publicInputs, publicInputsHex } = await prover.provePattern(
+        patternInput(FIXTURE_TIMESTAMP),
+      );
+      expect(publicInputs).toHaveLength(8);
+      expect(BigInt(publicInputs[7])).toBe(BigInt(FIXTURE_TIMESTAMP));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.PATTERN,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      expect(receipt.status).toBe("success");
+    });
+
+    it("pattern proof older than MAX_PROOF_AGE is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.provePattern(
+        patternInput(FIXTURE_TIMESTAMP - 3601),
+      );
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.PATTERN,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        }),
+      ).rejects.toThrow(STALE);
     });
   });
 });
