@@ -50,17 +50,25 @@ contract IntegrationTest is Test {
     /// @dev Provider id used in the attestation fixture
     uint256 internal constant FIXTURE_PROVIDER_ID = 42;
 
-    /// @dev Oracle address the RISK_SCORE_SIGNED fixture signature commits to: the
+    /// @dev Oracle address the signed fixtures' provider signatures commit to: the
     ///      second contract this test deploys (CREATE from the default test address,
-    ///      nonce 2). Moving the Oracle deployment in setUp invalidates the fixture.
+    ///      nonce 2). Moving the Oracle deployment in setUp invalidates those fixtures.
     address internal constant FIXTURE_ORACLE = 0x2e234DAe75C793f67A35089C9d99245E1C58470b;
 
-    /// @dev signer_pubkey_hash of the RISK_SCORE_SIGNED fixture's provider key
-    ///      (secp256k1 key keccak256("erc8262-integration-fixture-provider-signer")).
+    /// @dev signer_pubkey_hash of the signed fixtures' provider key (secp256k1 key
+    ///      keccak256("erc8262-integration-fixture-provider-signer")). Signs the
+    ///      COMPLIANCE_SIGNED and RISK_SCORE_SIGNED fixtures and slot 0 of the
+    ///      COMPLIANCE_MULTI_SIGNED fixture. Registered to provider 1.
     bytes32 internal constant FIXTURE_SIGNER_PUBKEY_HASH =
         0x294fc7a4edbc711b1c3ceceb89474957aea2974dbf3d27efe759a1ecef35d6dc;
 
-    /// @dev Timestamp the RISK_SCORE_SIGNED fixture's provider signed (public input 7).
+    /// @dev signer_pubkey_hash of the second provider key (secp256k1 key
+    ///      keccak256("erc8262-integration-fixture-provider-signer-2")), which signs
+    ///      slot 2 of the COMPLIANCE_MULTI_SIGNED fixture. Registered to provider 2.
+    bytes32 internal constant FIXTURE_SIGNER_B_PUBKEY_HASH =
+        0x2eb905640e16a7a7cb2fc08f412e4db744621a9b8ea6c760cedeefc5004e1b20;
+
+    /// @dev Timestamp every signed fixture's provider signed (a public input).
     uint256 internal constant FIXTURE_SIGNED_TIMESTAMP = 1700000000;
 
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
@@ -73,20 +81,31 @@ contract IntegrationTest is Test {
         oracle = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
 
         // Deploy all generated verifiers that have a fixture and register them
-        string[7] memory circuits =
-            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership", "risk_score_signed"];
-        uint8[7] memory types = [
+        string[9] memory circuits = [
+            "compliance",
+            "risk_score",
+            "pattern",
+            "attestation",
+            "membership",
+            "non_membership",
+            "compliance_signed",
+            "risk_score_signed",
+            "compliance_multi_signed"
+        ];
+        uint8[9] memory types = [
             ProofTypes.COMPLIANCE,
             ProofTypes.RISK_SCORE,
             ProofTypes.PATTERN,
             ProofTypes.ATTESTATION,
             ProofTypes.MEMBERSHIP,
             ProofTypes.NON_MEMBERSHIP,
-            ProofTypes.RISK_SCORE_SIGNED
+            ProofTypes.COMPLIANCE_SIGNED,
+            ProofTypes.RISK_SCORE_SIGNED,
+            ProofTypes.COMPLIANCE_MULTI_SIGNED
         ];
 
         vm.startPrank(owner);
-        for (uint256 i; i < 7; i++) {
+        for (uint256 i; i < 9; i++) {
             address v = _deployGeneratedVerifier(circuits[i]);
             verifier.setVerifierInitial(types[i], v);
         }
@@ -98,8 +117,10 @@ contract IntegrationTest is Test {
         // Register reporting threshold needed by pattern fixture (10000)
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
 
-        // RISK_SCORE_SIGNED fixture signer (circuits/risk_score_signed/Prover.toml)
+        // Signed fixture signers (circuits/*_signed/Prover.toml). COMPLIANCE_MULTI_SIGNED
+        // counts providers, so its two signers map to two providers.
         oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
+        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_B_PUBKEY_HASH, 2);
 
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA submits the tx; a separate signing key
@@ -364,6 +385,149 @@ contract IntegrationTest is Test {
     }
 
     // -------------------------------------------------------------------------
+    // End-to-end: compliance_signed proof
+    //
+    // The fixture's provider signature commits to chain_id 31337, this test's Oracle
+    // address, the US jurisdiction's signals, timestamp 1700000000 and submitter
+    // 0xdead under DOMAIN_SIGNED_SIGNALS (circuits/compliance_signed/Prover.toml).
+    // -------------------------------------------------------------------------
+
+    function test_realProof_complianceSigned_submitAndCheck() public {
+        assertEq(address(oracle), FIXTURE_ORACLE, "fixture signature binds this Oracle address");
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_signed");
+
+        vm.prank(FIXTURE_SUBMITTER);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            1, // US: strict jurisdiction, signed signals required
+            ProofTypes.COMPLIANCE_SIGNED,
+            proof,
+            publicInputs,
+            FIXTURE_PROVIDER_SET_HASH
+        );
+        assertEq(att.subject, FIXTURE_SUBMITTER);
+        assertEq(att.jurisdictionId, 1);
+        assertEq(att.proofType, ProofTypes.COMPLIANCE_SIGNED);
+        assertEq(att.providerSetHash, FIXTURE_PROVIDER_SET_HASH);
+        assertEq(att.verifierUsed, verifier.getVerifier(ProofTypes.COMPLIANCE_SIGNED));
+        assertEq(
+            oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 1, ProofTypes.COMPLIANCE_SIGNED),
+            FIXTURE_SIGNED_TIMESTAMP
+        );
+        // The attestation stands for its type, but one provider does not meet the US
+        // multi-provider floor (M >= 2), so it does not answer checkCompliance.
+        (bool validByType,) = oracle.checkComplianceByType(FIXTURE_SUBMITTER, 1, ProofTypes.COMPLIANCE_SIGNED);
+        assertTrue(validByType);
+        (bool valid,) = oracle.checkCompliance(FIXTURE_SUBMITTER, 1);
+        assertFalse(valid);
+    }
+
+    function test_realProof_complianceSigned_revert_revokedSigner() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_signed");
+
+        vm.prank(owner);
+        oracle.revokeSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH);
+
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, FIXTURE_SIGNER_PUBKEY_HASH)
+        );
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
+    }
+
+    function test_realProof_complianceSigned_redatedTimestampFailsVerification() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_signed");
+        assertTrue(verifier.verifyProof(ProofTypes.COMPLIANCE_SIGNED, proof, publicInputs));
+
+        // Relabel the proof with a fresh timestamp (word 3): the proof no longer verifies.
+        bytes memory redated = bytes.concat(
+            _slice(publicInputs, 0, 3 * 32),
+            bytes32(FIXTURE_SIGNED_TIMESTAMP + 1 days),
+            _slice(publicInputs, 4 * 32, publicInputs.length)
+        );
+        try verifier.verifyProof(ProofTypes.COMPLIANCE_SIGNED, proof, redated) returns (bool valid) {
+            assertFalse(valid, "re-dated COMPLIANCE_SIGNED proof verified");
+        } catch { /* revert acceptable */ }
+    }
+
+    // -------------------------------------------------------------------------
+    // End-to-end: compliance_multi_signed proof
+    //
+    // US 2-of-5 (the US floor is M >= 2). Slot 0 is signed by FIXTURE_SIGNER (provider 1),
+    // slot 2 by FIXTURE_SIGNER_B (provider 2); slots 1, 3, 4 are inactive. Each slot
+    // signature commits to chain_id 31337, this test's Oracle address, the slot index,
+    // timestamp 1700000000 and submitter 0xdead
+    // (circuits/compliance_multi_signed/Prover.toml).
+    // -------------------------------------------------------------------------
+
+    function test_realProof_complianceMultiSigned_submitAndCheck() public {
+        assertEq(address(oracle), FIXTURE_ORACLE, "fixture signature binds this Oracle address");
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_multi_signed");
+
+        vm.prank(FIXTURE_SUBMITTER);
+        IERC8262Oracle.ComplianceAttestation memory att = oracle.submitCompliance(
+            1, ProofTypes.COMPLIANCE_MULTI_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH
+        );
+        assertEq(att.subject, FIXTURE_SUBMITTER);
+        assertEq(att.jurisdictionId, 1);
+        assertEq(att.proofType, ProofTypes.COMPLIANCE_MULTI_SIGNED);
+        assertEq(att.providerSetHash, FIXTURE_PROVIDER_SET_HASH);
+        assertEq(att.verifierUsed, verifier.getVerifier(ProofTypes.COMPLIANCE_MULTI_SIGNED));
+        assertEq(
+            oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 1, ProofTypes.COMPLIANCE_MULTI_SIGNED),
+            FIXTURE_SIGNED_TIMESTAMP
+        );
+        // Two providers meet the US floor, so the proof answers checkCompliance.
+        (bool valid,) = oracle.checkCompliance(FIXTURE_SUBMITTER, 1);
+        assertTrue(valid);
+    }
+
+    function test_realProof_complianceMultiSigned_revert_unregisteredSlotSigner() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_multi_signed");
+
+        // The Oracle must authorize the signer it reads from slot 2 (public input 8).
+        vm.prank(owner);
+        oracle.revokeSignerPubkeyHash(FIXTURE_SIGNER_B_PUBKEY_HASH);
+
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, FIXTURE_SIGNER_B_PUBKEY_HASH)
+        );
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_MULTI_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
+    }
+
+    function test_realProof_complianceMultiSigned_revert_sameProviderSigners() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_multi_signed");
+
+        // Two keys of one provider are one provider: M-of-N counts providers.
+        vm.startPrank(owner);
+        oracle.revokeSignerPubkeyHash(FIXTURE_SIGNER_B_PUBKEY_HASH);
+        oracle.registerSignerPubkeyHash(FIXTURE_SIGNER_B_PUBKEY_HASH, 1);
+        vm.stopPrank();
+
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.DuplicateSignerProvider.selector, 1));
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_MULTI_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
+    }
+
+    function test_realProof_complianceMultiSigned_droppedSignerFailsVerification() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_multi_signed");
+        assertTrue(verifier.verifyProof(ProofTypes.COMPLIANCE_MULTI_SIGNED, proof, publicInputs));
+
+        // Relabel as 1-of-5 by zeroing slot 2's signer (word 8) and threshold_m (word 5):
+        // the proof no longer verifies.
+        bytes memory dropped = bytes.concat(
+            _slice(publicInputs, 0, 5 * 32),
+            bytes32(uint256(1)),
+            _slice(publicInputs, 6 * 32, 8 * 32),
+            bytes32(0),
+            _slice(publicInputs, 9 * 32, publicInputs.length)
+        );
+        try verifier.verifyProof(ProofTypes.COMPLIANCE_MULTI_SIGNED, proof, dropped) returns (bool valid) {
+            assertFalse(valid, "relabeled COMPLIANCE_MULTI_SIGNED proof verified");
+        } catch { /* revert acceptable */ }
+    }
+
+    // -------------------------------------------------------------------------
     // Frozen-Heart variant tests
     //
     // Background: the "Frozen Heart" class of ZK soundness bugs (TrailOfBits, 2022)
@@ -534,18 +698,29 @@ contract IntegrationTest is Test {
         // Every fixture verifies cleanly => its logical input count matches
         // the verifier's expected (vk.publicInputsSize - 16). This is implicitly
         // tested by every existing real-proof test, but we make it explicit here.
-        string[7] memory circuits =
-            ["compliance", "risk_score", "pattern", "attestation", "membership", "non_membership", "risk_score_signed"];
-        uint8[7] memory types = [
+        string[9] memory circuits = [
+            "compliance",
+            "risk_score",
+            "pattern",
+            "attestation",
+            "membership",
+            "non_membership",
+            "compliance_signed",
+            "risk_score_signed",
+            "compliance_multi_signed"
+        ];
+        uint8[9] memory types = [
             ProofTypes.COMPLIANCE,
             ProofTypes.RISK_SCORE,
             ProofTypes.PATTERN,
             ProofTypes.ATTESTATION,
             ProofTypes.MEMBERSHIP,
             ProofTypes.NON_MEMBERSHIP,
-            ProofTypes.RISK_SCORE_SIGNED
+            ProofTypes.COMPLIANCE_SIGNED,
+            ProofTypes.RISK_SCORE_SIGNED,
+            ProofTypes.COMPLIANCE_MULTI_SIGNED
         ];
-        for (uint256 i; i < 7; i++) {
+        for (uint256 i; i < 9; i++) {
             (bytes memory proof, bytes memory publicInputs) = _loadFixture(circuits[i]);
             // The verifier will revert with InvalidPublicInputLength if the count
             // ProofTypes reports differs from what the verifier expects.
@@ -594,7 +769,11 @@ contract IntegrationTest is Test {
         if (keccak256(bytes(circuit)) == keccak256("attestation")) return "AttestationVerifier";
         if (keccak256(bytes(circuit)) == keccak256("membership")) return "MembershipVerifier";
         if (keccak256(bytes(circuit)) == keccak256("non_membership")) return "NonMembershipVerifier";
+        if (keccak256(bytes(circuit)) == keccak256("compliance_signed")) return "ComplianceSignedVerifier";
         if (keccak256(bytes(circuit)) == keccak256("risk_score_signed")) return "RiskScoreSignedVerifier";
+        if (keccak256(bytes(circuit)) == keccak256("compliance_multi_signed")) {
+            return "ComplianceMultiSignedVerifier";
+        }
         revert("unknown circuit");
     }
 }
