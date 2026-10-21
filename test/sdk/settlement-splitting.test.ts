@@ -9,19 +9,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  createPublicClient,
-  createWalletClient,
-  http,
-  keccak256,
-  encodePacked,
-  type Hex,
-} from "viem";
+import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
-  XochiProver,
-  XochiOracle,
+  ERC8262Prover,
+  ERC8262Oracle,
   SettlementRegistryClient,
   planSplit,
   proveBatch,
@@ -40,8 +33,8 @@ const EU = 0;
 const ETH = 10n ** 18n;
 
 let contracts: DeployedContracts;
-let prover: XochiProver;
-let oracle: XochiOracle;
+let prover: ERC8262Prover;
+let oracle: ERC8262Oracle;
 let registry: SettlementRegistryClient;
 
 const alice = privateKeyToAccount(ALICE_KEY);
@@ -57,13 +50,24 @@ const aliceClient = createWalletClient({
   transport: http(ANVIL_RPC),
 });
 
+// The Oracle keys attestations on keccak256(proof, proofType, chainid, oracle)
+// (audit F-6); read the hash from the contract instead of re-deriving it.
+async function computeProofHash(proof: Hex, proofType: number): Promise<Hex> {
+  return (await publicClient.readContract({
+    address: contracts.oracle,
+    abi: contracts.oracleAbi,
+    functionName: "computeProofHash",
+    args: [proof, proofType],
+  })) as Hex;
+}
+
 beforeAll(async () => {
   await startAnvil();
   contracts = await deployContracts();
 
   const loader = new NodeCircuitLoader(REPO_ROOT);
-  prover = new XochiProver(loader);
-  oracle = new XochiOracle(
+  prover = new ERC8262Prover(loader);
+  oracle = new ERC8262Oracle(
     contracts.oracle,
     publicClient,
     aliceClient,
@@ -97,15 +101,16 @@ describe("settlement splitting E2E", () => {
     expect(plan.subTrades[2].amount).toBe(100n * ETH);
 
     // Step 2: Prove all sub-trades
-    // anvil is started at FIXTURE_TIMESTAMP (1700000000); pass a matching proof
-    // timestamp so the Oracle's MAX_PROOF_AGE (1h) check passes.
+    // anvil is started at FIXTURE_TIMESTAMP (1700000000) and only moves forward,
+    // so a proof dated exactly then is never in the future and stays within the
+    // Oracle's MAX_PROOF_AGE (1h) for the run. (+5 raced the clock: ProofTimestampInFuture.)
     const batchResult = await proveBatch(prover, plan, {
       score: 25,
       jurisdictionId: EU,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
       submitter: alice.address,
-      timestamp: String(FIXTURE_TIMESTAMP + 5),
+      timestamp: String(FIXTURE_TIMESTAMP),
     });
 
     expect(batchResult.proofs).toHaveLength(3);
@@ -141,13 +146,7 @@ describe("settlement splitting E2E", () => {
       });
       await publicClient.waitForTransactionReceipt({ hash: submitTx });
 
-      // Compute proofHash the same way the Oracle does
-      const proofHash = keccak256(
-        encodePacked(
-          ["bytes", "uint8"],
-          [proofResult.proofHex, PROOF_TYPES.COMPLIANCE],
-        ),
-      );
+      const proofHash = await computeProofHash(proofResult.proofHex, PROOF_TYPES.COMPLIANCE);
       proofHashes.push(proofHash);
 
       // Record in Registry and wait
@@ -164,7 +163,10 @@ describe("settlement splitting E2E", () => {
 
     // Step 5: Generate pattern proof using fixture data from circuits/pattern/Prover.toml.
     // The txSetHash is a Pedersen commitment that must match the circuit's expected value.
-    // We use the circuit's own test fixture for a known-good input set.
+    // We use the circuit's own test fixture for a known-good input set. The proof must
+    // commit to this trade's settlement root (audit H-1), which only exists once every
+    // sub-settlement is recorded, so it is generated after Step 4.
+    const settlementRoot = await registry.computeSettlementRoot(plan.tradeId);
     const patternResult = await prover.provePattern({
       amounts: [500, 1200, 3000, 7500],
       timestamps: [1700000000, 1700001000, 1700002000, 1700003000],
@@ -174,6 +176,7 @@ describe("settlement splitting E2E", () => {
       timeWindow: 86400, // 24 hours (SDK minimum)
       txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
       submitter: alice.address,
+      settlementRoot,
     });
 
     const patternSubmitTx = await oracle.submitCompliance({
@@ -185,12 +188,7 @@ describe("settlement splitting E2E", () => {
     });
     await publicClient.waitForTransactionReceipt({ hash: patternSubmitTx });
 
-    const patternProofHash = keccak256(
-      encodePacked(
-        ["bytes", "uint8"],
-        [patternResult.proofHex, PROOF_TYPES.PATTERN],
-      ),
-    );
+    const patternProofHash = await computeProofHash(patternResult.proofHex, PROOF_TYPES.PATTERN);
 
     // Verify Oracle stored the proof type
     const storedType = await oracle.getProofType(patternProofHash);
@@ -219,15 +217,14 @@ describe("settlement splitting E2E", () => {
       splitThreshold: 100n * ETH,
     });
 
-    // anvil is started at FIXTURE_TIMESTAMP (1700000000); pass a matching proof
-    // timestamp so the Oracle's MAX_PROOF_AGE (1h) check passes.
+    // anvil is started at FIXTURE_TIMESTAMP (1700000000); see the first test.
     const batchResult = await proveBatch(prover, plan, {
       score: 25,
       jurisdictionId: EU,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
       submitter: alice.address,
-      timestamp: String(FIXTURE_TIMESTAMP + 5),
+      timestamp: String(FIXTURE_TIMESTAMP),
     });
 
     const regTx = await registry.registerTrade(plan.tradeId, EU, 2);
@@ -243,22 +240,15 @@ describe("settlement splitting E2E", () => {
       });
       await publicClient.waitForTransactionReceipt({ hash: tx });
 
-      const proofHash = keccak256(
-        encodePacked(
-          ["bytes", "uint8"],
-          [proofResult.proofHex, PROOF_TYPES.COMPLIANCE],
-        ),
-      );
+      const proofHash = await computeProofHash(proofResult.proofHex, PROOF_TYPES.COMPLIANCE);
       const recTx = await registry.recordSubSettlement(plan.tradeId, index, proofHash);
       await publicClient.waitForTransactionReceipt({ hash: recTx });
     }
 
     // Try to finalize with a COMPLIANCE proof instead of PATTERN
-    const complianceProofHash = keccak256(
-      encodePacked(
-        ["bytes", "uint8"],
-        [batchResult.proofs[0].proofResult.proofHex, PROOF_TYPES.COMPLIANCE],
-      ),
+    const complianceProofHash = await computeProofHash(
+      batchResult.proofs[0].proofResult.proofHex,
+      PROOF_TYPES.COMPLIANCE,
     );
 
     // Even with public inputs, a COMPLIANCE proofHash is rejected because

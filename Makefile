@@ -34,7 +34,7 @@ test-noir: ## Run all Noir circuit tests
 test-sdk: ## Run TS consumer SDK tests (noir_js + bb.js + anvil)
 	npm run test:sdk
 
-test-xochi-sdk: ## Run @xochi/sdk cross-repo tests (requires ../xochi-sdk)
+test-xochi-sdk: ## Run @xochi/sdk cross-repo tests (requires ../xochi-sdk, built: packages/sdk/dist)
 	npx vitest run --config vitest.cross-repo.config.ts
 
 test-all: test-sol test-noir test-sdk ## Run all tests
