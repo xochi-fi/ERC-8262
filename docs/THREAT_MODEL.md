@@ -143,7 +143,8 @@ For any attestation stored on-chain (queryable via `getHistoricalProof(proofHash
    - PATTERN: `reporting_threshold` must be registered; `time_window >= MIN_TIME_WINDOW (3600s)`.
    - ATTESTATION: `credential_root` must be currently registered for the named `provider_id` and not expired.
    - MEMBERSHIP / NON_MEMBERSHIP: `merkle_root` must be in the generic registry.
-   - All time-bound proofs (COMPLIANCE, RISK_SCORE, PATTERN, ATTESTATION, MEMBERSHIP, NON_MEMBERSHIP and the signed variants): the proof's own timestamp is within `MAX_PROOF_AGE (1h)` of `block.timestamp`, not in the future, and is the value the per-subject ratchet records. For the unsigned types this bounds how long a given proof stays submittable, not how old its private witness is.
+   - All time-bound proofs (COMPLIANCE, RISK_SCORE, PATTERN, ATTESTATION, MEMBERSHIP, NON_MEMBERSHIP and the signed variants): the proof's own timestamp is within `MAX_PROOF_AGE (1h)` of `block.timestamp`, not in the future, and is the value the per-subject ratchet records. For the unsigned types other than PATTERN this bounds how long a given proof stays submittable, not how old its private witness is. PATTERN also constrains every analyzed transaction timestamp into `[timestamp - time_window, timestamp]` in-circuit, so its analyzed set is at most `time_window + MAX_PROOF_AGE` old.
+   - The ratchet is keyed per (subject, jurisdiction, proof type) on the prover-chosen time, so a subject's concurrently generated proofs of one type must be submitted in timestamp order; an older one reverts `ProofTimestampNotMonotonic` and must be re-proved. Only self-DoS: `submitter == msg.sender` keeps third parties out of the slot.
 
 ---
 
@@ -387,6 +388,7 @@ The following invariants are protected by regression tests; breaking them indica
 | EIP-712 digest parity between Solidity and TS                                           | `test_parity_credentialRootDigest` (Forge), `eip712-credential-root.test.ts` (vitest)                                          |
 | RISK_SCORE trivial bounds rejected                                                      | `test_submitCompliance_revert_riskScore_*` family                                                                              |
 | RISK_SCORE / PATTERN proof age bounded by their public timestamp                        | `test_submitCompliance_revert_staleRiskScoreTimestamp`, `test_submitCompliance_revert_stalePatternTimestamp`, `test_realProof_riskScore_revert_stale` |
+| PATTERN transactions bound to the window ending at the proof timestamp                 | `test_main_revert_transaction_after_proof_timestamp`, `test_main_revert_transaction_outside_time_window` (circuits/pattern) |
 | PATTERN analysis_type bound to STRUCTURING for SettlementRegistry                       | `test_finalizeTrade_revert_velocityAnalysisRejected`, `test_finalizeTrade_revert_publicInputsMismatch`                         |
 | SettlementRegistry legs need a fresh, post-registration, per-trade-unique compliance attestation | `test_recordSubSettlement_revert_expiredAttestation`, `test_recordSubSettlement_revert_attestationPredatesTrade`, `test_recordSubSettlement_revert_sameProofOnTwoLegs` |
 | Expired trades are distinguishable from finalized ones and terminal                     | `test_expireTrade_afterExpiry`, `test_expireTrade_blocksFurtherTransitions`                                                    |

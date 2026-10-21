@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
-import { createPublicClient, createWalletClient, http, toFunctionSelector } from "viem";
+import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
@@ -21,6 +21,8 @@ import {
   ERC8262Verifier,
   ERC8262Oracle,
   SignedSignalsRequiredError,
+  ProofTimestampStaleError,
+  ProofTimestampInFutureError,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
@@ -480,9 +482,9 @@ describe("SDK -> anvil on-chain verification", () => {
     // ERC-8262#25: the risk_score public timestamp is held to MAX_PROOF_AGE.
     // The anvil clock starts at FIXTURE_TIMESTAMP, so a proof dated one second
     // past the 1h window is stale and one dated a day ahead is in the future.
-    // The SDK's ORACLE_ABI does not decode these reverts, so match the selector.
-    const STALE = new RegExp(toFunctionSelector("ProofTimestampStale(uint256,uint256)"));
-    const FUTURE = new RegExp(toFunctionSelector("ProofTimestampInFuture(uint256,uint256)"));
+    // The Oracle client decodes these reverts into the SDK's typed errors.
+    const STALE = ProofTimestampStaleError;
+    const FUTURE = ProofTimestampInFutureError;
 
     it("risk_score proof older than MAX_PROOF_AGE is rejected", async () => {
       const { proofHex, publicInputsHex } = await prover.proveRiskScore({
@@ -536,12 +538,12 @@ describe("SDK -> anvil on-chain verification", () => {
     // PATTERN (0x03) gets the same bound. Fixture data from circuits/pattern/Prover.toml.
     const patternInput = (timestamp: number) => ({
       amounts: [500, 1200, 3000, 7500],
-      timestamps: [1700000000, 1700001000, 1700002000, 1700003000],
+      timestamps: [1699990000, 1699991000, 1699992000, 1699993000],
       numTransactions: 4,
       analysisType: 1 as const, // structuring
       reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
       timeWindow: 86400, // SDK minimum
-      txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
+      txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
       submitter: ALICE_ADDRESS,
       settlementRoot: "0", // standalone, no SettlementRegistry binding
       timestamp: String(timestamp),

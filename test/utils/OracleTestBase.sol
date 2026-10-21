@@ -220,7 +220,9 @@ abstract contract OracleTestBase is ERC8262TestBase {
         );
     }
 
-    /// @dev RISK_SCORE public inputs with configurable config hash (submitter = alice).
+    /// @dev RISK_SCORE public inputs with configurable config hash (submitter = alice), dated
+    ///      block.timestamp AT CALL TIME: build inputs after any vm.warp, or pass an explicit
+    ///      timestamp via the 3-arg overload.
     function _riskScoreInputs(bytes32 configHash) internal view returns (bytes memory) {
         return _riskScoreInputs(configHash, alice);
     }

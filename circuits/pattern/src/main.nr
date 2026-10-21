@@ -13,7 +13,8 @@
 ///   - analysis_type: which pattern was analyzed (1=structuring, 2=velocity, 3=round amounts)
 ///   - result: boolean (true = no structuring detected, i.e. clean)
 ///   - reporting_threshold: the jurisdiction's reporting threshold (in basis points)
-///   - time_window: the analysis window in seconds
+///   - time_window: the analysis window in seconds; every active transaction
+///                  lies in [timestamp - time_window, timestamp]
 ///   - tx_set_hash: commitment to the transaction set analyzed
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///   - settlement_root: opaque, prover-declared binding to a downstream consumer's
@@ -23,6 +24,9 @@
 ///                      Set to 0 for standalone use (no downstream binding).
 ///   - timestamp: prover-chosen proof time; the Oracle enforces freshness
 ///                (MAX_PROOF_AGE, no future timestamps) and ratchets on it.
+///                The circuit binds every active transaction timestamp into
+///                [timestamp - time_window, timestamp], so a fresh proof
+///                cannot analyze an arbitrarily old transaction set.
 ///                Appended last so settlement_root keeps its index.
 ///
 /// Private inputs:
@@ -85,14 +89,19 @@ fn main(
 
     // Timestamp must be within reasonable bounds (freshness is the Oracle's job)
     validate_timestamp(timestamp);
+    let proof_ts = timestamp as u64;
 
     // Anchor submitter as a public input (oracle enforces submitter == msg.sender).
     assert(submitter != 0, "submitter must be non-zero");
 
-    // Validate active slots have sane timestamps; ensure inactive slots are zeroed
+    // Validate active slots have sane timestamps inside the analysis window ending at
+    // the proof timestamp (so Oracle freshness implies recent transactions); ensure
+    // inactive slots are zeroed
     for i in 0..16 {
         if (i as u32) < num_transactions {
             validate_timestamp(timestamps[i] as Field);
+            assert(timestamps[i] <= proof_ts, "Transaction after proof timestamp");
+            assert(proof_ts - timestamps[i] <= time_window, "Transaction outside time window");
         } else {
             assert(amounts[i] == 0, "Inactive amount must be zero");
             assert(timestamps[i] == 0, "Inactive timestamp must be zero");
@@ -350,4 +359,25 @@ fn test_main_revert_timestamp_far_future() {
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
     main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1099511627776);
+}
+
+#[test(should_fail_with = "Transaction after proof timestamp")]
+fn test_main_revert_transaction_after_proof_timestamp() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700002999);
+}
+
+#[test(should_fail_with = "Transaction outside time window")]
+fn test_main_revert_transaction_outside_time_window() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    // Oldest transaction is 3601s before the proof timestamp; window is 3600s.
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003601);
 }

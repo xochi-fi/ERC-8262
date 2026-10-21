@@ -60,7 +60,6 @@ async function computeProofHash(proof: Hex, proofType: number): Promise<Hex> {
     args: [proof, proofType],
   })) as Hex;
 }
-
 beforeAll(async () => {
   await startAnvil();
   contracts = await deployContracts();
@@ -169,12 +168,12 @@ describe("settlement splitting E2E", () => {
     const settlementRoot = await registry.computeSettlementRoot(plan.tradeId);
     const patternResult = await prover.provePattern({
       amounts: [500, 1200, 3000, 7500],
-      timestamps: [1700000000, 1700001000, 1700002000, 1700003000],
+      timestamps: [1699990000, 1699991000, 1699992000, 1699993000],
       numTransactions: 4,
       analysisType: 1, // structuring
       reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
       timeWindow: 86400, // 24 hours (SDK minimum)
-      txSetHash: "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad",
+      txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
       submitter: alice.address,
       settlementRoot,
       // Proof timestamp (ERC-8262#25), bound to the anvil clock like the compliance legs.
@@ -254,13 +253,14 @@ describe("settlement splitting E2E", () => {
     );
 
     // Even with public inputs, a COMPLIANCE proofHash is rejected because
-    // oracle.getProofType returns COMPLIANCE not PATTERN.
+    // oracle.getProofType returns COMPLIANCE not PATTERN. Pin the decoded error
+    // so an AttestationNotFound (wrong hash derivation, #34) cannot pass this test.
     await expect(
       registry.finalizeTrade(
         plan.tradeId,
         complianceProofHash,
         batchResult.proofs[0].proofResult.publicInputsHex,
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ errorName: "PatternProofRequired" });
   }, 180_000);
 });

@@ -71,9 +71,14 @@ contract IntegrationTest is Test {
     /// @dev Timestamp every signed fixture's provider signed (a public input).
     uint256 internal constant FIXTURE_SIGNED_TIMESTAMP = 1700000000;
 
-    /// @dev Prover-chosen proof timestamp of the risk_score (word 7) and pattern (word 7)
-    ///      fixtures (TRUST-24#2); the Oracle enforces MAX_PROOF_AGE on it.
+    /// @dev Prover-chosen proof timestamp of the risk_score and pattern fixtures (TRUST-24#2);
+    ///      the Oracle enforces MAX_PROOF_AGE on it. Both carry it at word 7, for different
+    ///      reasons: risk_score inserts it before `submitter` (now word 8) to match
+    ///      RISK_SCORE_SIGNED; pattern appends it last so `settlement_root` stays at word 6.
     uint256 internal constant FIXTURE_PROOF_TIMESTAMP = 1700000000;
+
+    /// @dev Generated HonkVerifier error for a proof whose transcript does not match its inputs.
+    bytes4 internal constant SUMCHECK_FAILED = bytes4(keccak256("SumcheckFailed()"));
 
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
         ps = new uint256[](1);
@@ -286,9 +291,10 @@ contract IntegrationTest is Test {
             bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days),
             _slice(publicInputs, 8 * 32, publicInputs.length)
         );
-        try verifier.verifyProof(ProofTypes.RISK_SCORE, proof, redated) returns (bool valid) {
-            assertFalse(valid, "re-dated RISK_SCORE proof verified");
-        } catch { /* revert acceptable */ }
+        // The generated HonkVerifier rejects a transcript mismatch with SumcheckFailed();
+        // pinning it keeps an unrelated revert (length, pause) from passing this test.
+        vm.expectRevert(SUMCHECK_FAILED);
+        verifier.verifyProof(ProofTypes.RISK_SCORE, proof, redated);
     }
 
     // -------------------------------------------------------------------------
@@ -337,9 +343,8 @@ contract IntegrationTest is Test {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
         // Word 7 (the last word) is the timestamp.
         bytes memory redated = bytes.concat(_slice(publicInputs, 0, 7 * 32), bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days));
-        try verifier.verifyProof(ProofTypes.PATTERN, proof, redated) returns (bool valid) {
-            assertFalse(valid, "re-dated PATTERN proof verified");
-        } catch { /* revert acceptable */ }
+        vm.expectRevert(SUMCHECK_FAILED);
+        verifier.verifyProof(ProofTypes.PATTERN, proof, redated);
     }
 
     // -------------------------------------------------------------------------
