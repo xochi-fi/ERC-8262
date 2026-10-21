@@ -1,0 +1,23 @@
+# Signer: secp256k1 key keccak256("erc8262-integration-fixture-provider-signer"), a public
+# test key. signature = low-S ECDSA (@xochi/provider signSignals, proofType 0x07) over
+# H_signed(DOMAIN_SIGNED_SIGNALS, chain_id, oracle_address, provider_set_hash, signals,
+#          weights, timestamp, submitter) -- no jurisdiction_id, so it equals
+# FIXTURE_SIG_COMPLIANCE_SIGNED in src/main.nr. oracle_address is IntegrationTest's Oracle
+# (FIXTURE_ORACLE): moving that deployment or changing the digest needs a re-sign.
+signals = [25, 0, 0, 0, 0, 0, 0, 0]
+weights = [100, 0, 0, 0, 0, 0, 0, 0]
+weight_sum = 100
+provider_ids = [1, 0, 0, 0, 0, 0, 0, 0]
+num_providers = 1
+signature = [138, 191, 70, 221, 230, 120, 2, 250, 16, 119, 25, 190, 110, 156, 167, 62, 113, 176, 118, 43, 122, 51, 197, 253, 239, 146, 7, 22, 71, 34, 104, 83, 3, 205, 251, 124, 84, 47, 205, 235, 247, 215, 233, 248, 116, 233, 138, 165, 178, 75, 162, 192, 132, 92, 141, 148, 127, 185, 82, 141, 99, 202, 106, 170]
+pubkey_x = [32, 200, 84, 126, 134, 190, 235, 89, 194, 183, 197, 14, 72, 83, 155, 145, 70, 127, 150, 181, 178, 60, 72, 184, 9, 78, 30, 217, 164, 212, 226, 66]
+pubkey_y = [45, 74, 60, 178, 139, 138, 55, 189, 66, 187, 156, 255, 146, 98, 182, 228, 212, 219, 184, 140, 139, 128, 126, 35, 147, 85, 247, 92, 95, 166, 66, 144]
+jurisdiction_id = 1
+provider_set_hash = "0x14b6becf762f80a24078e62fc9a7eca246b8e406d19962dda817b173f30a94b2"
+config_hash = "0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405"
+timestamp = "1700000000"
+meets_threshold = true
+signer_pubkey_hash = "0x294fc7a4edbc711b1c3ceceb89474957aea2974dbf3d27efe759a1ecef35d6dc"
+chain_id = 31337
+oracle_address = "0x2e234dae75c793f67a35089c9d99245e1c58470b"
+submitter = "0xdead"

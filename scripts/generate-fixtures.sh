@@ -45,11 +45,10 @@ generate_fixture() {
         fi
     fi
 
-    # Verifier-only mode for circuits without Prover.toml.
-    # compliance_signed and compliance_multi_signed need an off-chain ECDSA
-    # signature over an in-circuit Pedersen digest to populate Prover.toml; we
-    # generate their verifiers from the VK only and skip proof/fixture generation.
-    # risk_score_signed's Prover.toml carries a precomputed test-key signature.
+    # Verifier-only mode for circuits without Prover.toml: generate the verifier
+    # from the VK and skip proof/fixture generation. (All 9 circuits currently ship
+    # a Prover.toml; the signed ones carry precomputed test-key signatures that a
+    # digest change or a moved IntegrationTest Oracle invalidates -- see their headers.)
     if [[ ! -f "$circuit_dir/Prover.toml" ]]; then
         echo "  no Prover.toml -- verifier-only mode"
         local vk_dir="$circuit_dir/target/vk"

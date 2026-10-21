@@ -4,6 +4,10 @@ import { defineConfig } from "vitest/config";
 // exclude the cross-repo SDK tests (they require ../xochi-sdk on disk and are
 // gated behind their own Makefile target).
 export default defineConfig({
+  // @xochi/sdk is a file: link whose own viem lives in ../xochi-sdk/node_modules.
+  // Two viem copies break the SDK's `instanceof BaseError` revert decoding (typed
+  // errors like SignedSignalsRequiredError never surface), so resolve one copy.
+  resolve: { dedupe: ["viem"] },
   test: {
     globals: true,
     environment: "node",

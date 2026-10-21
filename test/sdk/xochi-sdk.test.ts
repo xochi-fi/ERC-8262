@@ -7,8 +7,8 @@
  * Solidity contracts.
  *
  * Unlike consumer.test.ts (which uses raw noir_js/bb.js), this file
- * imports only the SDK's typed public API: XochiProver, XochiVerifier,
- * XochiOracle, NodeCircuitLoader, and the input builder types.
+ * imports only the SDK's typed public API: ERC8262Prover, ERC8262Verifier,
+ * ERC8262Oracle, NodeCircuitLoader, and the input builder types.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -17,9 +17,10 @@ import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
-  XochiProver,
-  XochiVerifier,
-  XochiOracle,
+  ERC8262Prover,
+  ERC8262Verifier,
+  ERC8262Oracle,
+  SignedSignalsRequiredError,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
@@ -52,10 +53,10 @@ const loader = new NodeCircuitLoader(REPO_ROOT);
 // ============================================================
 
 describe("SDK typed proof generation", () => {
-  let prover: XochiProver;
+  let prover: ERC8262Prover;
 
   beforeAll(async () => {
-    prover = new XochiProver(loader);
+    prover = new ERC8262Prover(loader);
   }, 120_000);
 
   afterAll(async () => {
@@ -159,9 +160,9 @@ describe("SDK typed proof generation", () => {
 // ============================================================
 
 describe("SDK -> anvil on-chain verification", () => {
-  let prover: XochiProver;
-  let verifier: XochiVerifier;
-  let oracle: XochiOracle;
+  let prover: ERC8262Prover;
+  let verifier: ERC8262Verifier;
+  let oracle: ERC8262Oracle;
   let contracts: DeployedContracts;
 
   const alice = privateKeyToAccount(ALICE_KEY);
@@ -176,11 +177,11 @@ describe("SDK -> anvil on-chain verification", () => {
   });
 
   beforeAll(async () => {
-    prover = new XochiProver(loader);
+    prover = new ERC8262Prover(loader);
     await startAnvil();
     contracts = await deployContracts();
-    verifier = new XochiVerifier(contracts.verifier, publicClient);
-    oracle = new XochiOracle(
+    verifier = new ERC8262Verifier(contracts.verifier, publicClient);
+    oracle = new ERC8262Oracle(
       contracts.oracle,
       publicClient,
       aliceClient,
@@ -194,10 +195,10 @@ describe("SDK -> anvil on-chain verification", () => {
   });
 
   // ----------------------------------------------------------
-  // XochiVerifier: on-chain proof verification
+  // ERC8262Verifier: on-chain proof verification
   // ----------------------------------------------------------
 
-  describe("XochiVerifier typed client", () => {
+  describe("ERC8262Verifier typed client", () => {
     it("verifies compliance proof", async () => {
       const { proofHex, publicInputsHex } = await prover.proveCompliance({
         score: 25,
@@ -261,10 +262,10 @@ describe("SDK -> anvil on-chain verification", () => {
   });
 
   // ----------------------------------------------------------
-  // XochiOracle: submit + check attestation
+  // ERC8262Oracle: submit + check attestation
   // ----------------------------------------------------------
 
-  describe("XochiOracle typed client", () => {
+  describe("ERC8262Oracle typed client", () => {
     it("submitCompliance records attestation", async () => {
       const { proofHex, publicInputsHex } = await prover.proveCompliance({
         score: 25,
@@ -302,7 +303,9 @@ describe("SDK -> anvil on-chain verification", () => {
       expect(attestation.expiresAt).toBeGreaterThan(0n);
     });
 
-    it("submitCompliance for US jurisdiction", async () => {
+    it("rejects unsigned compliance for US jurisdiction", async () => {
+      // US (BSA) requires provider-signed signals: the Oracle refuses an unsigned
+      // COMPLIANCE (0x01) proof even though the proof itself verifies.
       const { proofHex, publicInputsHex } = await prover.proveCompliance({
         score: 20,
         jurisdictionId: 1,
@@ -312,21 +315,21 @@ describe("SDK -> anvil on-chain verification", () => {
         submitter: ALICE_ADDRESS,
       });
 
-      const txHash = await oracle.submitCompliance({
+      const submission = oracle.submitCompliance({
         jurisdictionId: 1,
         proofType: PROOF_TYPES.COMPLIANCE,
         proof: proofHex,
         publicInputs: publicInputsHex,
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       });
-
-      const receipt = await publicClient.waitForTransactionReceipt({
-        hash: txHash,
+      await expect(submission).rejects.toBeInstanceOf(SignedSignalsRequiredError);
+      await expect(submission).rejects.toMatchObject({
+        jurisdictionId: 1,
+        proofType: PROOF_TYPES.COMPLIANCE,
       });
-      expect(receipt.status).toBe("success");
 
       const { valid } = await oracle.checkCompliance(ALICE_ADDRESS, 1);
-      expect(valid).toBe(true);
+      expect(valid).toBe(false);
     });
 
     it("rejects duplicate proof (replay protection)", async () => {
