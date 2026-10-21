@@ -411,6 +411,8 @@ IntegrationTest:test_realProof_complianceMultiSigned_revert_sameProviderSigners(
 IntegrationTest:test_realProof_complianceMultiSigned_revert_unregisteredSlotSigner() (gas: 43489)
 IntegrationTest:test_realProof_complianceMultiSigned_submitAndCheck() (gas: 3281300)
 IntegrationTest:test_realProof_complianceSigned_redatedTimestampFailsVerification() (gas: 3035399)
+IntegrationTest:test_realProof_complianceSigned_revert_otherChain() (gas: 33973)
+IntegrationTest:test_realProof_complianceSigned_revert_otherOracle() (gas: 4953636)
 IntegrationTest:test_realProof_complianceSigned_revert_revokedSigner() (gas: 36397)
 IntegrationTest:test_realProof_complianceSigned_submitAndCheck() (gas: 2985952)
 IntegrationTest:test_realProof_compliance_corruptedProofFails() (gas: 547112)

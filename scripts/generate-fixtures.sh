@@ -46,9 +46,9 @@ generate_fixture() {
     fi
 
     # Verifier-only mode for circuits without Prover.toml: generate the verifier
-    # from the VK and skip proof/fixture generation. The signed circuits'
-    # Prover.toml files carry precomputed test-key signatures bound to
-    # IntegrationTest's chain id and Oracle address.
+    # from the VK and skip proof/fixture generation. (All 9 circuits currently ship
+    # a Prover.toml; the signed ones carry precomputed test-key signatures that a
+    # digest change or a moved IntegrationTest Oracle invalidates -- see their headers.)
     if [[ ! -f "$circuit_dir/Prover.toml" ]]; then
         echo "  no Prover.toml -- verifier-only mode"
         local vk_dir="$circuit_dir/target/vk"

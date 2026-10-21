@@ -388,8 +388,9 @@ contract IntegrationTest is Test {
     // End-to-end: compliance_signed proof
     //
     // The fixture's provider signature commits to chain_id 31337, this test's Oracle
-    // address, the US jurisdiction's signals, timestamp 1700000000 and submitter
-    // 0xdead under DOMAIN_SIGNED_SIGNALS (circuits/compliance_signed/Prover.toml).
+    // address, the signals and weights, timestamp 1700000000 and submitter 0xdead under
+    // DOMAIN_SIGNED_SIGNALS (circuits/compliance_signed/Prover.toml). It does not commit
+    // to jurisdiction_id: the same signature backs the EU bundle in the circuit's tests.
     // -------------------------------------------------------------------------
 
     function test_realProof_complianceSigned_submitAndCheck() public {
@@ -432,6 +433,29 @@ contract IntegrationTest is Test {
             abi.encodeWithSelector(ERC8262Oracle.InvalidSignerPubkeyHash.selector, FIXTURE_SIGNER_PUBKEY_HASH)
         );
         oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
+    }
+
+    /// Audit F-6: the Oracle refuses a proof bound to another chain.
+    function test_realProof_complianceSigned_revert_otherChain() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_signed");
+
+        vm.chainId(1);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
+        oracle.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
+    }
+
+    /// Audit F-6: an Oracle at another address refuses a proof bound to this one.
+    function test_realProof_complianceSigned_revert_otherOracle() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance_signed");
+
+        ERC8262Oracle other = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
+        vm.prank(owner);
+        other.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
+
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
+        other.submitCompliance(1, ProofTypes.COMPLIANCE_SIGNED, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
     }
 
     function test_realProof_complianceSigned_redatedTimestampFailsVerification() public {

@@ -1,3 +1,9 @@
+# Signer: secp256k1 key keccak256("erc8262-integration-fixture-provider-signer"), a public
+# test key. signature = low-S ECDSA (@xochi/provider signSignals, proofType 0x07) over
+# H_signed(DOMAIN_SIGNED_SIGNALS, chain_id, oracle_address, provider_set_hash, signals,
+#          weights, timestamp, submitter) -- no jurisdiction_id, so it equals
+# FIXTURE_SIG_COMPLIANCE_SIGNED in src/main.nr. oracle_address is IntegrationTest's Oracle
+# (FIXTURE_ORACLE): moving that deployment or changing the digest needs a re-sign.
 signals = [25, 0, 0, 0, 0, 0, 0, 0]
 weights = [100, 0, 0, 0, 0, 0, 0, 0]
 weight_sum = 100
