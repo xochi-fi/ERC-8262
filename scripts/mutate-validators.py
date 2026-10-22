@@ -6,12 +6,19 @@ pinned by a test: removing it has to make some test fail. Real-proof tests
 only show that valid proofs pass, so a dropped rejection check (for example
 the audit F-6 chain/Oracle binding) can otherwise go unnoticed.
 
-Mutants, one at a time, each replaced by an empty block `{}`:
-- every `revert ...;` statement in those functions (`if (c) revert E();`
-  becomes `if (c) {}`);
-- every statement that is a bare call to an `_assert*` / `_validate*` helper
-  (a per-call-site deletion, so each proof type's validator is checked on
-  its own even when the helper is shared).
+Mutants, one at a time:
+- every `revert ...;` statement in those functions, replaced by `{}`
+  (`if (c) revert E();` becomes `if (c) {}`);
+- every statement that is a bare call to an `_assert*` / `_validate*` helper,
+  replaced by `{}` (a per-call-site deletion, so each proof type's validator
+  is checked on its own even when the helper is shared);
+- every helper call whose result is used (`x = _assertFoo(h)`), when the
+  helper has more than one call site: the call is swapped for the value it
+  returns without its checks, taken from `UNCHECKED_EQUIVALENT`. A helper with
+  a single call site needs no such mutant, since the mutants inside it are
+  already specific to that caller. A shared helper used as a value with no
+  `UNCHECKED_EQUIVALENT` entry is an error, so new call sites cannot go
+  unmutated silently.
 
 Each mutant runs the Solidity suite except `InvariantTest` (minutes per run,
 and it drives the Oracle through mock verifiers that the unit suites already
@@ -40,7 +47,12 @@ from pathlib import Path
 
 TARGET = Path("src/ERC8262Oracle.sol")
 FUNCTION_RE = re.compile(r"\bfunction\s+(_(?:validate|assert)\w*)\s*\(")
-HELPER_CALL_RE = re.compile(r"_(?:validate|assert)\w*\s*\(")
+HELPER_CALL_RE = re.compile(r"(_(?:validate|assert)\w*)\s*\(")
+# Value-returning shared helpers: the expression a call site falls back to
+# when the helper's checks are removed. `{args}` is the call's argument list.
+UNCHECKED_EQUIVALENT = {
+    "_assertSignerAuthorized": "_signerProvider[{args}]",
+}
 SOLC_ERROR_RE = re.compile(r"^Error \(\d+\)", re.MULTILINE)
 FORGE_ARGS = ["test", "--no-match-contract", "InvariantTest", "--fuzz-seed", "0x8262", "--fail-fast"]
 FORGE = os.environ.get("FORGE", "forge")
@@ -53,6 +65,11 @@ class Mutant:
     start: int
     end: int
     snippet: str
+    replacement: str = "{}"
+
+    @property
+    def change(self) -> str:
+        return self.snippet if self.replacement == "{}" else f"{self.snippet} -> {self.replacement}"
 
 
 def code_mask(src: str) -> list[bool]:
@@ -80,18 +97,18 @@ def code_mask(src: str) -> list[bool]:
     return mask
 
 
-def match_brace(src: str, mask: list[bool], open_idx: int) -> int:
+def match_close(src: str, mask: list[bool], open_idx: int, open_ch: str = "{", close_ch: str = "}") -> int:
     depth = 0
     for i in range(open_idx, len(src)):
         if not mask[i]:
             continue
-        if src[i] == "{":
+        if src[i] == open_ch:
             depth += 1
-        elif src[i] == "}":
+        elif src[i] == close_ch:
             depth -= 1
             if depth == 0:
                 return i
-    raise ValueError(f"unbalanced braces from offset {open_idx}")
+    raise ValueError(f"unbalanced {open_ch}{close_ch} from offset {open_idx}")
 
 
 def statement_end(src: str, mask: list[bool], start: int) -> int:
@@ -110,8 +127,24 @@ def statement_end(src: str, mask: list[bool], start: int) -> int:
     raise ValueError(f"unterminated statement at offset {start}")
 
 
+def is_word_start(src: str, i: int) -> bool:
+    prev = src[i - 1]
+    return not (prev.isalnum() or prev == "_")
+
+
+def helper_call_counts(src: str, mask: list[bool]) -> dict[str, int]:
+    """Number of call sites (not definitions) of each helper in the whole file."""
+    counts: dict[str, int] = {}
+    for call in HELPER_CALL_RE.finditer(src):
+        i = call.start()
+        if mask[i] and is_word_start(src, i) and not src[:i].rstrip().endswith("function"):
+            counts[call.group(1)] = counts.get(call.group(1), 0) + 1
+    return counts
+
+
 def find_mutants(src: str) -> list[Mutant]:
     mask = code_mask(src)
+    call_counts = helper_call_counts(src, mask)
     mutants: list[Mutant] = []
     for fn in FUNCTION_RE.finditer(src):
         if not mask[fn.start()]:
@@ -119,31 +152,51 @@ def find_mutants(src: str) -> list[Mutant]:
         body_open = next(i for i in range(fn.end(), len(src)) if mask[i] and src[i] in "{;")
         if src[body_open] == ";":  # declaration without a body
             continue
-        body_close = match_brace(src, mask, body_open)
+        body_close = match_close(src, mask, body_open)
         i = body_open + 1
         while i < body_close:
             if not mask[i]:
                 i += 1
                 continue
-            prev = src[i - 1]
-            at_word = not (prev.isalnum() or prev == "_")
+            at_word = is_word_start(src, i)
             is_revert = at_word and src.startswith("revert", i) and not (src[i + 6].isalnum() or src[i + 6] == "_")
             line_start = src.rfind("\n", 0, i) + 1
-            is_call_stmt = (
-                at_word and src[line_start:i].strip() == "" and HELPER_CALL_RE.match(src, i) is not None
-            )
-            if is_revert or is_call_stmt:
+            call = HELPER_CALL_RE.match(src, i) if at_word else None
+            line = src.count("\n", 0, i) + 1
+            if is_revert or (call and src[line_start:i].strip() == ""):
                 end = statement_end(src, mask, i)
                 mutants.append(
                     Mutant(
                         function=fn.group(1),
-                        line=src.count("\n", 0, i) + 1,
+                        line=line,
                         start=i,
                         end=end,
                         snippet=" ".join(src[i:end].split()),
                     )
                 )
                 i = end
+                continue
+            if call:
+                name = call.group(1)
+                if call_counts[name] > 1:
+                    template = UNCHECKED_EQUIVALENT.get(name)
+                    if template is None:
+                        raise ValueError(
+                            f"{TARGET}:{line}: `{name}(...)` is used as a value and has {call_counts[name]} "
+                            "call sites; add an UNCHECKED_EQUIVALENT entry so this call site gets its own mutant"
+                        )
+                    close = match_close(src, mask, call.end() - 1, "(", ")")
+                    mutants.append(
+                        Mutant(
+                            function=fn.group(1),
+                            line=line,
+                            start=i,
+                            end=close + 1,
+                            snippet=" ".join(src[i : close + 1].split()),
+                            replacement=template.format(args=src[call.end() : close].strip()),
+                        )
+                    )
+                i = call.end()
                 continue
             i += 1
     return mutants
@@ -187,7 +240,11 @@ def main(argv: list[str]) -> int:
         return 2
 
     original = target.read_text()
-    mutants = find_mutants(original)
+    try:
+        mutants = find_mutants(original)
+    except ValueError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
     if not mutants:
         print(f"error: no mutants found in {TARGET}", file=sys.stderr)
         return 2
@@ -196,7 +253,7 @@ def main(argv: list[str]) -> int:
 
     if "--list" in flags:
         for m in mutants:
-            print(f"{TARGET}:{m.line} {m.function}: {m.snippet}")
+            print(f"{TARGET}:{m.line} {m.function}: {m.change}")
         print(f"{len(mutants)} mutants")
         return 0
 
@@ -214,10 +271,10 @@ def main(argv: list[str]) -> int:
     broken: list[tuple[Mutant, str, str]] = []
     try:
         for n, m in enumerate(mutants, 1):
-            target.write_text(original[: m.start] + "{}" + original[m.end :])
+            target.write_text(original[: m.start] + m.replacement + original[m.end :])
             result = run_forge(root)
             output = result.stdout + result.stderr
-            label = f"[{n}/{len(mutants)}] {TARGET}:{m.line} {m.function}: {m.snippet}"
+            label = f"[{n}/{len(mutants)}] {TARGET}:{m.line} {m.function}: {m.change}"
             failure = first_failure(output)
             if "Compiler run failed" in output or SOLC_ERROR_RE.search(output):
                 broken.append((m, "did not compile", output[-2000:]))
@@ -237,13 +294,13 @@ def main(argv: list[str]) -> int:
     print(f"\n{len(mutants)} mutants: {len(mutants) - len(survivors) - len(broken)} killed, "
           f"{len(survivors)} survived, {len(broken)} did not run")
     for m, reason, tail in broken:
-        print(f"\n--- {reason}: {TARGET}:{m.line} {m.snippet}\n{tail}", file=sys.stderr)
+        print(f"\n--- {reason}: {TARGET}:{m.line} {m.change}\n{tail}", file=sys.stderr)
     if broken:
         return 2
     if survivors:
         print("\nSurviving mutants: no test fails when these checks are removed. Add a test per survivor.")
         for m in survivors:
-            print(f"  {TARGET}:{m.line} {m.function}: {m.snippet}")
+            print(f"  {TARGET}:{m.line} {m.function}: {m.change}")
         return 1
     return 0
 
