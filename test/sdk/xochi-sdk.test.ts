@@ -23,6 +23,7 @@ import {
   SignedSignalsRequiredError,
   ProofTimestampStaleError,
   ProofTimestampInFutureError,
+  chainProofTimestamp,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
@@ -580,6 +581,73 @@ describe("SDK -> anvil on-chain verification", () => {
           providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
         }),
       ).rejects.toThrow(STALE);
+    });
+
+    // The builders default `timestamp` to the local clock. This anvil chain runs
+    // years behind it (it starts at FIXTURE_TIMESTAMP), as a chain does for a
+    // client whose clock is ahead: the default dates the proof in the chain's
+    // future, and chainProofTimestamp (the latest block's time) fixes it.
+    const chainTimeRiskInput = {
+      type: "threshold" as const,
+      score: 45,
+      threshold: 3000,
+      direction: "gt" as const,
+      providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+      configHash: FIXTURE_HASHES.CONFIG_HASH,
+      submitter: ALICE_ADDRESS,
+    };
+
+    it("risk_score proof with the wall-clock default timestamp is rejected", async () => {
+      const chainNow = Number(await chainProofTimestamp(publicClient));
+      expect(chainNow).toBeLessThan(Math.floor(Date.now() / 1000) - 3600);
+
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore(chainTimeRiskInput);
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(FUTURE);
+    });
+
+    it("risk_score proof dated by chainProofTimestamp submits", async () => {
+      const timestamp = await chainProofTimestamp(publicClient);
+      const { proofHex, publicInputs, publicInputsHex } = await prover.proveRiskScore({
+        ...chainTimeRiskInput,
+        timestamp,
+      });
+      expect(BigInt(publicInputs[7])).toBe(BigInt(timestamp));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.RISK_SCORE,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      expect(receipt.status).toBe("success");
+    });
+
+    it("pattern proof dated by chainProofTimestamp submits", async () => {
+      const timestamp = await chainProofTimestamp(publicClient);
+      const { proofHex, publicInputs, publicInputsHex } = await prover.provePattern(
+        patternInput(Number(timestamp)),
+      );
+      expect(BigInt(publicInputs[7])).toBe(BigInt(timestamp));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.PATTERN,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      expect(receipt.status).toBe("success");
     });
   });
 });
