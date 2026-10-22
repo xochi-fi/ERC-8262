@@ -166,6 +166,10 @@ describe("settlement splitting E2E", () => {
     // commit to this trade's settlement root (audit H-1), which only exists once every
     // sub-settlement is recorded, so it is generated after Step 4.
     const settlementRoot = await registry.computeSettlementRoot(plan.tradeId);
+    // Proof timestamp (ERC-8262#25): finalizeTrade requires it >= the trade's createdAt,
+    // and the Oracle rejects future timestamps. The latest block (the last leg's record
+    // tx) satisfies both: it post-dates registerTrade and precedes the submission block.
+    const patternTimestamp = (await publicClient.getBlock()).timestamp;
     const patternResult = await prover.provePattern({
       amounts: [500, 1200, 3000, 7500],
       timestamps: [1699990000, 1699991000, 1699992000, 1699993000],
@@ -176,8 +180,7 @@ describe("settlement splitting E2E", () => {
       txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
       submitter: alice.address,
       settlementRoot,
-      // Proof timestamp (ERC-8262#25), bound to the anvil clock like the compliance legs.
-      timestamp: String(FIXTURE_TIMESTAMP),
+      timestamp: String(patternTimestamp),
     });
 
     const patternSubmitTx = await oracle.submitCompliance({

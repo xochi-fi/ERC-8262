@@ -73,7 +73,7 @@ Standalone immutable contract that links split settlement proofs to a tradeId (X
 - `recordSubSettlement` rejects any proof type other than COMPLIANCE / COMPLIANCE_SIGNED / COMPLIANCE_MULTI_SIGNED. Substituting a MEMBERSHIP, RISK_SCORE, ATTESTATION, or PATTERN attestation reverts with `NonComplianceProofType`.
 - Each leg's attestation must be unexpired at record time (`AttestationExpired`), recorded no earlier than `registerTrade` (`AttestationPredatesTrade`), and unique within the trade (`DuplicateSubSettlementProof`).
 - `expireTrade` sets `Settlement.expired`; only a successful `finalizeTrade` sets `finalized`.
-- `finalizeTrade` binds the pattern proof to the specific settlement: the PATTERN circuit's `settlement_root` public input must equal `computeSettlementRoot(tradeId)` (keccak commitment over the recorded sub-settlement hashes, reduced into the BN254 scalar field). The same pattern proof cannot finalize two trades (`_usedPatternProofs`).
+- `finalizeTrade` binds the pattern proof to the specific settlement: the PATTERN circuit's `settlement_root` public input must equal `computeSettlementRoot(tradeId)` (keccak commitment over the recorded sub-settlement hashes, reduced into the BN254 scalar field). The same pattern proof cannot finalize two trades (`_usedPatternProofs`). The proof's `timestamp` public input (index 7) must be no earlier than `registerTrade` (`AttestationPredatesTrade`), so a pattern proof generated before the trade cannot finalize it even if submitted afterwards.
 - Interface: `ISettlementRegistry`
 
 ## Repository structure

@@ -84,7 +84,7 @@ interface ISettlementRegistry {
     /// @notice Leg attestation is past its oracle `expiresAt`.
     error AttestationExpired(bytes32 proofHash, uint256 expiresAt);
     error AttestationRevoked(bytes32 proofHash);
-    /// @notice Leg attestation was recorded before the trade was registered.
+    /// @notice Leg attestation, or the PATTERN proof's own timestamp, predates trade registration.
     error AttestationPredatesTrade(bytes32 proofHash, uint256 attestedAt, uint256 tradeCreatedAt);
     /// @notice Proof hash already backs another leg of this trade.
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
@@ -112,7 +112,8 @@ interface ISettlementRegistry {
     ///      The caller supplies the original public inputs so the registry can verify
     ///      keccak256(patternPublicInputs) matches the attestation's stored publicInputsHash,
     ///      then enforces analysis_type==1 (anti-structuring). VELOCITY/ROUND-AMOUNT proofs
-    ///      are rejected.
+    ///      are rejected. The proof's `timestamp` public input must be >= `createdAt`
+    ///      (`AttestationPredatesTrade`); the attestation's submission time is not enough.
     /// @param tradeId The trade to finalize
     /// @param patternProofHash Proof hash of a pattern detection proof for the subject
     /// @param patternPublicInputs Original public inputs used to generate the pattern proof
