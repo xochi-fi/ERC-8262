@@ -150,8 +150,13 @@ contract SettlementRegistry is ISettlementRegistry {
         //   1. patternProofHash is not zero
         //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
         //   3. The attestation exists and subject matches
-        //   4. The attestation was created after trade registration
+        //   4. The pattern proof's own `timestamp` public input (word 7) is >= the trade's
+        //      createdAt. The attestation timestamp is only the Oracle submission time, so a
+        //      proof generated before registerTrade could otherwise be submitted afterwards.
+        //      The Oracle rejects future proof timestamps, so this also implies the
+        //      attestation was submitted after registration.
         //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
+        //      (checked before reading any field, including the timestamp in check 4)
         //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
         //      satisfy the anti-structuring guarantee that this registry depends on
         //   7. The pattern proof's `settlement_root` public input matches the keccak
@@ -170,7 +175,6 @@ contract SettlementRegistry is ISettlementRegistry {
         if (patternAttestation.subject != settlement.subject) {
             revert SubjectMismatch(settlement.subject, patternAttestation.subject);
         }
-        if (patternAttestation.timestamp < settlement.createdAt) revert PatternProofRequired(tradeId);
         if (ERC8262Oracle(address(oracle)).isAttestationRevoked(patternProofHash)) {
             revert AttestationRevoked(patternProofHash);
         }
@@ -179,10 +183,15 @@ contract SettlementRegistry is ISettlementRegistry {
         if (inputsHash != patternAttestation.publicInputsHash) {
             revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
         }
-        // PATTERN public inputs layout (32 bytes each, 7 fields total after audit H-1):
+        // PATTERN public inputs layout (32 bytes each, 8 fields total):
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
-        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root
+        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
         // Length is enforced by the Oracle on submission.
+        uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
+        if (proofTimestamp < settlement.createdAt) {
+            revert AttestationPredatesTrade(patternProofHash, proofTimestamp, settlement.createdAt);
+        }
+
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
         if (analysisType != PATTERN_STRUCTURING) {
             revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);

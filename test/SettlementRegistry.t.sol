@@ -537,8 +537,9 @@ contract SettlementRegistryTest is Test {
     }
 
     function test_finalizeTrade_revert_patternProofTooOld() public {
-        // Submit pattern proof BEFORE registering the trade
+        // Generate + submit pattern proof BEFORE registering the trade
         (bytes32 patternProof, bytes memory patternInputs) = _submitPatternForAlice();
+        uint256 proofTs = block.timestamp;
 
         vm.warp(block.timestamp + 1); // advance time so createdAt > pattern timestamp
 
@@ -554,8 +555,70 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofRequired.selector, tradeId));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.AttestationPredatesTrade.selector, patternProof, proofTs, block.timestamp
+            )
+        );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    /// @notice Regression: a PATTERN proof generated BEFORE `registerTrade` but
+    ///         submitted to the Oracle afterwards (still within MAX_PROOF_AGE)
+    ///         must not finalize the trade. The Oracle attestation timestamp is
+    ///         the submission block time, so only the proof's own timestamp
+    ///         (public input [7]) proves the analysis post-dates the trade.
+    function test_finalizeTrade_revert_patternProofTimestampPredatesTrade() public {
+        vm.warp(1_000_000);
+        uint256 createdAt = block.timestamp;
+        bytes32 tradeId = keccak256("trade-predates");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        registry.recordSubSettlement(tradeId, 1, p2);
+        vm.stopPrank();
+
+        // Submitted after registration; proof generated one second before it.
+        vm.warp(createdAt + 60);
+        (bytes32 patternProof, bytes memory patternInputs) =
+            _submitPatternFor(alice, 1, registry.computeSettlementRoot(tradeId), createdAt - 1);
+        assertGe(oracle.getHistoricalProof(patternProof).timestamp, createdAt, "submitted after registration");
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.AttestationPredatesTrade.selector, patternProof, createdAt - 1, createdAt
+            )
+        );
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    /// @notice Boundary: a PATTERN proof timestamp equal to `createdAt` is accepted.
+    function test_finalizeTrade_patternProofTimestampAtCreatedAt() public {
+        vm.warp(1_000_000);
+        uint256 createdAt = block.timestamp;
+        bytes32 tradeId = keccak256("trade-boundary");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        registry.recordSubSettlement(tradeId, 1, p2);
+        vm.stopPrank();
+
+        vm.warp(createdAt + 60);
+        (bytes32 patternProof, bytes memory patternInputs) =
+            _submitPatternFor(alice, 1, registry.computeSettlementRoot(tradeId), createdAt);
+
+        vm.prank(alice);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+        assertTrue(registry.getSettlement(tradeId).finalized);
     }
 
     function test_finalizeTrade_revert_wrongProofType() public {
@@ -683,7 +746,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xbeef)), // tx_set_hash (different from original 0xabcd)
             bytes32(uint256(uint160(alice))),
-            registry.computeSettlementRoot(tradeId) // settlement_root
+            registry.computeSettlementRoot(tradeId), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
 
         vm.prank(alice);
@@ -820,7 +884,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))),
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidAnalysisType.selector, 99));
@@ -1060,8 +1125,17 @@ contract SettlementRegistryTest is Test {
     /// @dev Submit a pattern proof to the oracle as `who`, return the proofHash + inputs.
     ///      `analysisType` controls the pattern analysis (1=structuring, 2=velocity, 3=round-amounts).
     ///      `settlementRoot` is the audit H-1 binding -- pass `registry.computeSettlementRoot(tradeId)`
-    ///      to bind, or `bytes32(0)` for unbound / negative tests.
+    ///      to bind, or `bytes32(0)` for unbound / negative tests. Proof timestamp = block.timestamp.
     function _submitPatternFor(address who, uint256 analysisType, bytes32 settlementRoot)
+        internal
+        returns (bytes32 proofHash, bytes memory publicInputs)
+    {
+        return _submitPatternFor(who, analysisType, settlementRoot, block.timestamp);
+    }
+
+    /// @dev As above, with an explicit `proofTs` for public input [7] (timestamp).
+    ///      Must satisfy the Oracle's freshness bound (<= now, >= now - MAX_PROOF_AGE).
+    function _submitPatternFor(address who, uint256 analysisType, bytes32 settlementRoot, uint256 proofTs)
         internal
         returns (bytes32 proofHash, bytes memory publicInputs)
     {
@@ -1073,7 +1147,8 @@ contract SettlementRegistryTest is Test {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(who))), // submitter
-            settlementRoot // audit H-1 binding (0 for standalone)
+            settlementRoot, // audit H-1 binding (0 for standalone)
+            bytes32(proofTs) // timestamp
         );
         vm.prank(who);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));

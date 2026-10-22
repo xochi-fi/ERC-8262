@@ -220,13 +220,24 @@ abstract contract OracleTestBase is ERC8262TestBase {
         );
     }
 
-    /// @dev RISK_SCORE public inputs with configurable config hash (submitter = alice).
+    /// @dev RISK_SCORE public inputs with configurable config hash (submitter = alice), dated
+    ///      block.timestamp AT CALL TIME: build inputs after any vm.warp, or pass an explicit
+    ///      timestamp via the 3-arg overload.
     function _riskScoreInputs(bytes32 configHash) internal view returns (bytes memory) {
         return _riskScoreInputs(configHash, alice);
     }
 
-    /// @dev RISK_SCORE public inputs with configurable config hash and submitter.
-    function _riskScoreInputs(bytes32 configHash, address submitter) internal pure returns (bytes memory) {
+    /// @dev RISK_SCORE public inputs with configurable config hash and submitter, at block.timestamp.
+    function _riskScoreInputs(bytes32 configHash, address submitter) internal view returns (bytes memory) {
+        return _riskScoreInputs(configHash, submitter, block.timestamp);
+    }
+
+    /// @dev RISK_SCORE public inputs with an explicit proof timestamp.
+    function _riskScoreInputs(bytes32 configHash, address submitter, uint256 timestamp)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodePacked(
             bytes32(uint256(1)), // proof_type: threshold
             bytes32(uint256(1)), // direction: GT
@@ -235,6 +246,7 @@ abstract contract OracleTestBase is ERC8262TestBase {
             bytes32(uint256(1)), // result
             configHash,
             bytes32(uint256(0xeeff)), // provider_set_hash
+            bytes32(timestamp),
             bytes32(uint256(uint160(submitter)))
         );
     }
@@ -247,7 +259,7 @@ abstract contract OracleTestBase is ERC8262TestBase {
         uint256 boundUpper,
         bytes32 configHash,
         address submitter
-    ) internal pure returns (bytes memory) {
+    ) internal view returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(proofType)),
             bytes32(uint256(direction)),
@@ -256,7 +268,23 @@ abstract contract OracleTestBase is ERC8262TestBase {
             bytes32(uint256(1)), // result
             configHash,
             bytes32(uint256(0xeeff)), // provider_set_hash
+            bytes32(block.timestamp),
             bytes32(uint256(uint160(submitter)))
+        );
+    }
+
+    /// @dev PATTERN public inputs (8 slots: structuring analysis, registered 10000 threshold,
+    ///      settlement_root = 0) with an explicit proof timestamp.
+    function _patternInputs(address submitter, uint256 timestamp) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            bytes32(uint256(1)), // analysis_type: structuring
+            bytes32(uint256(1)), // result: clean
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(86400)), // time_window
+            bytes32(uint256(0xabcd)), // tx_set_hash
+            bytes32(uint256(uint160(submitter))), // submitter
+            bytes32(0), // settlement_root
+            bytes32(timestamp) // timestamp
         );
     }
 

@@ -71,6 +71,15 @@ contract IntegrationTest is Test {
     /// @dev Timestamp every signed fixture's provider signed (a public input).
     uint256 internal constant FIXTURE_SIGNED_TIMESTAMP = 1700000000;
 
+    /// @dev Prover-chosen proof timestamp of the risk_score and pattern fixtures (TRUST-24#2);
+    ///      the Oracle enforces MAX_PROOF_AGE on it. Both carry it at word 7, for different
+    ///      reasons: risk_score inserts it before `submitter` (now word 8) to match
+    ///      RISK_SCORE_SIGNED; pattern appends it last so `settlement_root` stays at word 6.
+    uint256 internal constant FIXTURE_PROOF_TIMESTAMP = 1700000000;
+
+    /// @dev Generated HonkVerifier error for a proof whose transcript does not match its inputs.
+    bytes4 internal constant SUMCHECK_FAILED = bytes4(keccak256("SumcheckFailed()"));
+
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
         ps = new uint256[](1);
         ps[0] = 1;
@@ -247,6 +256,45 @@ contract IntegrationTest is Test {
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
+        assertEq(oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 0, ProofTypes.RISK_SCORE), FIXTURE_PROOF_TIMESTAMP);
+    }
+
+    /// @dev Demo for TRUST-24#2: a real 0x02 proof older than MAX_PROOF_AGE reverts.
+    function test_realProof_riskScore_revert_stale() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
+        uint256 later = FIXTURE_PROOF_TIMESTAMP + oracle.MAX_PROOF_AGE() + 1;
+        vm.warp(later);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, FIXTURE_PROOF_TIMESTAMP, later)
+        );
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
+    }
+
+    function test_realProof_riskScore_revert_future() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
+        uint256 earlier = FIXTURE_PROOF_TIMESTAMP - 1;
+        vm.warp(earlier);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, FIXTURE_PROOF_TIMESTAMP, earlier)
+        );
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
+    }
+
+    function test_realProof_riskScore_redatedTimestampFailsVerification() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
+        // Relabel the proof with a fresh timestamp (word 7): the Oracle's window would
+        // accept it, but the timestamp is bound in the transcript, so it no longer verifies.
+        bytes memory redated = bytes.concat(
+            _slice(publicInputs, 0, 7 * 32),
+            bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days),
+            _slice(publicInputs, 8 * 32, publicInputs.length)
+        );
+        // The generated HonkVerifier rejects a transcript mismatch with SumcheckFailed();
+        // pinning it keeps an unrelated revert (length, pause) from passing this test.
+        vm.expectRevert(SUMCHECK_FAILED);
+        verifier.verifyProof(ProofTypes.RISK_SCORE, proof, redated);
     }
 
     // -------------------------------------------------------------------------
@@ -266,6 +314,37 @@ contract IntegrationTest is Test {
             oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
+        assertEq(oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 0, ProofTypes.PATTERN), FIXTURE_PROOF_TIMESTAMP);
+    }
+
+    function test_realProof_pattern_revert_stale() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
+        uint256 later = FIXTURE_PROOF_TIMESTAMP + oracle.MAX_PROOF_AGE() + 1;
+        vm.warp(later);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, FIXTURE_PROOF_TIMESTAMP, later)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
+    }
+
+    function test_realProof_pattern_revert_future() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
+        uint256 earlier = FIXTURE_PROOF_TIMESTAMP - 1;
+        vm.warp(earlier);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, FIXTURE_PROOF_TIMESTAMP, earlier)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
+    }
+
+    function test_realProof_pattern_redatedTimestampFailsVerification() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
+        // Word 7 (the last word) is the timestamp.
+        bytes memory redated = bytes.concat(_slice(publicInputs, 0, 7 * 32), bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days));
+        vm.expectRevert(SUMCHECK_FAILED);
+        verifier.verifyProof(ProofTypes.PATTERN, proof, redated);
     }
 
     // -------------------------------------------------------------------------
@@ -601,7 +680,7 @@ contract IntegrationTest is Test {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
         assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE, proof, publicInputs));
 
-        // Mutate the result field (index 4 of 8 -- byte offset 128, LSB at 159)
+        // Mutate the result field (index 4 of 9 -- byte offset 128, LSB at 159)
         bytes memory tampered = _flipBitAt(publicInputs, 159, 0);
 
         try verifier.verifyProof(ProofTypes.RISK_SCORE, proof, tampered) returns (bool valid) {

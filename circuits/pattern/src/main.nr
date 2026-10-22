@@ -13,7 +13,8 @@
 ///   - analysis_type: which pattern was analyzed (1=structuring, 2=velocity, 3=round amounts)
 ///   - result: boolean (true = no structuring detected, i.e. clean)
 ///   - reporting_threshold: the jurisdiction's reporting threshold (in basis points)
-///   - time_window: the analysis window in seconds
+///   - time_window: the analysis window in seconds; every active transaction
+///                  lies in [timestamp - time_window, timestamp]
 ///   - tx_set_hash: commitment to the transaction set analyzed
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///   - settlement_root: opaque, prover-declared binding to a downstream consumer's
@@ -21,6 +22,12 @@
 ///                      opaque; consumers (e.g. SettlementRegistry) recompute the
 ///                      expected value from their own state and assert equality.
 ///                      Set to 0 for standalone use (no downstream binding).
+///   - timestamp: prover-chosen proof time; the Oracle enforces freshness
+///                (MAX_PROOF_AGE, no future timestamps) and ratchets on it.
+///                The circuit binds every active transaction timestamp into
+///                [timestamp - time_window, timestamp], so a fresh proof
+///                cannot analyze an arbitrarily old transaction set.
+///                Appended last so settlement_root keeps its index.
 ///
 /// Private inputs:
 ///   - amounts: transaction amounts
@@ -64,6 +71,7 @@ fn main(
     submitter: pub Field,          // authorized submitter address (oracle enforces == msg.sender)
     settlement_root: pub Field,    // audit H-1: opaque declarative binding to a downstream
                                    // settlement set; consumers verify off-circuit (0 = unbound)
+    timestamp: pub Field,          // prover-chosen; Oracle enforces freshness
 ) {
     // Reference settlement_root so the compiler keeps it as a public input.
     // Intentionally unconstrained: the circuit makes no claim about the value;
@@ -79,13 +87,21 @@ fn main(
     );
     assert(time_window > 0, "Time window must be positive");
 
+    // Timestamp must be within reasonable bounds (freshness is the Oracle's job)
+    validate_timestamp(timestamp);
+    let proof_ts = timestamp as u64;
+
     // Anchor submitter as a public input (oracle enforces submitter == msg.sender).
     assert(submitter != 0, "submitter must be non-zero");
 
-    // Validate active slots have sane timestamps; ensure inactive slots are zeroed
+    // Validate active slots have sane timestamps inside the analysis window ending at
+    // the proof timestamp (so Oracle freshness implies recent transactions); ensure
+    // inactive slots are zeroed
     for i in 0..16 {
         if (i as u32) < num_transactions {
             validate_timestamp(timestamps[i] as Field);
+            assert(timestamps[i] <= proof_ts, "Transaction after proof timestamp");
+            assert(proof_ts - timestamps[i] <= time_window, "Transaction outside time window");
         } else {
             assert(amounts[i] == 0, "Inactive amount must be zero");
             assert(timestamps[i] == 0, "Inactive timestamp must be zero");
@@ -222,7 +238,7 @@ fn test_main_structuring_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -232,7 +248,7 @@ fn test_main_velocity_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -242,7 +258,7 @@ fn test_main_round_amounts_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -253,7 +269,7 @@ fn test_main_structuring_detected() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -264,7 +280,7 @@ fn test_structuring_threshold_boundary() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -274,7 +290,7 @@ fn test_velocity_exactly_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -284,7 +300,7 @@ fn test_velocity_exceeds_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -295,7 +311,7 @@ fn test_round_amounts_all_round() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -308,7 +324,7 @@ fn test_structuring_max_threshold_single_tx() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -322,5 +338,46 @@ fn test_structuring_max_threshold_single_tx_suspicious() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0);
+    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
+}
+
+#[test(should_fail_with = "Timestamp before 2021")]
+fn test_main_revert_timestamp_before_2021() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1000);
+}
+
+#[test(should_fail_with = "Timestamp unreasonably far future")]
+fn test_main_revert_timestamp_far_future() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1099511627776);
+}
+
+#[test(should_fail_with = "Transaction after proof timestamp")]
+fn test_main_revert_transaction_after_proof_timestamp() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700002999);
+}
+
+#[test(should_fail_with = "Transaction outside time window")]
+fn test_main_revert_transaction_outside_time_window() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    // Oldest transaction is 3601s before the proof timestamp; window is 3600s.
+    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003601);
 }

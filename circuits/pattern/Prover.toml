@@ -1,13 +1,15 @@
-# Clean structuring analysis: 4 transactions, all well below threshold
+# Clean structuring analysis: 4 transactions, all well below threshold.
+# Every transaction lies in [timestamp - time_window, timestamp] (circuit-enforced).
 amounts = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-timestamps = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+timestamps = [1699990000, 1699991000, 1699992000, 1699993000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 num_transactions = 4
 analysis_type = 1
 result = true
 reporting_threshold = 10000
-time_window = 3600
-tx_set_hash = "0x2231d26d52515af30cbb6e91834cdb9e3d1d36575f160cbb4f6ebbb3c3dd8dad"
+time_window = 86400
+tx_set_hash = "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56"
 submitter = "0xdead"
 # settlement_root = 0 means "no downstream binding"; SettlementRegistry overrides this
 # off-chain when binding a pattern proof to a specific trade.
 settlement_root = "0x0"
+timestamp = "1700000000"

@@ -171,7 +171,7 @@ contract IncidentVerifierSoundnessTest is Test {
         vm.prank(owner);
         verifier.pauseProofType(PROOF_TYPE);
 
-        // RISK_SCORE still verifies (different layout: 8 logical pubs)
+        // RISK_SCORE still verifies (different layout: 9 logical pubs)
         bytes memory riskInputs = abi.encodePacked(
             bytes32(uint256(1)), // proof_type
             bytes32(uint256(1)), // direction
@@ -180,6 +180,7 @@ contract IncidentVerifierSoundnessTest is Test {
             bytes32(uint256(1)), // result
             bytes32(uint256(2)), // config_hash
             bytes32(uint256(3)), // provider_set_hash
+            bytes32(block.timestamp), // timestamp
             bytes32(uint256(uint160(alice))) // submitter
         );
         bool ok = verifier.verifyProof(ProofTypes.RISK_SCORE, PROOF_BYTES, riskInputs);

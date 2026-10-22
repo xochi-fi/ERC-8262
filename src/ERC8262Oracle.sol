@@ -156,6 +156,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error EmptyBatch();
     error BatchTooLarge();
     error TimeWindowTooSmall(uint256 timeWindow, uint256 minimum);
+    error TimeWindowTooLarge(uint256 timeWindow, uint256 maximum);
     error ProofTimestampStale(uint256 proofTimestamp, uint256 blockTimestamp);
     error ProofTimestampInFuture(uint256 proofTimestamp, uint256 blockTimestamp);
     error ProofTypePaused(uint8 proofType);
@@ -216,6 +217,14 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Minimum time window for PATTERN (anti-structuring) proofs in seconds
     uint256 public constant MIN_TIME_WINDOW = 3600;
+
+    /// @notice Maximum time window for PATTERN proofs in seconds
+    /// @dev `time_window` is prover-chosen and the circuit only bounds each analyzed transaction to
+    ///      `[timestamp - time_window, timestamp]`. Without a cap a prover could pick a window near
+    ///      2^64 and produce a fresh proof over arbitrarily old transactions. With it, a PATTERN
+    ///      proof's analyzed set is at most `MAX_TIME_WINDOW + MAX_PROOF_AGE` old at submission.
+    ///      90 days matches xochi-sdk's `PATTERN_TIME_WINDOW_MAX` (whitepaper I.12).
+    uint256 public constant MAX_TIME_WINDOW = 90 days;
 
     /// @notice Maximum age of a proof timestamp relative to block.timestamp
     uint256 public constant MAX_PROOF_AGE = 1 hours;
@@ -1138,7 +1147,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @dev Per-type ratchet; RISK_SCORE and PATTERN have no proof timestamp and use `block.timestamp`.
+    /// @dev Per-type ratchet on the proof's own (freshness-checked) public timestamp.
     function _ratchetTyped(uint8 jurisdictionId, uint8 proofType, uint256 proofTimestamp) internal {
         uint256 last = _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType];
         if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
@@ -1293,12 +1302,10 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @dev Validate that the config_hash in RISK_SCORE public inputs is a known config,
     ///      that semantic public inputs (proof_type, direction, bounds) are well-formed
-    ///      and non-trivial, and that the result field indicates a positive outcome.
-    ///      NOTE: RISK_SCORE has no timestamp in public inputs; staleness not enforced.
+    ///      and non-trivial, that the result field indicates a positive outcome, and that
+    ///      the proof timestamp is within MAX_PROOF_AGE (same bound as RISK_SCORE_SIGNED).
     function _validateRiskScoreInputs(bytes calldata publicInputs) internal view returns (uint256 proofTimestamp) {
-        // RISK_SCORE has no proof-internal timestamp; ratchet uses block.timestamp instead
-        proofTimestamp = block.timestamp;
-        // RISK_SCORE public inputs layout (each 32 bytes):
+        // RISK_SCORE public inputs layout (each 32 bytes); [0]-[7] match RISK_SCORE_SIGNED:
         //   [0]: proof_type
         //   [1]: direction
         //   [2]: bound_lower
@@ -1306,24 +1313,27 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [4]: result
         //   [5]: config_hash
         //   [6]: provider_set_hash
-        //   [7]: submitter
+        //   [7]: timestamp
+        //   [8]: submitter
         _assertResultPositive(bytes32(publicInputs[128:160]));
         _assertValidConfig(bytes32(publicInputs[160:192]));
         _assertConfigNotDenied(bytes32(publicInputs[160:192]));
-        _assertSubmitter(bytes32(publicInputs[224:256]));
+        _assertSubmitter(bytes32(publicInputs[256:288]));
         _validateRiskBounds(
             uint256(bytes32(publicInputs[0:32])),
             uint256(bytes32(publicInputs[32:64])),
             uint256(bytes32(publicInputs[64:96])),
             uint256(bytes32(publicInputs[96:128]))
         );
+        proofTimestamp = uint256(bytes32(publicInputs[224:256]));
+        _validateProofTimestamp(proofTimestamp);
     }
 
     /// @dev Validate PATTERN public inputs.
     ///      Ensures analysis_type is in the supported set, result is positive,
     ///      reporting_threshold is registered, tx_set_hash is non-zero,
-    ///      time_window meets minimum, and submitter matches msg.sender.
-    ///      NOTE: PATTERN uses time_window (not a timestamp); staleness not enforced.
+    ///      time_window meets minimum, submitter matches msg.sender, and the proof
+    ///      timestamp is within MAX_PROOF_AGE.
     ///      NOTE: callers that require a specific analysis (e.g. anti-structuring) MUST
     ///      verify the analysis_type field themselves; this validator only enforces
     ///      that it is well-formed.
@@ -1331,8 +1341,6 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      consumers (e.g. SettlementRegistry) recompute it from their own state and
     ///      assert equality; the Oracle has no opinion on its value.
     function _validatePatternInputs(bytes calldata publicInputs) internal view returns (uint256 proofTimestamp) {
-        // PATTERN has no proof-internal timestamp (uses time_window); ratchet uses block.timestamp
-        proofTimestamp = block.timestamp;
         // PATTERN public inputs layout (each 32 bytes):
         //   [0]: analysis_type
         //   [1]: result
@@ -1341,6 +1349,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [4]: tx_set_hash
         //   [5]: submitter
         //   [6]: settlement_root        (audit H-1 -- opaque to Oracle)
+        //   [7]: timestamp              (appended so settlement_root keeps its index)
         uint256 analysisType = uint256(bytes32(publicInputs[0:32]));
         if (
             analysisType != PATTERN_STRUCTURING && analysisType != PATTERN_VELOCITY
@@ -1355,9 +1364,12 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
         uint256 timeWindow = uint256(bytes32(publicInputs[96:128]));
         if (timeWindow < MIN_TIME_WINDOW) revert TimeWindowTooSmall(timeWindow, MIN_TIME_WINDOW);
+        if (timeWindow > MAX_TIME_WINDOW) revert TimeWindowTooLarge(timeWindow, MAX_TIME_WINDOW);
         if (bytes32(publicInputs[128:160]) == bytes32(0)) revert PublicInputMismatch();
         _assertSubmitter(bytes32(publicInputs[160:192]));
         // publicInputs[192:224] = settlement_root -- intentionally not validated here.
+        proofTimestamp = uint256(bytes32(publicInputs[224:256]));
+        _validateProofTimestamp(proofTimestamp);
     }
 
     /// @dev Validate ATTESTATION public inputs (post C-1 redesign).
