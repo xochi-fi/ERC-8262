@@ -1,4 +1,4 @@
-.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain parity-check clean help
+.PHONY: build test test-sol test-noir test-sdk test-xochi-sdk test-all mutate fmt fmt-check lint slither snapshot benchmark fixtures check-toolchain parity-check clean help
 
 FOUNDRY_BIN := $(HOME)/.config/.foundry/bin
 FORGE := $(FOUNDRY_BIN)/forge
@@ -38,6 +38,9 @@ test-xochi-sdk: ## Run @xochi/sdk cross-repo tests (requires ../xochi-sdk, built
 	npx vitest run --config vitest.cross-repo.config.ts
 
 test-all: test-sol test-noir test-sdk ## Run all tests
+
+mutate: ## Fail if removing any Oracle validator check leaves the Solidity suite green
+	FORGE=$(FORGE) python3 scripts/mutate-validators.py .
 
 coverage: ## Run forge coverage (summary report; excludes generated/test/script)
 	@# Skip ratchet + MAX_BATCH_SIZE gas tests: under --ir-minimum gas inflates
