@@ -15,12 +15,15 @@ Mutants, one at a time, each replaced by an empty block `{}`:
 
 Each mutant runs the Solidity suite except `InvariantTest` (minutes per run,
 and it drives the Oracle through mock verifiers that the unit suites already
-cover) with a fixed fuzz seed. A mutant is killed when a test fails. The
-source file is restored after every mutant and on interrupt. `--shard=K/N`
-runs every N-th mutant starting at the K-th (1-based), for parallel CI jobs.
+cover) with a fixed fuzz seed. A mutant is killed only when forge reports a
+failing test; a nonzero exit without one (OOM kill, signal, tool crash) is not
+evidence that a test pins the check. The source file is restored after every
+mutant and on interrupt. `--shard=K/N` runs every N-th mutant starting at the
+K-th (1-based), for parallel CI jobs.
 
 Exits 0 when every mutant is killed, 1 when any survives, 2 on usage error,
-missing tooling, or a mutant that does not compile (an operator bug).
+missing tooling, a mutant that does not compile (an operator bug), or a forge
+run that exits nonzero without a failing test.
 
 Usage: mutate-validators.py [project-root] [--list] [--shard=K/N]
 """
@@ -151,11 +154,11 @@ def run_forge(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run([FORGE, *FORGE_ARGS], cwd=root, env=env, capture_output=True, text=True)
 
 
-def first_failure(output: str) -> str:
+def first_failure(output: str) -> str | None:
     for line in output.splitlines():
         if line.startswith("[FAIL"):
             return line.strip()
-    return "(no [FAIL] line)"
+    return None
 
 
 def parse_shard(flag: str | None) -> tuple[int, int] | None:
@@ -208,28 +211,33 @@ def main(argv: list[str]) -> int:
         return 2
 
     survivors: list[Mutant] = []
-    broken: list[tuple[Mutant, str]] = []
+    broken: list[tuple[Mutant, str, str]] = []
     try:
         for n, m in enumerate(mutants, 1):
             target.write_text(original[: m.start] + "{}" + original[m.end :])
             result = run_forge(root)
             output = result.stdout + result.stderr
             label = f"[{n}/{len(mutants)}] {TARGET}:{m.line} {m.function}: {m.snippet}"
+            failure = first_failure(output)
             if "Compiler run failed" in output or SOLC_ERROR_RE.search(output):
-                broken.append((m, output[-2000:]))
+                broken.append((m, "did not compile", output[-2000:]))
                 print(f"BROKEN   {label}")
             elif result.returncode == 0:
                 survivors.append(m)
                 print(f"SURVIVED {label}")
+            elif failure is None:
+                reason = f"forge exited {result.returncode} without a failing test"
+                broken.append((m, reason, output[-2000:]))
+                print(f"ERRORED  {label}")
             else:
-                print(f"killed   {label}\n           by {first_failure(output)}")
+                print(f"killed   {label}\n           by {failure}")
     finally:
         target.write_text(original)
 
     print(f"\n{len(mutants)} mutants: {len(mutants) - len(survivors) - len(broken)} killed, "
-          f"{len(survivors)} survived, {len(broken)} did not compile")
-    for m, tail in broken:
-        print(f"\n--- did not compile: {TARGET}:{m.line} {m.snippet}\n{tail}", file=sys.stderr)
+          f"{len(survivors)} survived, {len(broken)} did not run")
+    for m, reason, tail in broken:
+        print(f"\n--- {reason}: {TARGET}:{m.line} {m.snippet}\n{tail}", file=sys.stderr)
     if broken:
         return 2
     if survivors:
