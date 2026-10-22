@@ -223,7 +223,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      `[timestamp - time_window, timestamp]`. Without a cap a prover could pick a window near
     ///      2^64 and produce a fresh proof over arbitrarily old transactions. With it, a PATTERN
     ///      proof's analyzed set is at most `MAX_TIME_WINDOW + MAX_PROOF_AGE` old at submission.
-    uint256 public constant MAX_TIME_WINDOW = 30 days;
+    ///      90 days matches xochi-sdk's `PATTERN_TIME_WINDOW_MAX` (whitepaper I.12).
+    uint256 public constant MAX_TIME_WINDOW = 90 days;
 
     /// @notice Maximum age of a proof timestamp relative to block.timestamp
     uint256 public constant MAX_PROOF_AGE = 1 hours;

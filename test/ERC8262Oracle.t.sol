@@ -1659,7 +1659,7 @@ contract ERC8262OracleTest is OracleTestBase {
     }
 
     function test_submitCompliance_patternProof_exactMaxTimeWindow() public {
-        bytes memory publicInputs = _patternInputsWithWindow(30 days);
+        bytes memory publicInputs = _patternInputsWithWindow(90 days);
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
@@ -1667,9 +1667,9 @@ contract ERC8262OracleTest is OracleTestBase {
     }
 
     function test_submitCompliance_patternProof_revert_timeWindowTooLarge() public {
-        bytes memory publicInputs = _patternInputsWithWindow(30 days + 1);
+        bytes memory publicInputs = _patternInputsWithWindow(90 days + 1);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, 30 days + 1, 30 days));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, 90 days + 1, 90 days));
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -1678,7 +1678,7 @@ contract ERC8262OracleTest is OracleTestBase {
         bytes memory publicInputs = _patternInputsWithWindow(type(uint64).max);
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, uint256(type(uint64).max), 30 days)
+            abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, uint256(type(uint64).max), 90 days)
         );
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
