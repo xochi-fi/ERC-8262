@@ -1,8 +1,10 @@
 > **INTERNAL SELF-REVIEW, NOT AN INDEPENDENT AUDIT.** Restored verbatim from `c9155260:audit/PRE_EIP_AUDIT.md` (deleted in `2e792d18`) as the baseline for the external audit (xochi-fi/ERC-8262#30, decision D9). Scope and gaps:
 >
 > - Reviewed commit `0c12337` (2026-05-09). Contracts were renamed since (`XochiZKPOracle` -> `ERC8262Oracle`, `XochiZKPVerifier` -> `ERC8262Verifier`, `XochiTimelock` -> `Timelock`), so line references below are stale.
-> - Covered proof types 0x01-0x08. **Not covered:** the 0x09 multi-signed type, verifier codehash pinning and the UAE jurisdiction (all added later), and the generated UltraHonk verifiers (no bb version recorded).
+> - Covered proof types 0x01-0x08 **as implemented at `0c12337`** plus the F-1..F-8 fixes. **Not covered:** the 0x09 multi-signed type, verifier codehash pinning and the UAE jurisdiction (all added later), and the generated UltraHonk verifiers (no bb version recorded).
+> - **Later changes to covered types and paths were not reviewed here** and need fresh review: `7498e90` (PATTERN `settlement_root` binding and `_usedPatternProofs` in SettlementRegistry, proof-type gating of sub-settlements, rejection of future proof timestamps), `96d1eab` (Oracle validators refactored onto shared `_assert*` helpers), `a646d56` / `7046f92` (shared Noir provider-slot validation, verifiers regenerated), `5871da5` (shared-circuit change for UAE, verifiers regenerated), `89c2055` (#19, 0x07/0x09 verifiers regenerated), and `0147684` (#20, 0x08 digest domain-separated from 0x07, signed timestamp made public input 7, 12 public inputs).
 > - F-1..F-8 fixes squash-merged as `34678b1` (#5); the F-6 SDK half reached xochi-sdk `main` as `6046721` (#1). F-9 is acknowledged and documented only.
+> - The Section 5 verdict (`HARDENED -- post-fix. Pre-EIP submission is not blocked`) and its figures (472 forge tests, 8/8 circuits in parity) describe the post-fix branch in May 2026. They are not an assessment of current `main`; current audit status is tracked in xochi-fi/ERC-8262#30.
 
 # Pre-EIP X-Ray Audit -- erc-xochi-zkp
 
