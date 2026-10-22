@@ -156,6 +156,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     error EmptyBatch();
     error BatchTooLarge();
     error TimeWindowTooSmall(uint256 timeWindow, uint256 minimum);
+    error TimeWindowTooLarge(uint256 timeWindow, uint256 maximum);
     error ProofTimestampStale(uint256 proofTimestamp, uint256 blockTimestamp);
     error ProofTimestampInFuture(uint256 proofTimestamp, uint256 blockTimestamp);
     error ProofTypePaused(uint8 proofType);
@@ -216,6 +217,13 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     /// @notice Minimum time window for PATTERN (anti-structuring) proofs in seconds
     uint256 public constant MIN_TIME_WINDOW = 3600;
+
+    /// @notice Maximum time window for PATTERN proofs in seconds
+    /// @dev `time_window` is prover-chosen and the circuit only bounds each analyzed transaction to
+    ///      `[timestamp - time_window, timestamp]`. Without a cap a prover could pick a window near
+    ///      2^64 and produce a fresh proof over arbitrarily old transactions. With it, a PATTERN
+    ///      proof's analyzed set is at most `MAX_TIME_WINDOW + MAX_PROOF_AGE` old at submission.
+    uint256 public constant MAX_TIME_WINDOW = 30 days;
 
     /// @notice Maximum age of a proof timestamp relative to block.timestamp
     uint256 public constant MAX_PROOF_AGE = 1 hours;
@@ -1355,6 +1363,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
         uint256 timeWindow = uint256(bytes32(publicInputs[96:128]));
         if (timeWindow < MIN_TIME_WINDOW) revert TimeWindowTooSmall(timeWindow, MIN_TIME_WINDOW);
+        if (timeWindow > MAX_TIME_WINDOW) revert TimeWindowTooLarge(timeWindow, MAX_TIME_WINDOW);
         if (bytes32(publicInputs[128:160]) == bytes32(0)) revert PublicInputMismatch();
         _assertSubmitter(bytes32(publicInputs[160:192]));
         // publicInputs[192:224] = settlement_root -- intentionally not validated here.

@@ -1645,6 +1645,44 @@ contract ERC8262OracleTest is OracleTestBase {
         assertEq(att.subject, alice);
     }
 
+    function _patternInputsWithWindow(uint256 timeWindow) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            bytes32(uint256(1)), // analysis_type
+            bytes32(uint256(1)), // result
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(timeWindow), // time_window
+            bytes32(uint256(0xabcd)), // tx_set_hash
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
+        );
+    }
+
+    function test_submitCompliance_patternProof_exactMaxTimeWindow() public {
+        bytes memory publicInputs = _patternInputsWithWindow(30 days);
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+        assertEq(att.subject, alice);
+    }
+
+    function test_submitCompliance_patternProof_revert_timeWindowTooLarge() public {
+        bytes memory publicInputs = _patternInputsWithWindow(30 days + 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, 30 days + 1, 30 days));
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    /// @dev A u64-max window would admit transactions of any age into a fresh proof.
+    function test_submitCompliance_patternProof_revert_timeWindowU64Max() public {
+        bytes memory publicInputs = _patternInputsWithWindow(type(uint64).max);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, uint256(type(uint64).max), 30 days)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
     // -------------------------------------------------------------------------
     // Timestamp staleness
     // -------------------------------------------------------------------------
