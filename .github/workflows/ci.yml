@@ -92,22 +92,15 @@ jobs:
           key: nargo-${{ env.NARGO_VERSION }}
 
       - name: Install nargo
-        run: |
-          mkdir -p "$HOME/.nargo/bin"
-          curl -L "https://github.com/noir-lang/noir/releases/download/v${{ env.NARGO_VERSION }}/nargo-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C "$HOME/.nargo/bin"
-          export PATH="$HOME/.nargo/bin:$PATH"
-          nargo --version
+        uses: ./.github/actions/install-nargo
+        with:
+          version: ${{ env.NARGO_VERSION }}
 
       - name: Run circuit tests
-        run: |
-          export PATH="$HOME/.nargo/bin:$PATH"
-          cd circuits && nargo test --workspace
+        run: cd circuits && nargo test --workspace
 
       - name: Compile circuits for parity check
-        run: |
-          export PATH="$HOME/.nargo/bin:$PATH"
-          cd circuits && nargo compile --workspace
+        run: cd circuits && nargo compile --workspace
 
       - name: Circuit <-> Solidity public-input parity (audit F-8)
         run: python3 scripts/parity-check.py .
@@ -127,12 +120,9 @@ jobs:
           version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Install nargo
-        run: |
-          mkdir -p "$HOME/.nargo/bin"
-          curl -L "https://github.com/noir-lang/noir/releases/download/v${{ env.NARGO_VERSION }}/nargo-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C "$HOME/.nargo/bin"
-          export PATH="$HOME/.nargo/bin:$PATH"
-          nargo --version
+        uses: ./.github/actions/install-nargo
+        with:
+          version: ${{ env.NARGO_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -144,9 +134,7 @@ jobs:
         run: npm ci
 
       - name: Compile circuits
-        run: |
-          export PATH="$HOME/.nargo/bin:$PATH"
-          cd circuits && nargo compile --workspace
+        run: cd circuits && nargo compile --workspace
 
       - name: Build contracts
         run: forge build
@@ -188,12 +176,9 @@ jobs:
           version: ${{ env.FOUNDRY_VERSION }}
 
       - name: Install nargo
-        run: |
-          mkdir -p "$HOME/.nargo/bin"
-          curl -L "https://github.com/noir-lang/noir/releases/download/v${{ env.NARGO_VERSION }}/nargo-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C "$HOME/.nargo/bin"
-          export PATH="$HOME/.nargo/bin:$PATH"
-          nargo --version
+        uses: ./.github/actions/install-nargo
+        with:
+          version: ${{ env.NARGO_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -210,9 +195,7 @@ jobs:
         run: npm ci
 
       - name: Compile circuits
-        run: |
-          export PATH="$HOME/.nargo/bin:$PATH"
-          cd circuits && nargo compile --workspace
+        run: cd circuits && nargo compile --workspace
 
       - name: Build contracts
         run: forge build
