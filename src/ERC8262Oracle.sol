@@ -1005,7 +1005,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ) internal returns (ComplianceAttestation memory attestation) {
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
         // Before any validator slices `inputs`, so a wrong-layout input reverts with data.
-        ProofTypes.validatePublicInputs(proofType, inputs);
+        // Unknown types skip it and revert InvalidProofType in `_validateAndExtractTimestamp`.
+        if (ProofTypes.isValidProofType(proofType)) ProofTypes.validatePublicInputs(proofType, inputs);
         uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, inputs);
         bool writesComplianceSlot = _writesComplianceSlot(jurisdictionId, proofType);
         // RISK_SCORE and PATTERN bind no jurisdiction, so a slot keyed on the caller's
