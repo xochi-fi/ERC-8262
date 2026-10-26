@@ -256,7 +256,6 @@ contract IntegrationTest is Test {
             oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
-        assertEq(oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 0, ProofTypes.RISK_SCORE), FIXTURE_PROOF_TIMESTAMP);
     }
 
     /// @dev Demo for TRUST-24#2: a real 0x02 proof older than MAX_PROOF_AGE reverts.
@@ -314,7 +313,6 @@ contract IntegrationTest is Test {
             oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
         assertEq(att.subject, FIXTURE_SUBMITTER);
         assertTrue(att.meetsThreshold);
-        assertEq(oracle.lastProofTimestampByType(FIXTURE_SUBMITTER, 0, ProofTypes.PATTERN), FIXTURE_PROOF_TIMESTAMP);
     }
 
     function test_realProof_pattern_revert_stale() public {

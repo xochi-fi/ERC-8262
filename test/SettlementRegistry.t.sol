@@ -557,17 +557,17 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.AttestationPredatesTrade.selector, patternProof, proofTs, block.timestamp
+                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, proofTs, block.timestamp
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
-    /// @notice Regression: a PATTERN proof generated BEFORE `registerTrade` but
+    /// @notice Regression: a PATTERN proof dated BEFORE `registerTrade` but
     ///         submitted to the Oracle afterwards (still within MAX_PROOF_AGE)
     ///         must not finalize the trade. The Oracle attestation timestamp is
     ///         the submission block time, so only the proof's own timestamp
-    ///         (public input [7]) proves the analysis post-dates the trade.
+    ///         (public input [7]) shows it predates the trade.
     function test_finalizeTrade_revert_patternProofTimestampPredatesTrade() public {
         vm.warp(1_000_000);
         uint256 createdAt = block.timestamp;
@@ -591,7 +591,7 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.AttestationPredatesTrade.selector, patternProof, createdAt - 1, createdAt
+                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, createdAt - 1, createdAt
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPublicClient, createWalletClient, http, type Hex } from "viem";
+import { createPublicClient, createWalletClient, http, zeroHash, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
@@ -19,6 +19,7 @@ import {
   planSplit,
   proveBatch,
   PROOF_TYPES,
+  PATTERN_TIME_WINDOW_MIN,
 } from "@xochi/sdk";
 import { NodeCircuitLoader } from "@xochi/sdk/node";
 import { startAnvil, stopAnvil, ANVIL_RPC, ALICE_KEY, FIXTURE_TIMESTAMP } from "./anvil";
@@ -176,7 +177,7 @@ describe("settlement splitting E2E", () => {
       numTransactions: 4,
       analysisType: 1, // structuring
       reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
-      timeWindow: 86400, // 24 hours (SDK minimum)
+      timeWindow: PATTERN_TIME_WINDOW_MIN,
       txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
       submitter: alice.address,
       settlementRoot,
@@ -188,7 +189,7 @@ describe("settlement splitting E2E", () => {
       proofType: PROOF_TYPES.PATTERN,
       proof: patternResult.proofHex,
       publicInputs: patternResult.publicInputsHex,
-      providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      providerSetHash: zeroHash,
     });
     await publicClient.waitForTransactionReceipt({ hash: patternSubmitTx });
 

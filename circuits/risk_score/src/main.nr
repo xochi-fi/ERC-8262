@@ -17,7 +17,7 @@
 ///   - config_hash: hash of published weight configuration
 ///   - provider_set_hash: commitment to which providers were used
 ///   - timestamp: prover-chosen proof time; the Oracle enforces freshness
-///     (MAX_PROOF_AGE, no future timestamps) and ratchets on it
+///     (MAX_PROOF_AGE, no future timestamps)
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///
 /// Private inputs:

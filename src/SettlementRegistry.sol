@@ -116,7 +116,10 @@ contract SettlementRegistry is ISettlementRegistry {
         }
 
         // Historical lookups never expire: require live now (`expiresAt`
-        // inclusive) and recorded no earlier than registration.
+        // inclusive) and recorded no earlier than registration. Legs are checked on the
+        // Oracle submission time: the registry never sees leg public inputs, so unlike the
+        // PATTERN proof in `finalizeTrade` a leg proven before `registerTrade` and submitted
+        // after it passes.
         if (block.timestamp > attestation.expiresAt) revert AttestationExpired(proofHash, attestation.expiresAt);
         if (ERC8262Oracle(address(oracle)).isAttestationRevoked(proofHash)) revert AttestationRevoked(proofHash);
         if (attestation.timestamp < settlement.createdAt) {
@@ -151,10 +154,13 @@ contract SettlementRegistry is ISettlementRegistry {
         //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
         //   3. The attestation exists and subject matches
         //   4. The pattern proof's own `timestamp` public input (word 7) is >= the trade's
-        //      createdAt. The attestation timestamp is only the Oracle submission time, so a
-        //      proof generated before registerTrade could otherwise be submitted afterwards.
-        //      The Oracle rejects future proof timestamps, so this also implies the
-        //      attestation was submitted after registration.
+        //      createdAt. This is stricter than the attestation (submission) time, which the
+        //      Oracle already holds at or after the proof timestamp. It does not prove the
+        //      proof was generated after registerTrade: the timestamp is prover-chosen and
+        //      `settlement_root` does not commit to tradeId, so a prover holding the leg proof
+        //      hashes can build inputs dated after createdAt in advance and submit them once
+        //      the chain reaches that date. Legs use the submission time instead (see
+        //      `recordSubSettlement`).
         //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
         //      (checked before reading any field, including the timestamp in check 4)
         //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
@@ -189,7 +195,7 @@ contract SettlementRegistry is ISettlementRegistry {
         // Length is enforced by the Oracle on submission.
         uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
         if (proofTimestamp < settlement.createdAt) {
-            revert AttestationPredatesTrade(patternProofHash, proofTimestamp, settlement.createdAt);
+            revert PatternProofPredatesTrade(patternProofHash, proofTimestamp, settlement.createdAt);
         }
 
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));

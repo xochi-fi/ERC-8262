@@ -107,7 +107,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => ComplianceAttestation)))
         internal _typedAttestations;
 
-    /// @dev Ratchet for `_typedAttestations`; types without a proof timestamp use `block.timestamp`.
+    /// @dev Per-type ratchet on each proof's public timestamp. RISK_SCORE and PATTERN never
+    ///      ratchet (see `_submitSingle`), so their slots stay 0.
     mapping(address subject => mapping(uint8 jurisdictionId => mapping(uint8 proofType => uint256))) internal
         _typedLastProofTimestamp;
 
@@ -216,14 +217,17 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     uint256 public constant MAX_BATCH_SIZE = 10;
 
     /// @notice Minimum time window for PATTERN (anti-structuring) proofs in seconds
-    uint256 public constant MIN_TIME_WINDOW = 3600;
+    /// @dev A protocol floor, not product policy: xochi-sdk's builders refuse windows below its
+    ///      own `PATTERN_TIME_WINDOW_MIN` (24 h, whitepaper I.12), which this floor admits.
+    uint256 public constant MIN_TIME_WINDOW = 1 hours;
 
     /// @notice Maximum time window for PATTERN proofs in seconds
-    /// @dev `time_window` is prover-chosen and the circuit only bounds each analyzed transaction to
-    ///      `[timestamp - time_window, timestamp]`. Without a cap a prover could pick a window near
-    ///      2^64 and produce a fresh proof over arbitrarily old transactions. With it, a PATTERN
-    ///      proof's analyzed set is at most `MAX_TIME_WINDOW + MAX_PROOF_AGE` old at submission.
-    ///      90 days matches xochi-sdk's `PATTERN_TIME_WINDOW_MAX` (whitepaper I.12).
+    /// @dev `time_window` is prover-chosen and the circuit bounds each analyzed transaction to
+    ///      `[timestamp - time_window, timestamp]`. This keeps an honest prover's analyzed set
+    ///      within `MAX_TIME_WINDOW + MAX_PROOF_AGE` of submission. It is not a security control:
+    ///      the transaction amounts and timestamps are private, unsigned witness data, so a
+    ///      dishonest prover can relabel old transactions into the window. 90 days matches
+    ///      xochi-sdk's `PATTERN_TIME_WINDOW_MAX` (whitepaper I.12).
     uint256 public constant MAX_TIME_WINDOW = 90 days;
 
     /// @notice Maximum age of a proof timestamp relative to block.timestamp
@@ -1000,9 +1004,16 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         bytes32 providerSetHash
     ) internal returns (ComplianceAttestation memory attestation) {
         if (_proofTypePaused[proofType]) revert ProofTypePaused(proofType);
+        // Before any validator slices `inputs`, so a wrong-layout input reverts with data.
+        ProofTypes.validatePublicInputs(proofType, inputs);
         uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, inputs);
         bool writesComplianceSlot = _writesComplianceSlot(jurisdictionId, proofType);
-        _ratchetTyped(jurisdictionId, proofType, proofTimestamp);
+        // RISK_SCORE and PATTERN bind no jurisdiction, so a slot keyed on the caller's
+        // `jurisdictionId` cannot order them, and ordering them on the prover-chosen time
+        // would only fail honest out-of-order submissions. MAX_PROOF_AGE bounds them instead.
+        if (proofType != ProofTypes.RISK_SCORE && proofType != ProofTypes.PATTERN) {
+            _ratchetTyped(jurisdictionId, proofType, proofTimestamp);
+        }
         if (writesComplianceSlot) _ratchet(jurisdictionId, proofTimestamp);
 
         (address verifierUsed, bytes32 proofHash) = _verifyAndRecordProof(proofType, proof, inputs);
@@ -1053,15 +1064,14 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         return false;
     }
 
-    /// @dev Verify the ZK proof and record replay protection.
-    ///      Resolves the verifier once (no TOCTOU with `verifierUsed`); `resolveVerifier`
-    ///      reverts while the router is paused.
+    /// @dev Verify the ZK proof and record replay protection. `_submitSingle` has already
+    ///      checked the public-input length. Resolves the verifier once (no TOCTOU with
+    ///      `verifierUsed`); `resolveVerifier` reverts while the router is paused.
     function _verifyAndRecordProof(uint8 proofType, bytes calldata proof, bytes calldata publicInputs)
         internal
         returns (address verifierUsed, bytes32 proofHash)
     {
         verifierUsed = verifier.resolveVerifier(proofType);
-        ProofTypes.validatePublicInputs(proofType, publicInputs);
         bytes32[] memory inputs = ProofTypes.decodePublicInputs(publicInputs);
         bool valid = IUltraVerifier(verifierUsed).verify(proof, inputs);
         if (!valid) revert ProofVerificationFailed();
@@ -1099,7 +1109,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         });
     }
 
-    /// @dev Dispatch validation by proofType and return the timestamp to ratchet on.
+    /// @dev Dispatch validation by proofType and return the proof's own timestamp.
     ///      Also enforces per-jurisdiction signed-signals policy: when the jurisdiction
     ///      requires signed signals (`requireSignedSignals == true`), the unsigned
     ///      COMPLIANCE / RISK_SCORE variants are rejected before any cryptographic work.
@@ -1147,7 +1157,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         }
     }
 
-    /// @dev Per-type ratchet on the proof's own (freshness-checked) public timestamp.
+    /// @dev Per-type ratchet on the proof's own (freshness-checked) public timestamp. Not
+    ///      applied to RISK_SCORE or PATTERN.
     function _ratchetTyped(uint8 jurisdictionId, uint8 proofType, uint256 proofTimestamp) internal {
         uint256 last = _typedLastProofTimestamp[msg.sender][jurisdictionId][proofType];
         if (proofTimestamp < last) revert ProofTimestampNotMonotonic(proofTimestamp, last);
@@ -1172,10 +1183,12 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     }
 
     /// @dev Check that a proof timestamp is within MAX_PROOF_AGE in the past and
-    ///      never in the future. Future-dated proofs serve no honest use case --
-    ///      accepting them lets a submitter ratchet `_lastProofTimestamp` ahead of
-    ///      wall-clock and block their own subsequent older-timestamp submissions
-    ///      until the chain catches up (audit M-1).
+    ///      never in the future, with zero tolerance. Future-dated proofs serve no honest
+    ///      use case -- accepting them lets a submitter ratchet `_lastProofTimestamp` ahead
+    ///      of wall-clock and block their own subsequent older-timestamp submissions until
+    ///      the chain catches up (audit M-1). The latest block trails wall-clock time, so
+    ///      clients stamp proofs from the chain (`min(now, latest block timestamp)`) and
+    ///      simulate against the pending block.
     function _validateProofTimestamp(uint256 proofTimestamp) internal view {
         if (proofTimestamp > block.timestamp) {
             revert ProofTimestampInFuture(proofTimestamp, block.timestamp);
@@ -1332,8 +1345,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     /// @dev Validate PATTERN public inputs.
     ///      Ensures analysis_type is in the supported set, result is positive,
     ///      reporting_threshold is registered, tx_set_hash is non-zero,
-    ///      time_window meets minimum, submitter matches msg.sender, and the proof
-    ///      timestamp is within MAX_PROOF_AGE.
+    ///      MIN_TIME_WINDOW <= time_window <= MAX_TIME_WINDOW, submitter matches
+    ///      msg.sender, and the proof timestamp is within MAX_PROOF_AGE.
     ///      NOTE: callers that require a specific analysis (e.g. anti-structuring) MUST
     ///      verify the analysis_type field themselves; this validator only enforces
     ///      that it is well-formed.

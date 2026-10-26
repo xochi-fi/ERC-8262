@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, zeroHash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
@@ -24,6 +24,7 @@ import {
   ProofTimestampStaleError,
   ProofTimestampInFutureError,
   chainProofTimestamp,
+  PATTERN_TIME_WINDOW_MIN,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
@@ -482,10 +483,21 @@ describe("SDK -> anvil on-chain verification", () => {
 
     // ERC-8262#25: the risk_score public timestamp is held to MAX_PROOF_AGE.
     // The anvil clock starts at FIXTURE_TIMESTAMP, so a proof dated one second
-    // past the 1h window is stale and one dated a day ahead is in the future.
+    // past the window is stale and one dated a day ahead is in the future.
     // The Oracle client decodes these reverts into the SDK's typed errors.
+    // 0x02 / 0x03 do not ratchet, so these tests carry no submission-order coupling.
     const STALE = ProofTimestampStaleError;
     const FUTURE = ProofTimestampInFutureError;
+    const ONE_DAY_SECONDS = 86_400;
+    // Read from the deployed Oracle so the tests follow the contract's boundary.
+    const maxProofAge = async () =>
+      Number(
+        await publicClient.readContract({
+          address: contracts.oracle,
+          abi: contracts.oracleAbi,
+          functionName: "MAX_PROOF_AGE",
+        }),
+      );
 
     it("risk_score proof older than MAX_PROOF_AGE is rejected", async () => {
       const { proofHex, publicInputsHex } = await prover.proveRiskScore({
@@ -495,7 +507,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
-        timestamp: String(FIXTURE_TIMESTAMP - 3601),
+        timestamp: String(FIXTURE_TIMESTAMP - (await maxProofAge()) - 1),
         submitter: ALICE_ADDRESS,
       });
       expect(
@@ -521,7 +533,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
-        timestamp: String(FIXTURE_TIMESTAMP + 86400),
+        timestamp: String(FIXTURE_TIMESTAMP + ONE_DAY_SECONDS),
         submitter: ALICE_ADDRESS,
       });
 
@@ -537,18 +549,26 @@ describe("SDK -> anvil on-chain verification", () => {
     });
 
     // PATTERN (0x03) gets the same bound. Fixture data from circuits/pattern/Prover.toml.
-    const patternInput = (timestamp: number) => ({
-      amounts: [500, 1200, 3000, 7500],
-      timestamps: [1699990000, 1699991000, 1699992000, 1699993000],
-      numTransactions: 4,
-      analysisType: 1 as const, // structuring
-      reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
-      timeWindow: 86400, // SDK minimum
-      txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
-      submitter: ALICE_ADDRESS,
-      settlementRoot: "0", // standalone, no SettlementRegistry binding
-      timestamp: String(timestamp),
-    });
+    // The circuit needs every transaction in [timestamp - timeWindow, timestamp]; the fixed
+    // transaction times keep `txSetHash` valid, so a proof timestamp must stay within
+    // `timeWindow` of the oldest one (asserted here so a drifted clock fails with a clear message).
+    const PATTERN_TX_TIMESTAMPS = [1699990000, 1699991000, 1699992000, 1699993000];
+    const patternInput = (timestamp: number) => {
+      expect(timestamp - PATTERN_TX_TIMESTAMPS[0]).toBeLessThanOrEqual(PATTERN_TIME_WINDOW_MIN);
+      expect(timestamp).toBeGreaterThanOrEqual(PATTERN_TX_TIMESTAMPS[PATTERN_TX_TIMESTAMPS.length - 1]);
+      return {
+        amounts: [500, 1200, 3000, 7500],
+        timestamps: PATTERN_TX_TIMESTAMPS,
+        numTransactions: 4,
+        analysisType: 1 as const, // structuring
+        reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
+        timeWindow: PATTERN_TIME_WINDOW_MIN,
+        txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
+        submitter: ALICE_ADDRESS,
+        settlementRoot: "0", // standalone, no SettlementRegistry binding
+        timestamp: String(timestamp),
+      };
+    };
 
     it("pattern proof with a fresh timestamp submits", async () => {
       const { proofHex, publicInputs, publicInputsHex } = await prover.provePattern(
@@ -562,7 +582,7 @@ describe("SDK -> anvil on-chain verification", () => {
         proofType: PROOF_TYPES.PATTERN,
         proof: proofHex,
         publicInputs: publicInputsHex,
-        providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        providerSetHash: zeroHash,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
       expect(receipt.status).toBe("success");
@@ -570,7 +590,7 @@ describe("SDK -> anvil on-chain verification", () => {
 
     it("pattern proof older than MAX_PROOF_AGE is rejected", async () => {
       const { proofHex, publicInputsHex } = await prover.provePattern(
-        patternInput(FIXTURE_TIMESTAMP - 3601),
+        patternInput(FIXTURE_TIMESTAMP - (await maxProofAge()) - 1),
       );
       await expect(
         oracle.submitCompliance({
@@ -578,7 +598,7 @@ describe("SDK -> anvil on-chain verification", () => {
           proofType: PROOF_TYPES.PATTERN,
           proof: proofHex,
           publicInputs: publicInputsHex,
-          providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+          providerSetHash: zeroHash,
         }),
       ).rejects.toThrow(STALE);
     });
@@ -599,7 +619,7 @@ describe("SDK -> anvil on-chain verification", () => {
 
     it("risk_score proof with the wall-clock default timestamp is rejected", async () => {
       const chainNow = Number(await chainProofTimestamp(publicClient));
-      expect(chainNow).toBeLessThan(Math.floor(Date.now() / 1000) - 3600);
+      expect(chainNow).toBeLessThan(Math.floor(Date.now() / 1000) - (await maxProofAge()));
 
       const { proofHex, publicInputsHex } = await prover.proveRiskScore(chainTimeRiskInput);
       await expect(
@@ -644,7 +664,7 @@ describe("SDK -> anvil on-chain verification", () => {
         proofType: PROOF_TYPES.PATTERN,
         proof: proofHex,
         publicInputs: publicInputsHex,
-        providerSetHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        providerSetHash: zeroHash,
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
       expect(receipt.status).toBe("success");
