@@ -485,6 +485,29 @@ contract IntegrationTest is Test {
         oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs, bytes32(0));
     }
 
+    /// Audit F-6: the Oracle refuses a proof bound to another chain.
+    function test_realProof_riskScoreSigned_revert_otherChain() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
+
+        vm.chainId(1);
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
+        oracle.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs, bytes32(0));
+    }
+
+    /// Audit F-6: an Oracle at another address refuses a proof bound to this one.
+    function test_realProof_riskScoreSigned_revert_otherOracle() public {
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
+
+        ERC8262Oracle other = new ERC8262Oracle(address(verifier), owner, FIXTURE_CONFIG_HASH, _defaultProviders());
+        vm.prank(owner);
+        other.registerSignerPubkeyHash(FIXTURE_SIGNER_PUBKEY_HASH, 1);
+
+        vm.prank(FIXTURE_SUBMITTER);
+        vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
+        other.submitCompliance(1, ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs, bytes32(0));
+    }
+
     function test_realProof_riskScoreSigned_redatedTimestampFailsVerification() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score_signed");
         assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE_SIGNED, proof, publicInputs));

@@ -53,6 +53,29 @@ jobs:
       - name: Check gas snapshot
         run: FOUNDRY_PROFILE=default forge snapshot --check --tolerance 2 --no-match-contract InvariantTest --no-match-test "testFuzz_"
 
+  mutation:
+    name: Validator mutation (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    needs: [solidity]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      # Every check in the Oracle's _validate* / _assert* / _require* functions must fail a
+      # test when removed (see scripts/mutate-validators.py).
+      - name: Mutate Oracle validators
+        run: python3 scripts/mutate-validators.py . --shard=${{ matrix.shard }}/4
+
   slither:
     name: Slither
     runs-on: ubuntu-latest
