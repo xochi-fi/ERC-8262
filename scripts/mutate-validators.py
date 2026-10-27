@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Mutation gate for the Oracle's input validators.
 
-Every check in ERC8262Oracle's `_validate*` / `_assert*` functions must be
-pinned by a test: removing it has to make some test fail. Real-proof tests
+Every check in ERC8262Oracle's `_validate*` / `_assert*` / `_require*`
+functions must be pinned by a test: removing it has to make some test fail. Real-proof tests
 only show that valid proofs pass, so a dropped rejection check (for example
 the audit F-6 chain/Oracle binding) can otherwise go unnoticed.
 
 Mutants, one at a time:
 - every `revert ...;` statement in those functions, replaced by `{}`
   (`if (c) revert E();` becomes `if (c) {}`);
-- every statement that is a bare call to an `_assert*` / `_validate*` helper,
+- every statement that is a bare call to an `_assert*` / `_validate*` /
+  `_require*` helper,
   replaced by `{}` (a per-call-site deletion, so each proof type's validator
   is checked on its own even when the helper is shared);
 - every helper call whose result is used (`x = _assertFoo(h)`), when the
@@ -46,8 +47,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TARGET = Path("src/ERC8262Oracle.sol")
-FUNCTION_RE = re.compile(r"\bfunction\s+(_(?:validate|assert)\w*)\s*\(")
-HELPER_CALL_RE = re.compile(r"(_(?:validate|assert)\w*)\s*\(")
+FUNCTION_RE = re.compile(r"\bfunction\s+(_(?:validate|assert|require)\w*)\s*\(")
+HELPER_CALL_RE = re.compile(r"(_(?:validate|assert|require)\w*)\s*\(")
 # Value-returning shared helpers: the expression a call site falls back to
 # when the helper's checks are removed. `{args}` is the call's argument list.
 UNCHECKED_EQUIVALENT = {

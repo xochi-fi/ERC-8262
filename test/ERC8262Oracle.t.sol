@@ -634,7 +634,8 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root (audit H-1)
+            bytes32(0), // settlement_root (audit H-1)
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
@@ -814,7 +815,7 @@ contract ERC8262OracleTest is OracleTestBase {
         assertTrue(valid);
     }
 
-    /// A block.timestamp-ratcheted type must not block a slightly older compliance proof.
+    /// A RISK_SCORE proof (no per-type ratchet) must not block a slightly older compliance proof.
     function test_ratchet_untimestampedTypeDoesNotBlockCompliance() public {
         vm.warp(1700000000 - 10);
         bytes memory complianceInputs = _complianceInputs();
@@ -845,7 +846,8 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0)), // tx_set_hash = 0 (invalid)
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
@@ -881,6 +883,7 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0)), // result = false
             INITIAL_CONFIG, // config_hash
             bytes32(uint256(0xeeff)), // provider_set_hash
+            bytes32(block.timestamp), // timestamp
             bytes32(uint256(uint160(alice))) // submitter
         );
         vm.prank(alice);
@@ -897,7 +900,8 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
@@ -979,7 +983,8 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, patternInputs, bytes32(0));
@@ -1597,7 +1602,8 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         vm.expectRevert(
@@ -1614,10 +1620,12 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(1)), // time_window = 1 second (too small)
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
+        uint256 minWindow = oracle.MIN_TIME_WINDOW();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooSmall.selector, 1, 3600));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooSmall.selector, 1, minWindow));
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
@@ -1629,12 +1637,53 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(3600)), // time_window = exactly MIN_TIME_WINDOW
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
-            bytes32(0) // settlement_root
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
         );
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
             oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
         assertEq(att.subject, alice);
+    }
+
+    function _patternInputsWithWindow(uint256 timeWindow) internal view returns (bytes memory) {
+        return abi.encodePacked(
+            bytes32(uint256(1)), // analysis_type
+            bytes32(uint256(1)), // result
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(timeWindow), // time_window
+            bytes32(uint256(0xabcd)), // tx_set_hash
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlement_root
+            bytes32(block.timestamp) // timestamp
+        );
+    }
+
+    function test_submitCompliance_patternProof_exactMaxTimeWindow() public {
+        bytes memory publicInputs = _patternInputsWithWindow(oracle.MAX_TIME_WINDOW());
+        vm.prank(alice);
+        IERC8262Oracle.ComplianceAttestation memory att =
+            oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+        assertEq(att.subject, alice);
+    }
+
+    function test_submitCompliance_patternProof_revert_timeWindowTooLarge() public {
+        uint256 maxWindow = oracle.MAX_TIME_WINDOW();
+        bytes memory publicInputs = _patternInputsWithWindow(maxWindow + 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, maxWindow + 1, maxWindow));
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    /// @dev A u64-max window would admit transactions of any age into a fresh proof.
+    function test_submitCompliance_patternProof_revert_timeWindowU64Max() public {
+        uint256 maxWindow = oracle.MAX_TIME_WINDOW();
+        bytes memory publicInputs = _patternInputsWithWindow(type(uint64).max);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.TimeWindowTooLarge.selector, uint256(type(uint64).max), maxWindow)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
     }
 
     // -------------------------------------------------------------------------
@@ -1709,6 +1758,124 @@ contract ERC8262OracleTest is OracleTestBase {
             abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, 1700000000 - 3601, 1700000000)
         );
         oracle.submitCompliance(0, ProofTypes.MEMBERSHIP, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    uint256 internal constant FRESHNESS_NOW = 1700000000;
+
+    function test_submitCompliance_revert_staleRiskScoreTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        uint256 stale = FRESHNESS_NOW - oracle.MAX_PROOF_AGE() - 1;
+        bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG, alice, stale);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, stale, FRESHNESS_NOW));
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_submitCompliance_revert_futureRiskScoreTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG, alice, FRESHNESS_NOW + 1);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, FRESHNESS_NOW + 1, FRESHNESS_NOW)
+        );
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_submitCompliance_riskScoreStaleness_exactBoundary() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG, alice, FRESHNESS_NOW - oracle.MAX_PROOF_AGE());
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    /// @dev Zero future tolerance: a proof stamped exactly at block.timestamp is accepted.
+    function test_submitCompliance_riskScoreTimestamp_atBlockTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _riskScoreInputs(INITIAL_CONFIG, alice, FRESHNESS_NOW);
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_submitCompliance_revert_stalePatternTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        uint256 stale = FRESHNESS_NOW - oracle.MAX_PROOF_AGE() - 1;
+        bytes memory publicInputs = _patternInputs(alice, stale);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProofTimestampStale.selector, stale, FRESHNESS_NOW));
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_submitCompliance_revert_futurePatternTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _patternInputs(alice, FRESHNESS_NOW + 1);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC8262Oracle.ProofTimestampInFuture.selector, FRESHNESS_NOW + 1, FRESHNESS_NOW)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    function test_submitCompliance_patternStaleness_exactBoundary() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _patternInputs(alice, FRESHNESS_NOW - oracle.MAX_PROOF_AGE());
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    /// @dev Zero future tolerance: a proof stamped exactly at block.timestamp is accepted.
+    function test_submitCompliance_patternTimestamp_atBlockTimestamp() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory publicInputs = _patternInputs(alice, FRESHNESS_NOW);
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), publicInputs, bytes32(0));
+    }
+
+    /// @dev RISK_SCORE / PATTERN do not ratchet: a fresh proof dated before an already accepted
+    ///      one of the same type is accepted, and the per-type slot stays 0. MAX_PROOF_AGE is
+    ///      their only time bound.
+    function test_riskScoreAndPattern_acceptOlderFreshProofAfterNewer() public {
+        vm.warp(FRESHNESS_NOW);
+        uint256 older = FRESHNESS_NOW - 60;
+        vm.startPrank(alice);
+        oracle.submitCompliance(
+            0, ProofTypes.RISK_SCORE, _uniqueProof(), _riskScoreInputs(INITIAL_CONFIG, alice, FRESHNESS_NOW), bytes32(0)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), _patternInputs(alice, FRESHNESS_NOW), bytes32(0));
+        oracle.submitCompliance(
+            0, ProofTypes.RISK_SCORE, _uniqueProof(), _riskScoreInputs(INITIAL_CONFIG, alice, older), bytes32(0)
+        );
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), _patternInputs(alice, older), bytes32(0));
+        vm.stopPrank();
+
+        assertEq(oracle.lastProofTimestampByType(alice, 0, ProofTypes.RISK_SCORE), 0);
+        assertEq(oracle.lastProofTimestampByType(alice, 0, ProofTypes.PATTERN), 0);
+        // Neither type writes the checkCompliance slot, so the jurisdiction ratchet is untouched.
+        assertEq(oracle.lastProofTimestamp(alice, 0), 0);
+    }
+
+    /// @dev A pre-#33 layout (8-word RISK_SCORE, 7-word PATTERN) reverts with a decodable
+    ///      length error before any validator slices the inputs.
+    function test_submitCompliance_revert_legacyLayoutLength() public {
+        vm.warp(FRESHNESS_NOW);
+        bytes memory risk = _riskScoreInputs(INITIAL_CONFIG, alice, FRESHNESS_NOW);
+        bytes memory legacyRisk = new bytes(256);
+        for (uint256 i; i < 256; i++) {
+            legacyRisk[i] = risk[i];
+        }
+        bytes memory pattern = _patternInputs(alice, FRESHNESS_NOW);
+        bytes memory legacyPattern = new bytes(224);
+        for (uint256 i; i < 224; i++) {
+            legacyPattern[i] = pattern[i];
+        }
+
+        vm.startPrank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.RISK_SCORE, 9, 8)
+        );
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), legacyRisk, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.PATTERN, 8, 7));
+        oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), legacyPattern, bytes32(0));
+        vm.stopPrank();
     }
 
     function test_registerReportingThreshold_revert_notOwner() public {
@@ -1830,7 +1997,8 @@ contract ERC8262OracleTest is OracleTestBase {
                 bytes32(uint256(86400)),
                 bytes32(uint256(0xabcd)),
                 bytes32(uint256(uint160(alice))),
-                bytes32(0) // settlement_root
+                bytes32(0), // settlement_root
+                bytes32(block.timestamp) // timestamp
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));
@@ -2220,6 +2388,57 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, 0x0a, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
+    /// @dev Unknown types never reach `validatePublicInputs`: unaligned inputs still report
+    ///      InvalidProofType, not UnalignedPublicInputs.
+    function test_submitCompliance_revert_unknownProofType_unalignedInputs() public {
+        bytes memory unaligned = new bytes(33);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x00));
+        oracle.submitCompliance(0, 0x00, _uniqueProof(), unaligned, DEFAULT_PROVIDER_SET_HASH);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        oracle.submitCompliance(0, 0x0a, _uniqueProof(), unaligned, DEFAULT_PROVIDER_SET_HASH);
+        vm.stopPrank();
+    }
+
+    // -------------------------------------------------------------------------
+    // Canonical proof words
+    // -------------------------------------------------------------------------
+
+    uint256 internal constant SCALAR_FIELD =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    function test_submitCompliance_revert_nonCanonicalProofWord() public {
+        bytes memory proof = _uniqueProof();
+        _setProofWord(proof, 3, SCALAR_FIELD);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, 3));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    /// @dev The loop covers every full word, the last included.
+    function test_submitCompliance_revert_nonCanonicalLastProofWord() public {
+        bytes memory proof = _uniqueProof();
+        uint256 last = proof.length / 32 - 1;
+        _setProofWord(proof, last, SCALAR_FIELD);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, last));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_acceptsLargestCanonicalProofWord() public {
+        bytes memory proof = _uniqueProof();
+        _setProofWord(proof, proof.length / 32 - 1, SCALAR_FIELD - 1);
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function _setProofWord(bytes memory proof, uint256 word, uint256 value) internal pure {
+        uint256 offset = 0x20 + word * 0x20;
+        assembly {
+            mstore(add(proof, offset), value)
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Ownership transfer cancellation
     // -------------------------------------------------------------------------
@@ -2275,6 +2494,7 @@ contract ERC8262OracleTest is OracleTestBase {
                 bytes32(uint256(0)),
                 INITIAL_CONFIG, // result = 0
                 bytes32(uint256(0xeeff)), // provider_set_hash
+                bytes32(block.timestamp), // timestamp
                 bytes32(uint256(uint160(alice))) // submitter
             );
         } else if (proofType == ProofTypes.PATTERN) {
@@ -2285,7 +2505,8 @@ contract ERC8262OracleTest is OracleTestBase {
                 bytes32(uint256(86400)),
                 bytes32(uint256(0xabcd)),
                 bytes32(uint256(uint160(alice))), // submitter
-                bytes32(0) // settlement_root
+                bytes32(0), // settlement_root
+                bytes32(block.timestamp) // timestamp
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));
@@ -2393,8 +2614,18 @@ contract ERC8262OracleTest is OracleTestBase {
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         vm.stopPrank();
 
+        // A corrupted word at or above the scalar modulus is refused before verification.
+        uint256 wordIndex = corruptionOffset / 32;
+        uint256 word;
+        assembly {
+            word := mload(add(proof, add(0x20, mul(wordIndex, 0x20))))
+        }
         vm.prank(alice);
-        vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
+        if (word >= SCALAR_FIELD) {
+            vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, wordIndex));
+        } else {
+            vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
+        }
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 

@@ -2,15 +2,15 @@
 
 ## Current Status
 
-- 584/584 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration incl. real proofs for all 9 proof types, Gas, Invariant, EIP712, JurisdictionThresholdParity, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths, verifier codehash pinning, Oracle state-machine invariants, COMPLIANCE_MULTI_SIGNED, ValidatorChecks); every Oracle validator check is pinned by a test (`make mutate`)
-- 115/115 Noir tests pass (10 workspace packages incl. compliance_signed, risk_score_signed, compliance_multi_signed, shared sig + multi_sig parity vectors with chain_id + oracle_address binding)
-- xochi-sdk: signed-variant API extended with `chainId` + `oracleAddress` (paired with circuit revision; SDK side on `fix/f-6-bind-chain-oracle-in-digest`)
+- 620/620 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration incl. real proofs for all 9 proof types, Gas, Invariant, EIP712, JurisdictionThresholdParity, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths, verifier codehash pinning, Oracle state-machine invariants, COMPLIANCE_MULTI_SIGNED, RISK_SCORE / PATTERN proof-age bound, CheckVerifierArity, ValidatorChecks); every Oracle validator check is pinned by a test (`make mutate`)
+- 124/124 Noir tests pass (10 workspace packages incl. compliance_signed, risk_score_signed, compliance_multi_signed, shared sig + multi_sig parity vectors with chain_id + oracle_address binding)
+- xochi-sdk: signed-variant API takes `chainId` + `oracleAddress` (paired with the F-6 circuit revision; shipped in `@xochi/sdk` 0.2.0)
 - EIP draft aligned with implementation (signed-variant rows include the F-6 chain/oracle binding contract)
 - Tooling: nargo 1.0.0-beta.20, forge 1.5.1, bb 4.0.0-nightly.20260120
 - CI green; Slither: 0 findings on hand-written code; `make parity-check` is now a CI gate (F-8) -- 9/9 circuits in parity
 - Gas: ~2.43M verify, ~2.85M submit; `MAX_BATCH_SIZE = 10` (audit F-3, ~24M at cap, fits 30M mainnet block)
-- Pre-EIP audit: see [`audit/PRE_EIP_AUDIT.md`](audit/PRE_EIP_AUDIT.md). All 9 findings closed on `fix/f-2-atomic-provider-expansion`.
-- Client SDK: `../xochi-sdk` (also published as `@xochi/sdk@^0.2.0`)
+- Pre-EIP internal review (not an independent audit): see [`docs/security/audits/2026-05-pre-eip-internal-review.md`](docs/security/audits/2026-05-pre-eip-internal-review.md). All 9 findings closed (`34678b1`, #5).
+- Client SDK: `../xochi-sdk` (published as `@xochi/sdk`, 0.4.0 on npm; the RISK_SCORE / PATTERN proof-timestamp layout ships in 0.5.0)
 
 ## Completed
 
@@ -61,7 +61,7 @@ Breaking change for any off-chain caller of `proposeVerifier`. SDK + deploy scri
 <details>
 <summary>Pre-EIP audit fix-first sweep (2026-05-09)</summary>
 
-`audit/PRE_EIP_AUDIT.md` surfaced 9 findings against `0c12337`. All 9 closed on branch `fix/f-2-atomic-provider-expansion` (8 commits) plus xochi-sdk `fix/f-6-bind-chain-oracle-in-digest` (1 commit, paired with F-6). 472 forge tests + 89 nargo tests + parity-check pass post-fix.
+`docs/security/audits/2026-05-pre-eip-internal-review.md` (originally `audit/PRE_EIP_AUDIT.md`) surfaced 9 findings against `0c12337`. All 9 closed on branch `fix/f-2-atomic-provider-expansion` (8 commits) plus xochi-sdk `fix/f-6-bind-chain-oracle-in-digest` (1 commit, paired with F-6). 472 forge tests + 89 nargo tests + parity-check pass post-fix.
 
 - **F-2 `6daacbd`** -- atomicize `updateProviderConfig` with provider expansion. Constructor takes `initialProviderIds`; new signature is `updateProviderConfig(bytes32, string, uint256[])`; `registerProviderConfigExpansion` removed. Every valid config now has its expansion on-chain at registration, closing the silent denylist-bypass window.
 - **F-7 `45f0e8b`** -- `Incident_VerifierSoundness.t.sol` runbook-as-code. Walks the documented incident response (pause -> propose -> 24h -> execute -> revoke -> unpause) end-to-end so any future regression in the response sequence breaks CI instead of breaking the runbook during a live incident.
@@ -153,7 +153,7 @@ Prerequisite: CI green.
 
 ## Pre-deployment (blocked on testnet validation)
 
-- [ ] External security audit (Solidity + Noir circuits) -- internal pre-EIP audit complete; see `audit/PRE_EIP_AUDIT.md`
+- [ ] External security audit (Solidity + Noir circuits) -- internal pre-EIP review complete; see `docs/security/audits/2026-05-pre-eip-internal-review.md`
 - [ ] EIP submission to ethereum/EIPs
 - [ ] Provider signal mock server for local development (the reference signing daemon is the closest thing today)
 - [x] Formal verification of jurisdiction threshold logic

@@ -90,10 +90,13 @@ contract LibraryFuzzTest is Test {
 
     function test_expectedPublicInputCount_signedVariants() public view {
         // Signed variants add signer_pubkey_hash + chain_id + oracle_address (audit F-6)
-        // to their unsigned siblings -- 3 extra slots each. RISK_SCORE_SIGNED also exposes
-        // the signed timestamp (review #5), which RISK_SCORE does not have.
+        // to their unsigned siblings -- 3 extra slots each. RISK_SCORE and RISK_SCORE_SIGNED
+        // both expose the proof timestamp at index 7 (TRUST-24#2).
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE), 6);
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 9);
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE), 9);
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 12);
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.PATTERN), 8);
         // Multi-signed: compliance fields + threshold_m + 5 signer slots + chain_id + oracle_address = 14
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_MULTI_SIGNED), 14);
     }

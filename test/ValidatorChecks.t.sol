@@ -68,16 +68,9 @@ contract ValidatorChecksTest is OracleTestBase {
         oracle.submitCompliance(jurisdictionId, proofType, proof, inputs, providerSetHash);
     }
 
-    function _patternInputs(address submitter) internal pure returns (bytes memory) {
-        return abi.encodePacked(
-            bytes32(uint256(1)), // analysis_type: structuring
-            bytes32(uint256(1)), // result
-            bytes32(uint256(10000)), // reporting_threshold (registered by _setUpOracle)
-            bytes32(uint256(86400)), // time_window
-            bytes32(uint256(0xabcd)), // tx_set_hash
-            bytes32(uint256(uint160(submitter))),
-            bytes32(0) // settlement_root
-        );
+    /// @dev The 8-word PATTERN layout (proof timestamp at word 7), dated now.
+    function _patternInputs(address submitter) internal view returns (bytes memory) {
+        return _patternInputs(submitter, block.timestamp);
     }
 
     function _signedInputs() internal view returns (bytes memory) {
