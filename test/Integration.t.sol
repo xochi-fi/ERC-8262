@@ -216,6 +216,46 @@ contract IntegrationTest is Test {
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, publicInputs, FIXTURE_PROVIDER_SET_HASH);
     }
 
+    /// @dev The generated verifiers reduce proof words mod r (scalars) and mod q (G1
+    ///      coordinates), so `word + modulus` verifies as the same proof under a new
+    ///      `proofHash`. The Oracle refuses any word >= r before verifying.
+    function test_realProof_malleatedReplay_reverts() public {
+        uint256 r = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        uint256 q = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
+        (bytes memory proof, bytes memory publicInputs) = _loadFixture("risk_score");
+
+        // Word 0 is a pairing-point limb (scalar field); word 16 is the x coordinate of
+        // the first G1 commitment (base field).
+        bytes memory scalarTwin = _addToWord(proof, 0, r);
+        bytes memory pointTwin = _addToWord(proof, 16, q);
+        assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE, scalarTwin, publicInputs));
+        assertTrue(verifier.verifyProof(ProofTypes.RISK_SCORE, pointTwin, publicInputs));
+
+        vm.startPrank(FIXTURE_SUBMITTER);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, 0));
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, scalarTwin, publicInputs, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, 16));
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, pointTwin, publicInputs, bytes32(0));
+        // The canonical original still lands once, and only once.
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, proof, publicInputs, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, 0));
+        oracle.submitCompliance(0, ProofTypes.RISK_SCORE, scalarTwin, publicInputs, bytes32(0));
+        vm.stopPrank();
+    }
+
+    function _addToWord(bytes memory proof, uint256 word, uint256 modulus) internal pure returns (bytes memory out) {
+        out = bytes.concat(proof);
+        uint256 offset = 0x20 + word * 0x20;
+        uint256 v;
+        assembly {
+            v := mload(add(out, offset))
+        }
+        v += modulus;
+        assembly {
+            mstore(add(out, offset), v)
+        }
+    }
+
     function test_realProof_compliance_wrongJurisdictionReverts() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("compliance");
 

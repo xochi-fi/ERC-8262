@@ -155,9 +155,18 @@ jobs:
         with:
           submodules: recursive
 
+      # actions/checkout fetches a full 40-hex SHA directly (`git fetch origin <sha>`), so
+      # the pin keeps working after its branch is deleted; anything shorter is read as a
+      # branch or tag name and would not.
       - name: Read pinned xochi-sdk ref
         id: pin
-        run: echo "ref=$(tr -d '[:space:]' < .xochi-sdk-ref)" >> "$GITHUB_OUTPUT"
+        run: |
+          ref="$(tr -d '[:space:]' < .xochi-sdk-ref)"
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::.xochi-sdk-ref must be a full 40-hex commit SHA, got '$ref'"
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout xochi-sdk
         uses: actions/checkout@v4

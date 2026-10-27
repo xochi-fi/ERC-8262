@@ -2388,6 +2388,47 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, 0x0a, _uniqueProof(), _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
+    /// @dev Unknown types never reach `validatePublicInputs`: unaligned inputs still report
+    ///      InvalidProofType, not UnalignedPublicInputs.
+    function test_submitCompliance_revert_unknownProofType_unalignedInputs() public {
+        bytes memory unaligned = new bytes(33);
+        vm.startPrank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x00));
+        oracle.submitCompliance(0, 0x00, _uniqueProof(), unaligned, DEFAULT_PROVIDER_SET_HASH);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidProofType.selector, 0x0a));
+        oracle.submitCompliance(0, 0x0a, _uniqueProof(), unaligned, DEFAULT_PROVIDER_SET_HASH);
+        vm.stopPrank();
+    }
+
+    // -------------------------------------------------------------------------
+    // Canonical proof words
+    // -------------------------------------------------------------------------
+
+    uint256 internal constant SCALAR_FIELD =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    function test_submitCompliance_revert_nonCanonicalProofWord() public {
+        bytes memory proof = _uniqueProof();
+        _setProofWord(proof, 3, SCALAR_FIELD);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, 3));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function test_submitCompliance_acceptsLargestCanonicalProofWord() public {
+        bytes memory proof = _uniqueProof();
+        _setProofWord(proof, proof.length / 32 - 1, SCALAR_FIELD - 1);
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
+    function _setProofWord(bytes memory proof, uint256 word, uint256 value) internal pure {
+        uint256 offset = 0x20 + word * 0x20;
+        assembly {
+            mstore(add(proof, offset), value)
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Ownership transfer cancellation
     // -------------------------------------------------------------------------
@@ -2563,8 +2604,18 @@ contract ERC8262OracleTest is OracleTestBase {
         verifier.executeVerifierUpdate(ProofTypes.COMPLIANCE);
         vm.stopPrank();
 
+        // A corrupted word at or above the scalar modulus is refused before verification.
+        uint256 wordIndex = corruptionOffset / 32;
+        uint256 word;
+        assembly {
+            word := mload(add(proof, add(0x20, mul(wordIndex, 0x20))))
+        }
         vm.prank(alice);
-        vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
+        if (word >= SCALAR_FIELD) {
+            vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, wordIndex));
+        } else {
+            vm.expectRevert(ERC8262Oracle.ProofVerificationFailed.selector);
+        }
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 

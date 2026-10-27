@@ -140,6 +140,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
 
     error ProofVerificationFailed();
     error ProofAlreadyUsed(bytes32 proofHash);
+    error NonCanonicalProof(uint256 wordIndex);
     error InvalidTTL();
     error AttestationNotFound(bytes32 proofHash);
     error PublicInputMismatch();
@@ -1009,9 +1010,12 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         if (ProofTypes.isValidProofType(proofType)) ProofTypes.validatePublicInputs(proofType, inputs);
         uint256 proofTimestamp = _validateAndExtractTimestamp(jurisdictionId, proofType, providerSetHash, inputs);
         bool writesComplianceSlot = _writesComplianceSlot(jurisdictionId, proofType);
-        // RISK_SCORE and PATTERN bind no jurisdiction, so a slot keyed on the caller's
-        // `jurisdictionId` cannot order them, and ordering them on the prover-chosen time
-        // would only fail honest out-of-order submissions. MAX_PROOF_AGE bounds them instead.
+        // Orders one (subject, jurisdiction, type) slot on the proof's own time. 0x04-0x06 and
+        // 0x08 bind no jurisdiction, so the key is the caller's `jurisdictionId` and naming
+        // another sidesteps it, bounded by MAX_PROOF_AGE; within one key it still stops the
+        // slot moving to an earlier proof. RISK_SCORE and PATTERN skip it: their honest flows
+        // submit out of order (threshold/range proofs share a slot, concurrent trades), and
+        // MAX_PROOF_AGE alone bounds them (ERC-8262.md "Ratchet scope").
         if (proofType != ProofTypes.RISK_SCORE && proofType != ProofTypes.PATTERN) {
             _ratchetTyped(jurisdictionId, proofType, proofTimestamp);
         }
@@ -1072,6 +1076,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         internal
         returns (address verifierUsed, bytes32 proofHash)
     {
+        _requireCanonicalProof(proof);
         verifierUsed = verifier.resolveVerifier(proofType);
         bytes32[] memory inputs = ProofTypes.decodePublicInputs(publicInputs);
         bool valid = IUltraVerifier(verifierUsed).verify(proof, inputs);
@@ -1085,6 +1090,30 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         proofHash = keccak256(abi.encodePacked(proof, proofType, block.chainid, address(this)));
         if (_usedProofs[proofHash]) revert ProofAlreadyUsed(proofHash);
         _usedProofs[proofHash] = true;
+    }
+
+    /// @dev BN254 scalar field modulus `r`; the generated verifiers' `MODULUS`.
+    uint256 internal constant SNARK_SCALAR_FIELD =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    /// @dev The replay key hashes the proof bytes as submitted, but the UltraHonk verifiers
+    ///      reduce every 32-byte proof word (scalars mod `r`, G1 coordinates mod `q`), so a
+    ///      word plus a modulus is the same proof under a new `proofHash`. Refuse any full
+    ///      word >= `r`. G1 coordinates live in the base field (`q > r`), so an honest
+    ///      coordinate falls in `[r, q)` with probability (q - r) / q < 2^-126 per word.
+    function _requireCanonicalProof(bytes calldata proof) internal pure {
+        uint256 bad = type(uint256).max;
+        assembly ("memory-safe") {
+            let start := proof.offset
+            let end := add(start, and(proof.length, not(31)))
+            for { let p := start } lt(p, end) { p := add(p, 0x20) } {
+                if iszero(lt(calldataload(p), SNARK_SCALAR_FIELD)) {
+                    bad := shr(5, sub(p, start))
+                    break
+                }
+            }
+        }
+        if (bad != type(uint256).max) revert NonCanonicalProof(bad);
     }
 
     /// @dev Build a ComplianceAttestation struct (extracted to reduce stack depth)
@@ -1189,7 +1218,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      of wall-clock and block their own subsequent older-timestamp submissions until
     ///      the chain catches up (audit M-1). The latest block trails wall-clock time, so
     ///      clients stamp proofs from the chain (`min(now, latest block timestamp)`) and
-    ///      simulate against the pending block.
+    ///      simulate at `latest`, which such a stamp never exceeds; `pending` can run behind
+    ///      `latest` on OP-stack RPCs.
     function _validateProofTimestamp(uint256 proofTimestamp) internal view {
         if (proofTimestamp > block.timestamp) {
             revert ProofTimestampInFuture(proofTimestamp, block.timestamp);
