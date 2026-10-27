@@ -32,10 +32,12 @@ library ProofTypes {
     function expectedPublicInputCount(uint8 proofType) internal pure returns (uint256 count) {
         // compliance: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
         if (proofType == COMPLIANCE) return 6;
-        // risk_score: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, submitter
-        if (proofType == RISK_SCORE) return 8;
-        // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter, settlement_root
-        if (proofType == PATTERN) return 7;
+        // risk_score: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash,
+        //   timestamp, submitter
+        if (proofType == RISK_SCORE) return 9;
+        // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter, settlement_root,
+        //   timestamp
+        if (proofType == PATTERN) return 8;
         // attestation: provider_id, credential_type, is_valid, credential_root, current_timestamp, submitter
         if (proofType == ATTESTATION) return 6;
         // membership: merkle_root, set_id, timestamp, is_member, submitter

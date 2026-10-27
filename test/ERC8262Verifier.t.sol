@@ -1075,7 +1075,8 @@ contract ERC8262VerifierTest is ERC8262TestBase {
         );
     }
 
-    /// @dev 8 public inputs: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash, submitter
+    /// @dev 9 public inputs: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash,
+    ///      timestamp, submitter
     function _riskScoreInputs() internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(1)), // proof_type: threshold
@@ -1085,12 +1086,13 @@ contract ERC8262VerifierTest is ERC8262TestBase {
             bytes32(uint256(1)), // result: true
             bytes32(uint256(0xccdd)), // config_hash
             bytes32(uint256(0xeeff)), // provider_set_hash
+            bytes32(uint256(1700000000)), // timestamp
             bytes32(uint256(0xdead)) // submitter
         );
     }
 
-    /// @dev 7 public inputs: analysis_type, result, reporting_threshold, time_window,
-    ///      tx_set_hash, submitter, settlement_root (audit H-1)
+    /// @dev 8 public inputs: analysis_type, result, reporting_threshold, time_window,
+    ///      tx_set_hash, submitter, settlement_root (audit H-1), timestamp
     function _patternInputs() internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(1)), // analysis_type: structuring
@@ -1099,7 +1101,8 @@ contract ERC8262VerifierTest is ERC8262TestBase {
             bytes32(uint256(3600)), // time_window
             bytes32(uint256(0xeeff)), // tx_set_hash
             bytes32(uint256(0xdead)), // submitter
-            bytes32(0) // settlement_root (audit H-1)
+            bytes32(0), // settlement_root (audit H-1)
+            bytes32(uint256(1700000000)) // timestamp
         );
     }
 

@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, zeroHash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
@@ -21,6 +21,10 @@ import {
   ERC8262Verifier,
   ERC8262Oracle,
   SignedSignalsRequiredError,
+  ProofTimestampStaleError,
+  ProofTimestampInFutureError,
+  chainProofTimestamp,
+  PATTERN_TIME_WINDOW_MIN,
   PROOF_TYPES,
   type ComplianceInput,
   type RiskScoreThresholdInput,
@@ -34,6 +38,7 @@ import {
   ALICE_KEY,
   ALICE_ADDRESS,
   DEPLOYER_ADDRESS,
+  FIXTURE_TIMESTAMP,
 } from "./anvil";
 import {
   deployContracts,
@@ -103,13 +108,15 @@ describe("SDK typed proof generation", () => {
       direction: "gt",
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
+      timestamp: String(FIXTURE_TIMESTAMP),
       submitter: ALICE_ADDRESS,
     };
 
     const result = await prover.proveRiskScore(input);
     expect(result.proofHex).toMatch(/^0x[0-9a-f]+$/);
-    // risk_score has 8 public inputs (+ submitter)
-    expect(result.publicInputs).toHaveLength(8);
+    // risk_score has 9 public inputs (timestamp at index 7, then submitter)
+    expect(result.publicInputs).toHaveLength(9);
+    expect(BigInt(result.publicInputs[7])).toBe(BigInt(FIXTURE_TIMESTAMP));
   });
 
   it("proveRiskScore range", async () => {
@@ -120,11 +127,12 @@ describe("SDK typed proof generation", () => {
       upperBound: 7000,
       providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
       configHash: FIXTURE_HASHES.CONFIG_HASH,
+      timestamp: String(FIXTURE_TIMESTAMP),
       submitter: ALICE_ADDRESS,
     };
 
     const result = await prover.proveRiskScore(input);
-    expect(result.publicInputs).toHaveLength(8);
+    expect(result.publicInputs).toHaveLength(9);
   });
 
   it("rejects non-compliant score via input builder", async () => {
@@ -225,6 +233,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP),
         submitter: ALICE_ADDRESS,
       });
 
@@ -446,6 +455,7 @@ describe("SDK -> anvil on-chain verification", () => {
         direction: "gt",
         providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
         configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP),
         submitter: ALICE_ADDRESS,
       });
 
@@ -468,6 +478,195 @@ describe("SDK -> anvil on-chain verification", () => {
       const receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
       });
+      expect(receipt.status).toBe("success");
+    });
+
+    // ERC-8262#25: the risk_score public timestamp is held to MAX_PROOF_AGE.
+    // The anvil clock starts at FIXTURE_TIMESTAMP, so a proof dated one second
+    // past the window is stale and one dated a day ahead is in the future.
+    // The Oracle client decodes these reverts into the SDK's typed errors.
+    // 0x02 / 0x03 do not ratchet, so these tests carry no submission-order coupling.
+    const STALE = ProofTimestampStaleError;
+    const FUTURE = ProofTimestampInFutureError;
+    const ONE_DAY_SECONDS = 86_400;
+    // Read from the deployed Oracle so the tests follow the contract's boundary.
+    const maxProofAge = async () =>
+      Number(
+        await publicClient.readContract({
+          address: contracts.oracle,
+          abi: contracts.oracleAbi,
+          functionName: "MAX_PROOF_AGE",
+        }),
+      );
+
+    it("risk_score proof older than MAX_PROOF_AGE is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore({
+        type: "threshold",
+        score: 40,
+        threshold: 3000,
+        direction: "gt",
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP - (await maxProofAge()) - 1),
+        submitter: ALICE_ADDRESS,
+      });
+      expect(
+        await verifier.verifyProof(PROOF_TYPES.RISK_SCORE, proofHex, publicInputsHex),
+      ).toBe(true);
+
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(STALE);
+    });
+
+    it("future-dated risk_score proof is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore({
+        type: "threshold",
+        score: 40,
+        threshold: 3000,
+        direction: "gt",
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        configHash: FIXTURE_HASHES.CONFIG_HASH,
+        timestamp: String(FIXTURE_TIMESTAMP + ONE_DAY_SECONDS),
+        submitter: ALICE_ADDRESS,
+      });
+
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(FUTURE);
+    });
+
+    // PATTERN (0x03) gets the same bound. Fixture data from circuits/pattern/Prover.toml.
+    // The circuit needs every transaction in [timestamp - timeWindow, timestamp]; the fixed
+    // transaction times keep `txSetHash` valid, so a proof timestamp must stay within
+    // `timeWindow` of the oldest one (asserted here so a drifted clock fails with a clear message).
+    const PATTERN_TX_TIMESTAMPS = [1699990000, 1699991000, 1699992000, 1699993000];
+    const patternInput = (timestamp: number) => {
+      expect(timestamp - PATTERN_TX_TIMESTAMPS[0]).toBeLessThanOrEqual(PATTERN_TIME_WINDOW_MIN);
+      expect(timestamp).toBeGreaterThanOrEqual(PATTERN_TX_TIMESTAMPS[PATTERN_TX_TIMESTAMPS.length - 1]);
+      return {
+        amounts: [500, 1200, 3000, 7500],
+        timestamps: PATTERN_TX_TIMESTAMPS,
+        numTransactions: 4,
+        analysisType: 1 as const, // structuring
+        reportingThreshold: Number(FIXTURE_HASHES.REPORTING_THRESHOLD),
+        timeWindow: PATTERN_TIME_WINDOW_MIN,
+        txSetHash: "0x2b3a892d0f3dfeb2474d341a27f3f48fbab2ae0d5a8b4ecca47ef9be42e20f56",
+        submitter: ALICE_ADDRESS,
+        settlementRoot: "0", // standalone, no SettlementRegistry binding
+        timestamp: String(timestamp),
+      };
+    };
+
+    it("pattern proof with a fresh timestamp submits", async () => {
+      const { proofHex, publicInputs, publicInputsHex } = await prover.provePattern(
+        patternInput(FIXTURE_TIMESTAMP),
+      );
+      expect(publicInputs).toHaveLength(8);
+      expect(BigInt(publicInputs[7])).toBe(BigInt(FIXTURE_TIMESTAMP));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.PATTERN,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: zeroHash,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      expect(receipt.status).toBe("success");
+    });
+
+    it("pattern proof older than MAX_PROOF_AGE is rejected", async () => {
+      const { proofHex, publicInputsHex } = await prover.provePattern(
+        patternInput(FIXTURE_TIMESTAMP - (await maxProofAge()) - 1),
+      );
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.PATTERN,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: zeroHash,
+        }),
+      ).rejects.toThrow(STALE);
+    });
+
+    // The builders default `timestamp` to the local clock. This anvil chain runs
+    // years behind it (it starts at FIXTURE_TIMESTAMP), as a chain does for a
+    // client whose clock is ahead: the default dates the proof in the chain's
+    // future, and chainProofTimestamp (the latest block's time) fixes it.
+    const chainTimeRiskInput = {
+      type: "threshold" as const,
+      score: 45,
+      threshold: 3000,
+      direction: "gt" as const,
+      providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+      configHash: FIXTURE_HASHES.CONFIG_HASH,
+      submitter: ALICE_ADDRESS,
+    };
+
+    it("risk_score proof with the wall-clock default timestamp is rejected", async () => {
+      const chainNow = Number(await chainProofTimestamp(publicClient));
+      expect(chainNow).toBeLessThan(Math.floor(Date.now() / 1000) - (await maxProofAge()));
+
+      const { proofHex, publicInputsHex } = await prover.proveRiskScore(chainTimeRiskInput);
+      await expect(
+        oracle.submitCompliance({
+          jurisdictionId: 0,
+          proofType: PROOF_TYPES.RISK_SCORE,
+          proof: proofHex,
+          publicInputs: publicInputsHex,
+          providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+        }),
+      ).rejects.toThrow(FUTURE);
+    });
+
+    it("risk_score proof dated by chainProofTimestamp submits", async () => {
+      const timestamp = await chainProofTimestamp(publicClient);
+      const { proofHex, publicInputs, publicInputsHex } = await prover.proveRiskScore({
+        ...chainTimeRiskInput,
+        timestamp,
+      });
+      expect(BigInt(publicInputs[7])).toBe(BigInt(timestamp));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.RISK_SCORE,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: FIXTURE_HASHES.PROVIDER_SET_HASH,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      expect(receipt.status).toBe("success");
+    });
+
+    it("pattern proof dated by chainProofTimestamp submits", async () => {
+      const timestamp = await chainProofTimestamp(publicClient);
+      const { proofHex, publicInputs, publicInputsHex } = await prover.provePattern(
+        patternInput(Number(timestamp)),
+      );
+      expect(BigInt(publicInputs[7])).toBe(BigInt(timestamp));
+
+      const txHash = await oracle.submitCompliance({
+        jurisdictionId: 0,
+        proofType: PROOF_TYPES.PATTERN,
+        proof: proofHex,
+        publicInputs: publicInputsHex,
+        providerSetHash: zeroHash,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
       expect(receipt.status).toBe("success");
     });
   });

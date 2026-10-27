@@ -1,0 +1,16 @@
+name: Install nargo
+description: Install a nargo release and put it on PATH for later steps
+inputs:
+  version:
+    description: nargo version, without the leading "v" (the workflow's NARGO_VERSION)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        mkdir -p "$HOME/.nargo/bin"
+        curl -fL "https://github.com/noir-lang/noir/releases/download/v${{ inputs.version }}/nargo-x86_64-unknown-linux-gnu.tar.gz" \
+          | tar xz -C "$HOME/.nargo/bin"
+        echo "$HOME/.nargo/bin" >> "$GITHUB_PATH"
+        "$HOME/.nargo/bin/nargo" --version
