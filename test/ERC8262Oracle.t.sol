@@ -2415,6 +2415,16 @@ contract ERC8262OracleTest is OracleTestBase {
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
     }
 
+    /// @dev The loop covers every full word, the last included.
+    function test_submitCompliance_revert_nonCanonicalLastProofWord() public {
+        bytes memory proof = _uniqueProof();
+        uint256 last = proof.length / 32 - 1;
+        _setProofWord(proof, last, SCALAR_FIELD);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.NonCanonicalProof.selector, last));
+        oracle.submitCompliance(0, ProofTypes.COMPLIANCE, proof, _complianceInputs(), DEFAULT_PROVIDER_SET_HASH);
+    }
+
     function test_submitCompliance_acceptsLargestCanonicalProofWord() public {
         bytes memory proof = _uniqueProof();
         _setProofWord(proof, proof.length / 32 - 1, SCALAR_FIELD - 1);

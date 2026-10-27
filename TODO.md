@@ -2,7 +2,7 @@
 
 ## Current Status
 
-- 589/589 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration incl. real proofs for all 9 proof types, Gas, Invariant, EIP712, JurisdictionThresholdParity, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths, verifier codehash pinning, Oracle state-machine invariants, COMPLIANCE_MULTI_SIGNED, RISK_SCORE / PATTERN proof-age bound, CheckVerifierArity)
+- 590/590 Solidity tests pass (Verifier, Oracle, Registry, Timelock, Integration incl. real proofs for all 9 proof types, Gas, Invariant, EIP712, JurisdictionThresholdParity, AccessControl, ProviderDenylist, LibraryFuzz, AttestationRatchet, Incident_VerifierSoundness, signed-variant oracle paths, verifier codehash pinning, Oracle state-machine invariants, COMPLIANCE_MULTI_SIGNED, RISK_SCORE / PATTERN proof-age bound, CheckVerifierArity)
 - 124/124 Noir tests pass (10 workspace packages incl. compliance_signed, risk_score_signed, compliance_multi_signed, shared sig + multi_sig parity vectors with chain_id + oracle_address binding)
 - xochi-sdk: signed-variant API takes `chainId` + `oracleAddress` (paired with the F-6 circuit revision; shipped in `@xochi/sdk` 0.2.0)
 - EIP draft aligned with implementation (signed-variant rows include the F-6 chain/oracle binding contract)
