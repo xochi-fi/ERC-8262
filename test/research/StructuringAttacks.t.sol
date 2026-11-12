@@ -173,14 +173,16 @@ contract StructuringAttacks is Test {
         assertFalse(_tryFinalize(alice, t, J0_THRESHOLD, 1 hours, block.timestamp), "1h window over 3 days of legs");
     }
 
-    /// 17 legs finalized by one pattern proof; the circuit analyses at most 16 amounts.
+    /// More legs than the pattern circuit can analyse, finalized by one pattern proof.
+    /// XIP-1 H6 raised circuit capacity to 100 (MAX_TRANSACTIONS), so the scenario uses
+    /// 101 legs (was 17 against the 16-slot circuit); the goal is unchanged.
     function test_attack_moreLegsThanCircuitCapacity() public {
         bytes32 t = _tradeId("seventeen");
         vm.prank(alice);
-        (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17)));
+        (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 101)));
         if (!registered) return; // refused at registration
-        _recordLegs(alice, t, 17, 0);
-        assertFalse(_tryFinalize(alice, t, J0_THRESHOLD, 1 days, block.timestamp), "17 legs on a 16-slot proof");
+        _recordLegs(alice, t, 101, 0);
+        assertFalse(_tryFinalize(alice, t, J0_THRESHOLD, 1 days, block.timestamp), "101 legs on a 100-slot proof");
     }
 
     /// Alice settles every leg, never finalizes, lets the trade expire, then opens a new

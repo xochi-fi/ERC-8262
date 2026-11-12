@@ -114,7 +114,7 @@ interface ISettlementRegistry {
     /// @notice Register a new multi-leg trade for settlement tracking
     /// @param tradeId Unique identifier for the trade
     /// @param jurisdictionId Jurisdiction for compliance verification
-    /// @param subTradeCount Number of sub-trades (must be in [2, 16], the pattern circuit capacity)
+    /// @param subTradeCount Number of sub-trades (must be in [2, 100], the pattern circuit capacity)
     function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external;
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof

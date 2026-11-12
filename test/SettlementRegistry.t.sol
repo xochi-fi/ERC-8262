@@ -115,26 +115,24 @@ contract SettlementRegistryTest is Test {
         registry.registerTrade(keccak256("trade-1"), 0, 0);
     }
 
-    /// @dev XIP-1: MAX_SUB_TRADES is the pattern circuit's MAX_TRANSACTIONS (16, was 100),
-    ///      so 17 legs is the first rejected count.
+    /// @dev XIP-1: MAX_SUB_TRADES equals the pattern circuit's MAX_TRANSACTIONS (100).
     function test_registerTrade_revert_subTradeCountTooHigh() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 17));
-        registry.registerTrade(keccak256("trade-1"), 0, 17);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 101));
+        registry.registerTrade(keccak256("trade-1"), 0, 101);
     }
 
-    /// @dev XIP-1: upper bound is 16 (was 100), the pattern circuit's capacity.
     function test_registerTrade_boundsAccepted() public {
         vm.startPrank(alice);
         registry.registerTrade(keccak256("trade-min"), 0, 2);
-        registry.registerTrade(keccak256("trade-max"), 0, 16);
+        registry.registerTrade(keccak256("trade-max"), 0, 100);
         vm.stopPrank();
 
         assertEq(registry.getSettlement(keccak256("trade-min")).subTradeCount, 2);
-        assertEq(registry.getSettlement(keccak256("trade-max")).subTradeCount, 16);
+        assertEq(registry.getSettlement(keccak256("trade-max")).subTradeCount, 100);
     }
 
-    /// @notice A trade at the 16-leg cap settles every leg and finalizes.
+    /// @notice A 16-leg trade settles every leg in chain order and finalizes.
     function test_registerTrade_sixteenLegsSettleAndFinalize() public {
         bytes32 tradeId = keccak256("trade-16");
         vm.prank(alice);

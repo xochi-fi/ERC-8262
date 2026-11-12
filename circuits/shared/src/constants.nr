@@ -7,7 +7,7 @@ pub global MAX_PROVIDERS: u32 = 8;
 pub global MERKLE_DEPTH: u32 = 20;
 
 /// Maximum number of transactions for pattern (anti-structuring) analysis
-pub global MAX_TRANSACTIONS: u32 = 16;
+pub global MAX_TRANSACTIONS: u32 = 100;
 
 /// Jurisdiction IDs (must match Solidity JurisdictionConfig)
 pub global JURISDICTION_EU: u8 = 0;

@@ -26,10 +26,10 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Minimum number of sub-trades per settlement
     uint8 internal constant MIN_SUB_TRADES = 2;
 
-    /// @notice Maximum number of sub-trades per settlement: the pattern circuit's
-    ///         MAX_TRANSACTIONS. A trade with more legs could not be finalized by a
-    ///         pattern proof that analyses all of them (XIP-1).
-    uint8 internal constant MAX_SUB_TRADES = 16;
+    /// @notice Maximum number of sub-trades per settlement. Must equal the pattern
+    ///         circuit's MAX_TRANSACTIONS (100): a trade with more legs could not be
+    ///         finalized by a pattern proof that analyses all of them (XIP-1).
+    uint8 internal constant MAX_SUB_TRADES = 100;
 
     /// @notice Domain tag for the per-trade settlement chain seed (XIP-1).
     bytes32 internal constant SETTLEMENT_SEED_DOMAIN = keccak256("ERC8262.XIP1.settlementSeed");
