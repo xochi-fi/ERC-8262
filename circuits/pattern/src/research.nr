@@ -300,3 +300,13 @@ fn test_attack_relabel_into_window() {
     let fake = legs([500, 700], [2 * HOUR, HOUR]);
     attempt(pinned(real), honest(fake, DAY, true, false));
 }
+
+/// Fractional parts truncated away: 5_000.6 + 4_999.6 = 10_000.2 units reaches
+/// the threshold, but any whole-unit commitment sums to 9_999.
+#[test(should_fail)]
+fn test_attack_fractional_truncation() {
+    let mut l = legs([5000, 4999], [600, 300]);
+    l.amounts[0] += 600000000000000000;
+    l.amounts[1] += 600000000000000000;
+    attempt(pinned(l), honest(l, DAY, true, false));
+}
