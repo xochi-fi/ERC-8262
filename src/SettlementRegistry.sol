@@ -210,6 +210,15 @@ contract SettlementRegistry is ISettlementRegistry {
         if (proofTimestamp < settlement.lastSettledAt) {
             revert PatternProofPredatesLastLeg(patternProofHash, proofTimestamp, settlement.lastSettledAt);
         }
+        // The circuit analyses transactions in `[timestamp - time_window, timestamp]`; that
+        // range must reach back to registration so it spans every leg. Legs are recorded
+        // at or after `createdAt` (AttestationPredatesTrade), and the Oracle caps
+        // time_window at MAX_TIME_WINDOW (90 days) > TRADE_TTL, so an honest prover can
+        // always comply.
+        uint256 timeWindow = uint256(bytes32(patternPublicInputs[96:128]));
+        if (timeWindow < proofTimestamp - settlement.createdAt) {
+            revert PatternWindowTooShort(patternProofHash, timeWindow, proofTimestamp - settlement.createdAt);
+        }
 
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
         if (analysisType != PATTERN_STRUCTURING) {

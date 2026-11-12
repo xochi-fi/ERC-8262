@@ -699,6 +699,34 @@ contract SettlementRegistryTest is Test {
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
+    /// @notice The PATTERN time_window must reach back to registration: a one-day window
+    ///         over legs spread across two days leaves the first leg unanalysed.
+    function test_finalizeTrade_revert_patternWindowTooShort() public {
+        uint256 createdAt = block.timestamp;
+        bytes32 tradeId = keccak256("trade-short-window");
+        vm.prank(alice);
+        tradeId = registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 p1 = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        vm.warp(block.timestamp + 2 days);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 1, p2);
+
+        // _submitPatternFor uses time_window = 1 day.
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.PatternWindowTooShort.selector, patternProof, 1 days, block.timestamp - createdAt
+            )
+        );
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
     function test_finalizeTrade_revert_wrongProofType() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
