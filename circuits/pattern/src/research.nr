@@ -22,9 +22,9 @@
 //! units; 999_999 units is another jurisdiction's threshold.
 
 use crate::main;
-use erc8262_shared::settlement_link;
+use erc8262_shared::{MAX_TRANSACTIONS, settlement_link};
 
-global MAXR: u32 = 32;
+global MAXR: u32 = 128;
 global UNIT: u128 = 1000000000000000000;
 global PROOF_TS: u64 = 1700100000;
 global HOUR: u64 = 3600;
@@ -82,10 +82,10 @@ fn registry_root(p: Pinned) -> Field {
 /// the circuit refolds the chain over the analysed legs. H2: the claimed
 /// threshold must be the pinned jurisdiction's (circuit table).
 fn attempt(pinned: Pinned, c: Claim) {
-    let mut amounts: [u128; 16] = [0; 16];
-    let mut timestamps: [u64; 16] = [0; 16];
-    let mut salts: [Field; 16] = [0; 16];
-    for i in 0..16 {
+    let mut amounts: [u128; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
+    let mut timestamps: [u64; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
+    let mut salts: [Field; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
+    for i in 0..MAX_TRANSACTIONS {
         amounts[i] = committed_amount(c.legs.amounts[i]);
         timestamps[i] = c.legs.timestamps[i];
         salts[i] = c.legs.salts[i];
@@ -308,5 +308,20 @@ fn test_attack_fractional_truncation() {
     let mut l = legs([5000, 4999], [600, 300]);
     l.amounts[0] += 600000000000000000;
     l.amounts[1] += 600000000000000000;
+    attempt(pinned(l), honest(l, DAY, true, false));
+}
+
+/// 100 legs: the pre-XIP-1 SettlementRegistry cap (MAX_SUB_TRADES). Binding must not
+/// shrink what a legitimate split can use.
+#[test]
+fn test_honest_hundred_legs_clean() {
+    let mut l = empty_legs();
+    for i in 0..100 {
+        l.amounts[i] = (50 + i as u128) * UNIT;
+        l.timestamps[i] = PROOF_TS - 60 * (100 - i as u64);
+        l.salts[i] = i as Field + 101;
+    }
+    l.n = 100;
+    // 50 + ... + 149 = 9_950 units < 10_000
     attempt(pinned(l), honest(l, DAY, true, false));
 }

@@ -69,9 +69,9 @@ global MAX_ROUND_PCT: u32 = 80;
 
 fn main(
     // --- Private ---
-    amounts: [u128; 16],
-    timestamps: [u64; 16],
-    salts: [Field; 16],
+    amounts: [u128; MAX_TRANSACTIONS],
+    timestamps: [u64; MAX_TRANSACTIONS],
+    salts: [Field; MAX_TRANSACTIONS],
     num_transactions: u32,
 
     // --- Public ---
@@ -100,7 +100,7 @@ fn main(
     // and published; the "more than half near the threshold" heuristic alone is
     // diluted by adding small legs.
     let mut total: u128 = 0;
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         total += amounts[i]; // each < 2^96 (settlement_link) or zero (inactive)
     }
     assert(
@@ -119,7 +119,7 @@ fn main(
     // Validate active slots have sane timestamps inside the analysis window ending at
     // the proof timestamp (so, for an honest prover, Oracle freshness implies recent
     // transactions); ensure inactive slots are zeroed
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
             validate_timestamp(timestamps[i] as Field);
             assert(timestamps[i] <= proof_ts, "Transaction after proof timestamp");
@@ -158,14 +158,14 @@ fn main(
 /// Check for structuring: count amounts in [threshold*90%, threshold)
 /// If more than 50% of transactions are in this range, flag as structuring
 fn check_structuring(
-    amounts: [u128; 16],
+    amounts: [u128; MAX_TRANSACTIONS],
     num_transactions: u32,
     reporting_threshold: u128,
 ) -> bool {
     let floor = (reporting_threshold * STRUCTURING_FLOOR_PCT) / 100;
     let mut suspicious_count: u32 = 0;
 
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
             let amt = amounts[i];
             if (amt >= floor) & (amt < reporting_threshold) {
@@ -185,13 +185,13 @@ fn check_structuring(
 /// below and the check reduces to `num_transactions <= MAX_VELOCITY` there. The filter only
 /// matters for direct calls (the unit tests); it is kept so the verifier stays unchanged.
 fn check_velocity(
-    timestamps: [u64; 16],
+    timestamps: [u64; MAX_TRANSACTIONS],
     num_transactions: u32,
     time_window: u64,
 ) -> bool {
     // Find the latest timestamp
     let mut latest: u64 = 0;
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
             if timestamps[i] > latest {
                 latest = timestamps[i];
@@ -203,7 +203,7 @@ fn check_velocity(
     let window_start = if latest > time_window { latest - time_window } else { 0 };
     let mut count: u32 = 0;
 
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
             if timestamps[i] >= window_start {
                 count += 1;
@@ -216,12 +216,12 @@ fn check_velocity(
 
 /// Check for suspicious concentration of round amounts
 fn check_round_amounts(
-    amounts: [u128; 16],
+    amounts: [u128; MAX_TRANSACTIONS],
     num_transactions: u32,
 ) -> bool {
     let mut round_count: u32 = 0;
 
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
             if amounts[i] % ROUND_DIVISOR == 0 {
                 round_count += 1;
@@ -251,7 +251,7 @@ fn test_detected_structuring() {
 #[test]
 fn test_clean_velocity() {
     let timestamps: [u64; 16] = [1700000000, 1700000500, 1700001000, 1700001500, 1700002000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let clean = check_velocity(timestamps, 5, 3600);
+    let clean = check_velocity(padded(timestamps), 5, 3600);
     assert(clean == true);
 }
 
@@ -401,11 +401,20 @@ fn test_main_transaction_at_proof_timestamp() {
     run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003000);
 }
 
-/// Test amounts are whole reporting-currency units; the circuit takes base units.
-fn whole_units(amounts: [u64; 16]) -> [u128; 16] {
-    let mut out: [u128; 16] = [0; 16];
+/// Test amounts are whole reporting-currency units in 16 slots; the circuit takes
+/// base units in MAX_TRANSACTIONS slots.
+fn whole_units(amounts: [u64; 16]) -> [u128; MAX_TRANSACTIONS] {
+    let mut out: [u128; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
     for i in 0..16 {
         out[i] = amounts[i] as u128 * AMOUNT_UNIT;
+    }
+    out
+}
+
+fn padded(timestamps: [u64; 16]) -> [u64; MAX_TRANSACTIONS] {
+    let mut out: [u64; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
+    for i in 0..16 {
+        out[i] = timestamps[i];
     }
     out
 }
@@ -415,7 +424,7 @@ fn whole_units(amounts: [u64; 16]) -> [u128; 16] {
 /// root, tx_set_hash and aggregate flag derived from the amounts.
 fn run(
     whole_amounts: [u64; 16],
-    timestamps: [u64; 16],
+    whole_timestamps: [u64; 16],
     num_transactions: u32,
     analysis_type: u8,
     result: bool,
@@ -424,11 +433,12 @@ fn run(
     timestamp: Field,
 ) {
     let amounts = whole_units(whole_amounts);
+    let timestamps = padded(whole_timestamps);
     let reporting_threshold = whole_threshold as u128 * AMOUNT_UNIT;
-    let salts: [Field; 16] = [0; 16];
+    let salts: [Field; MAX_TRANSACTIONS] = [0; MAX_TRANSACTIONS];
     let root = fold_settlement_root(0, amounts, timestamps, salts, num_transactions);
     let mut sum: u128 = 0;
-    for i in 0..16 {
+    for i in 0..MAX_TRANSACTIONS {
         sum += amounts[i];
     }
     let aggregate_reportable = sum >= reporting_threshold;
