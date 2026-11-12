@@ -551,11 +551,45 @@ contract SettlementRegistryTest is Test {
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
-        emit ISettlementRegistry.TradeFinalized(tradeId, block.timestamp);
+        emit ISettlementRegistry.TradeFinalized(tradeId, block.timestamp, false);
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
 
         ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
         assertTrue(s.finalized);
+        assertFalse(registry.isAggregateReportable(tradeId));
+    }
+
+    /// XIP-1: a pattern proof whose bound legs sum to at least the jurisdiction's
+    /// reporting threshold finalizes the trade and flags it reportable.
+    function test_finalizeTrade_recordsAggregateReportable() public {
+        bytes32 tradeId = keccak256("aggregate-reportable");
+        vm.prank(alice);
+        registry.registerTrade(tradeId, 0, 2);
+        _recordLegs(tradeId, 2);
+
+        bytes memory proof = _uniqueProof();
+        bytes memory publicInputs = abi.encodePacked(
+            bytes32(uint256(1)), // analysis_type
+            bytes32(uint256(1)), // result
+            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(86400)), // time_window
+            bytes32(uint256(0xabcd)), // tx_set_hash
+            bytes32(uint256(uint160(alice))), // submitter
+            registry.computeSettlementRoot(tradeId), // settlement_root
+            bytes32(block.timestamp), // timestamp
+            registry.settlementSeed(tradeId), // settlement_seed
+            bytes32(uint256(0)), // jurisdiction_id
+            bytes32(uint256(1)) // aggregate_reportable
+        );
+        vm.prank(alice);
+        oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
+        bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.PATTERN);
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true);
+        emit ISettlementRegistry.TradeFinalized(tradeId, block.timestamp, true);
+        registry.finalizeTrade(tradeId, proofHash, publicInputs);
+        assertTrue(registry.isAggregateReportable(tradeId));
     }
 
     function test_finalizeTrade_revert_notComplete() public {

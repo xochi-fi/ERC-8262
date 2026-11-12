@@ -53,6 +53,10 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         each recorded leg replaces it with the leg proof's settlement_link_out.
     mapping(bytes32 tradeId => bytes32 root) internal _settlementRoots;
 
+    /// @notice XIP-1: finalized trades whose legs sum to at least the jurisdiction's
+    ///         reporting threshold (pattern proof `aggregate_reportable`).
+    mapping(bytes32 tradeId => bool reportable) internal _aggregateReportable;
+
     /// @notice BN254 scalar field modulus. Seeds and chain links are Field elements;
     ///         the keccak seed is reduced mod this so it is a valid public input.
     uint256 internal constant BN254_FR_MODULUS =
@@ -229,7 +233,12 @@ contract SettlementRegistry is ISettlementRegistry {
         _usedPatternProofs[patternProofHash] = true;
         settlement.finalized = true;
 
-        emit TradeFinalized(tradeId, block.timestamp);
+        // XIP-1: the circuit proved whether the legs sum to at least the jurisdiction's
+        // reporting threshold. Splitting does not change it; the flag follows the trade.
+        bool aggregateReportable = bytes32(patternPublicInputs[320:352]) != bytes32(0);
+        if (aggregateReportable) _aggregateReportable[tradeId] = true;
+
+        emit TradeFinalized(tradeId, block.timestamp, aggregateReportable);
     }
 
     /// @notice The `settlement_root` public input a PATTERN proof must carry to finalize
@@ -257,6 +266,12 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Whether a pattern proof has already been consumed to finalize a trade.
     function isPatternProofUsed(bytes32 patternProofHash) external view returns (bool used) {
         return _usedPatternProofs[patternProofHash];
+    }
+
+    /// @notice Whether a finalized trade's legs sum to at least its jurisdiction's
+    ///         reporting threshold (XIP-1 `aggregate_reportable`, circuit-proven).
+    function isAggregateReportable(bytes32 tradeId) external view returns (bool reportable) {
+        return _aggregateReportable[tradeId];
     }
 
     function _settlementSeed(bytes32 tradeId, address subject, uint8 jurisdictionId, uint8 subTradeCount)

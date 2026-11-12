@@ -94,7 +94,18 @@ fn main(
         reporting_threshold == get_reporting_threshold(jurisdiction_id),
         "Threshold is not the jurisdiction's",
     );
-    let _ = aggregate_reportable; // constrained by a later XIP-1 hypothesis
+    // XIP-1: splitting cannot change the reporting outcome. The aggregate of the
+    // analysed legs (the whole settlement when bound) is compared to the threshold
+    // and published; the "more than half near the threshold" heuristic alone is
+    // diluted by adding small legs.
+    let mut total: u128 = 0;
+    for i in 0..16 {
+        total += amounts[i] as u128; // inactive slots are asserted zero below
+    }
+    assert(
+        aggregate_reportable == (total >= reporting_threshold as u128),
+        "Aggregate reportability mismatch",
+    );
     assert(time_window > 0, "Time window must be positive");
 
     // Timestamp must be within reasonable bounds (freshness is the Oracle's job)

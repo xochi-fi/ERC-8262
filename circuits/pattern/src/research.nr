@@ -58,7 +58,7 @@ pub struct Claim {
 }
 
 // ---------------------------------------------------------------------------
-// Design adapter (H1 settlement chain over whole-unit legs; H2 threshold table)
+// Design adapter (H1 chain over whole-unit legs; H2 threshold table; H4 aggregate)
 // ---------------------------------------------------------------------------
 
 /// Leg amount as committed in the settlement chain (H1: whole units, u64).

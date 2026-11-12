@@ -42,7 +42,9 @@ interface ISettlementRegistry {
     event SubSettlementRecorded(bytes32 indexed tradeId, uint8 indexed index, bytes32 indexed proofHash);
 
     /// @notice Emitted when all sub-settlements are complete and the trade is finalized
-    event TradeFinalized(bytes32 indexed tradeId, uint256 timestamp);
+    /// @param aggregateReportable XIP-1: the legs sum to at least the jurisdiction's reporting
+    ///        threshold (circuit-proven over the bound legs), so the trade is reportable as a whole
+    event TradeFinalized(bytes32 indexed tradeId, uint256 timestamp, bool aggregateReportable);
 
     /// @notice Emitted when a trade expires without finalization
     event TradeExpired(bytes32 indexed tradeId, uint256 timestamp);
