@@ -41,14 +41,14 @@ interface ISettlementRegistry {
 
     /// @notice Emitted when a new trade is registered
     /// @param tradeRef Caller-chosen reference; `tradeId = computeTradeId(subject, tradeRef)`
-    /// @param planTxSetHash Committed analysed set; see `registerTrade`
+    /// @param planProofHash STRUCTURING proof over the planned split; see `registerTrade`
     event TradeRegistered(
         bytes32 indexed tradeId,
         address indexed subject,
         uint8 indexed jurisdictionId,
         uint8 subTradeCount,
         bytes32 tradeRef,
-        bytes32 planTxSetHash
+        bytes32 planProofHash
     );
 
     /// @notice Emitted when a sub-settlement is recorded against a trade
@@ -117,8 +117,8 @@ interface ISettlementRegistry {
     error UnresolvedTrade(bytes32 tradeId);
     /// @notice Subject already holds the maximum number of open trades.
     error OpenTradeLimit(address subject);
-    /// @notice `registerTrade` needs a non-zero `planTxSetHash`.
-    error PlanCommitmentRequired();
+    /// @notice The plan proof's own timestamp is older than the registration freshness bound.
+    error PlanProofStale(bytes32 proofHash, uint256 proofTimestamp);
     /// @notice The PATTERN proof analysed a set other than the one committed at registration.
     error PatternTxSetMismatch(bytes32 expected, bytes32 actual);
     /// @notice Jurisdiction has no reporting threshold in this registry.
@@ -137,13 +137,27 @@ interface ISettlementRegistry {
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 16], the pattern circuit's capacity)
-    /// @param planTxSetHash The pattern circuit's `tx_set_hash` over the planned leg amounts and
-    ///        planned times (at most the closing proof's timestamp). Every PATTERN proof that
-    ///        finalizes or abandons the trade MUST carry this exact value. Non-zero.
+    /// @param planProofHash STRUCTURING PATTERN proof of the caller over the planned split:
+    ///        threshold = `reportingThreshold(jurisdictionId)`, settlement_root =
+    ///        `computePlanRoot(tradeId, jurisdictionId, subTradeCount)`, timestamp at most
+    ///        1 hour old, unused. Its tx_set_hash (planned amounts and planned times) is the
+    ///        set every PATTERN proof that finalizes or abandons the trade MUST analyse.
+    /// @param planPublicInputs Original public inputs of the plan proof
     /// @return tradeId `computeTradeId(msg.sender, tradeRef)`, the key for every other call
-    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount, bytes32 planTxSetHash)
+    function registerTrade(
+        bytes32 tradeRef,
+        uint8 jurisdictionId,
+        uint8 subTradeCount,
+        bytes32 planProofHash,
+        bytes calldata planPublicInputs
+    ) external returns (bytes32 tradeId);
+
+    /// @notice `settlement_root` a plan proof must carry:
+    ///         `keccak256(abi.encode(registry, tradeId, jurisdictionId, subTradeCount)) mod r`
+    function computePlanRoot(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount)
         external
-        returns (bytes32 tradeId);
+        view
+        returns (bytes32 root);
 
     /// @notice Venue-facing gate: whether leg `index` of `tradeId` may be executed now.
     /// @dev True iff the trade is registered, not finalized or abandoned, within its TTL, the

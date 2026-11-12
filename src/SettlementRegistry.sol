@@ -31,6 +31,10 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Trade expiry duration (7 days from registration)
     uint256 internal constant TRADE_TTL = 7 days;
 
+    /// @notice Maximum age of the plan proof's own timestamp at `registerTrade`, so the
+    ///         analysis of the planned split is current when the split opens.
+    uint256 internal constant PLAN_PROOF_MAX_AGE = 1 hours;
+
     /// @notice Minimum number of sub-trades per settlement
     uint8 internal constant MIN_SUB_TRADES = 2;
 
@@ -51,9 +55,9 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @dev tradeId => index => SubSettlement
     mapping(bytes32 tradeId => mapping(uint8 index => SubSettlement subSettlement)) internal _subSettlements;
 
-    /// @notice Audit H-1: marks each pattern proof hash as consumed when used to
-    ///         finalize a trade. Prevents a single PATTERN attestation from
-    ///         finalizing more than one settlement.
+    /// @notice Audit H-1: marks each pattern proof hash as consumed by a registration (plan
+    ///         proof), finalization or abandonment. Prevents a single PATTERN attestation
+    ///         from serving more than one of them.
     mapping(bytes32 patternProofHash => bool used) internal _usedPatternProofs;
 
     /// @notice Compliance proof hashes already backing a leg of any trade. Global, not
@@ -101,10 +105,13 @@ contract SettlementRegistry is ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc ISettlementRegistry
-    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount, bytes32 planTxSetHash)
-        external
-        returns (bytes32 tradeId)
-    {
+    function registerTrade(
+        bytes32 tradeRef,
+        uint8 jurisdictionId,
+        uint8 subTradeCount,
+        bytes32 planProofHash,
+        bytes calldata planPublicInputs
+    ) external returns (bytes32 tradeId) {
         // The id is namespaced by the caller, so copying a pending registration from the
         // mempool claims only the copier's own id, never the victim's.
         tradeId = computeTradeId(msg.sender, tradeRef);
@@ -113,10 +120,12 @@ contract SettlementRegistry is ISettlementRegistry {
             revert InvalidSubTradeCount(subTradeCount);
         }
         reportingThreshold(jurisdictionId); // reverts for a jurisdiction this registry does not serve
-        // Fixes the transaction set every closing PATTERN proof must analyse before any leg
-        // moves value, so the subject cannot pick the analysed set after seeing the legs.
-        if (planTxSetHash == bytes32(0)) revert PlanCommitmentRequired();
         uint8 slot = _claimOpenSlot(msg.sender);
+        // The planned split is analysed before any leg can move value; its tx_set_hash is the
+        // set every closing proof must analyse again, so the analysed set cannot be swapped
+        // after the legs are seen.
+        bytes32 planTxSetHash =
+            _verifyPlanProof(tradeId, jurisdictionId, subTradeCount, planProofHash, planPublicInputs);
         _openTrades[msg.sender][slot] = tradeId;
 
         _settlements[tradeId] = Settlement({
@@ -135,12 +144,23 @@ contract SettlementRegistry is ISettlementRegistry {
             planTxSetHash: planTxSetHash
         });
 
-        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef, planTxSetHash);
+        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef, planProofHash);
     }
 
     /// @inheritdoc ISettlementRegistry
     function computeTradeId(address subject, bytes32 tradeRef) public pure returns (bytes32 tradeId) {
         return keccak256(abi.encode(subject, tradeRef));
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function computePlanRoot(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount)
+        public
+        view
+        returns (bytes32 root)
+    {
+        return bytes32(
+            uint256(keccak256(abi.encode(address(this), tradeId, jurisdictionId, subTradeCount))) % BN254_FR_MODULUS
+        );
     }
 
     /// @inheritdoc ISettlementRegistry
@@ -240,81 +260,58 @@ contract SettlementRegistry is ISettlementRegistry {
         emit TradeAbandoned(tradeId, settlement.settledCount, patternProofHash);
     }
 
+    /// @dev Verify and consume the plan proof for a trade being registered by msg.sender.
+    ///      Returns its tx_set_hash, the committed analysed set.
+    function _verifyPlanProof(
+        bytes32 tradeId,
+        uint8 jurisdictionId,
+        uint8 subTradeCount,
+        bytes32 planProofHash,
+        bytes calldata planPublicInputs
+    ) internal returns (bytes32 planTxSetHash) {
+        _authenticatePattern(tradeId, msg.sender, jurisdictionId, planProofHash, planPublicInputs);
+        bytes32 expectedRoot = computePlanRoot(tradeId, jurisdictionId, subTradeCount);
+        bytes32 planRoot = bytes32(planPublicInputs[192:224]);
+        if (planRoot != expectedRoot) revert SettlementRootMismatch(expectedRoot, planRoot);
+        uint256 proofTimestamp = uint256(bytes32(planPublicInputs[224:256]));
+        if (proofTimestamp + PLAN_PROOF_MAX_AGE < block.timestamp) {
+            revert PlanProofStale(planProofHash, proofTimestamp);
+        }
+        planTxSetHash = bytes32(planPublicInputs[128:160]);
+    }
+
     /// @dev Verify and consume the STRUCTURING pattern proof that closes `tradeId`.
+    ///      Checks 1-3, 5, 6, 8 and 11 run in `_authenticatePattern`; here:
+    //   4. The pattern proof's own `timestamp` public input (word 7) is >= the block time
+    //      at which the trade's last leg was recorded (which is >= createdAt). A proof
+    //      dated before a leg settled cannot have analysed that leg's transaction. This
+    //      is stricter than the attestation (submission) time, which the Oracle already
+    //      holds at or after the proof timestamp. It does not prove the proof was
+    //      generated after the last leg: the timestamp is prover-chosen, so a prover
+    //      holding the leg proof hashes can build inputs dated in the future and submit
+    //      them once the chain reaches that date. Legs use the submission time instead
+    //      (see `recordSubSettlement`).
+    //   7. The pattern proof's `settlement_root` public input matches the keccak
+    //      commitment over this trade's recorded sub-settlement proof hashes
+    //      (audit H-1; binds the pattern attestation to THIS specific settlement)
+    //   9. The analysis window [timestamp - time_window, timestamp] reaches back to
+    //      createdAt, so it can contain every leg. The circuit binds each analysed
+    //      transaction into that window; a shorter window cannot have analysed the
+    //      early legs. Consequence: a trade can only be closed with a proof while
+    //      `timestamp - createdAt` fits the Oracle's MAX_TIME_WINDOW.
+    //  10. tx_set_hash equals the plan proof's: the analysed set was fixed before any leg
+    //      moved value. Still prover-chosen: nothing ties the committed amounts to the
+    //      legs' real amounts without an amount-committing compliance circuit, or venues
+    //      checking their leg against the plan opening.
     function _consumePatternProof(
         bytes32 tradeId,
         Settlement storage settlement,
         bytes32 patternProofHash,
         bytes calldata patternPublicInputs
     ) internal {
-        // Anti-structuring: verify a pattern detection proof (0x03) exists for the subject.
-        // Checks:
-        //   1. patternProofHash is not zero
-        //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
-        //   3. The attestation exists and subject matches
-        //   4. The pattern proof's own `timestamp` public input (word 7) is >= the block time
-        //      at which the trade's last leg was recorded (which is >= createdAt). A proof
-        //      dated before a leg settled cannot have analysed that leg's transaction. This
-        //      is stricter than the attestation (submission) time, which the Oracle already
-        //      holds at or after the proof timestamp. It does not prove the proof was
-        //      generated after the last leg: the timestamp is prover-chosen, so a prover
-        //      holding the leg proof hashes can build inputs dated in the future and submit
-        //      them once the chain reaches that date. Legs use the submission time instead
-        //      (see `recordSubSettlement`).
-        //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
-        //      (checked before reading any field, including the timestamp in check 4)
-        //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
-        //      satisfy the anti-structuring guarantee that this registry depends on
-        //   7. The pattern proof's `settlement_root` public input matches the keccak
-        //      commitment over this trade's recorded sub-settlement proof hashes
-        //      (audit H-1; binds the pattern attestation to THIS specific settlement)
-        //   8. The pattern proof has not been used to finalize a different trade
-        //      (audit H-1 reuse-prevention; one PATTERN attestation per trade)
-        //   9. The analysis window [timestamp - time_window, timestamp] reaches back to
-        //      createdAt, so it can contain every leg. The circuit binds each analysed
-        //      transaction into that window; a shorter window cannot have analysed the
-        //      early legs. Consequence: a trade can only be closed with a proof while
-        //      `timestamp - createdAt` fits the Oracle's MAX_TIME_WINDOW.
-        //  10. tx_set_hash equals the plan committed at registerTrade: the analysed set was
-        //      fixed before any leg moved value. Still prover-chosen: nothing ties the
-        //      committed amounts to the legs' real amounts without an amount-committing
-        //      compliance circuit, or venues checking their leg against the plan opening.
-        //  11. reporting_threshold equals this registry's threshold for the trade's
-        //      jurisdiction. The Oracle only checks membership in its global registered set,
-        //      which would accept another jurisdiction's (higher) threshold.
-        if (patternProofHash == bytes32(0)) revert PatternProofRequired(tradeId);
-        if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
-        uint8 proofType = oracle.getProofType(patternProofHash);
-        if (proofType != ProofTypes.PATTERN) revert PatternProofRequired(tradeId);
-        IERC8262Oracle.ComplianceAttestation memory patternAttestation = _fetchAttestation(patternProofHash);
-        if (patternAttestation.subject != settlement.subject) {
-            revert SubjectMismatch(settlement.subject, patternAttestation.subject);
-        }
-        if (ERC8262Oracle(address(oracle)).isAttestationRevoked(patternProofHash)) {
-            revert AttestationRevoked(patternProofHash);
-        }
-
-        bytes32 inputsHash = keccak256(patternPublicInputs);
-        if (inputsHash != patternAttestation.publicInputsHash) {
-            revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
-        }
-        _checkPatternFields(settlement, patternProofHash, patternPublicInputs);
-
-        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
-        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
-        if (patternSettlementRoot != expectedSettlementRoot) {
-            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
-        }
-
-        _usedPatternProofs[patternProofHash] = true;
-    }
-
-    /// @dev Checks 4, 6, 9, 10 and 11 of `_consumePatternProof` on already-authenticated inputs.
-    function _checkPatternFields(
-        Settlement storage settlement,
-        bytes32 patternProofHash,
-        bytes calldata patternPublicInputs
-    ) internal view {
+        _authenticatePattern(
+            tradeId, settlement.subject, settlement.jurisdictionId, patternProofHash, patternPublicInputs
+        );
         // PATTERN public inputs layout (32 bytes each, 8 fields total):
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
         //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
@@ -328,16 +325,59 @@ contract SettlementRegistry is ISettlementRegistry {
         if (timeWindow < proofTimestamp && proofTimestamp - timeWindow > settlement.createdAt) {
             revert PatternWindowExcludesTrade(patternProofHash, proofTimestamp - timeWindow, settlement.createdAt);
         }
+        bytes32 txSetHash = bytes32(patternPublicInputs[128:160]);
+        if (txSetHash != settlement.planTxSetHash) revert PatternTxSetMismatch(settlement.planTxSetHash, txSetHash);
 
+        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
+        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
+        if (patternSettlementRoot != expectedSettlementRoot) {
+            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
+        }
+    }
+
+    /// @dev Authenticate a STRUCTURING PATTERN attestation of `subject` for `jurisdictionId`
+    ///      and consume it:
+    //   1. patternProofHash is not zero
+    //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
+    //   3. The attestation exists, is not revoked, and its subject matches
+    //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
+    //      (checked before reading any field)
+    //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
+    //      satisfy the anti-structuring guarantee that this registry depends on
+    //   8. The pattern proof has not been used by any registration, finalization or
+    //      abandonment (audit H-1 reuse-prevention; one PATTERN attestation per use)
+    //  11. reporting_threshold equals this registry's threshold for the jurisdiction.
+    //      The Oracle only checks membership in its global registered set, which would
+    //      accept another jurisdiction's (higher) threshold.
+    function _authenticatePattern(
+        bytes32 tradeId,
+        address subject,
+        uint8 jurisdictionId,
+        bytes32 patternProofHash,
+        bytes calldata patternPublicInputs
+    ) internal {
+        if (patternProofHash == bytes32(0)) revert PatternProofRequired(tradeId);
+        if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
+        uint8 proofType = oracle.getProofType(patternProofHash);
+        if (proofType != ProofTypes.PATTERN) revert PatternProofRequired(tradeId);
+        IERC8262Oracle.ComplianceAttestation memory patternAttestation = _fetchAttestation(patternProofHash);
+        if (patternAttestation.subject != subject) revert SubjectMismatch(subject, patternAttestation.subject);
+        if (ERC8262Oracle(address(oracle)).isAttestationRevoked(patternProofHash)) {
+            revert AttestationRevoked(patternProofHash);
+        }
+        bytes32 inputsHash = keccak256(patternPublicInputs);
+        if (inputsHash != patternAttestation.publicInputsHash) {
+            revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
+        }
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
         if (analysisType != PATTERN_STRUCTURING) {
             revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
         }
-        bytes32 txSetHash = bytes32(patternPublicInputs[128:160]);
-        if (txSetHash != settlement.planTxSetHash) revert PatternTxSetMismatch(settlement.planTxSetHash, txSetHash);
         uint256 threshold = uint256(bytes32(patternPublicInputs[64:96]));
-        uint256 expectedThreshold = reportingThreshold(settlement.jurisdictionId);
+        uint256 expectedThreshold = reportingThreshold(jurisdictionId);
         if (threshold != expectedThreshold) revert PatternThresholdMismatch(expectedThreshold, threshold);
+
+        _usedPatternProofs[patternProofHash] = true;
     }
 
     /// @dev One pass over `subject`'s open-trade table. `freeSlot` is the first slot that is

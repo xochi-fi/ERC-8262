@@ -185,8 +185,9 @@ contract StructuringAttacks is Test {
     function test_attack_tradeIdFrontrun() public {
         bytes32 t = _tradeId("frontrun");
         _register(bob, t, 2);
+        (bytes32 plan, bytes memory planInputs) = _planProof(alice, t, 2);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 2, PLAN)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 2, plan, planInputs)));
         assertTrue(ok, "victim locked out of her own tradeId");
     }
 
@@ -234,8 +235,10 @@ contract StructuringAttacks is Test {
     /// 17 legs finalized by one pattern proof; the circuit analyses at most 16 amounts.
     function test_attack_moreLegsThanCircuitCapacity() public {
         bytes32 t = _tradeId("seventeen");
+        (bytes32 plan, bytes memory planInputs) = _planProof(alice, t, 17);
         vm.prank(alice);
-        (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17, PLAN)));
+        (bool registered,) =
+            address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17, plan, planInputs)));
         if (!registered) return; // refused at registration
         t = registry.computeTradeId(alice, t);
         _recordLegs(alice, t, 17, 0);
@@ -251,8 +254,9 @@ contract StructuringAttacks is Test {
         vm.warp(block.timestamp + 7 days + 1);
         registry.expireTrade(a);
         bytes32 b = _tradeId("abandon-b");
+        (bytes32 plan, bytes memory planInputs) = _planProof(alice, b, 2);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, plan, planInputs)));
         assertFalse(ok, "abandoned settled split did not block the next one");
     }
 
@@ -315,8 +319,9 @@ contract StructuringAttacks is Test {
         _recordLegs(alice, a, 2, 0);
         vm.warp(block.timestamp + 7 days + 1);
         bytes32 b = _tradeId("lazy-b");
+        (bytes32 plan, bytes memory planInputs) = _planProof(alice, b, 2);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, plan, planInputs)));
         assertFalse(ok, "lapsed settled split did not block the next one");
     }
 
@@ -337,9 +342,26 @@ contract StructuringAttacks is Test {
             address(registry).call(abi.encodeWithSignature("abandonTrade(bytes32,bytes32,bytes)", a, pattern, inputs));
         vm.warp(block.timestamp + 7 days + 1);
         bytes32 b = _tradeId("close-b");
+        (bytes32 plan, bytes memory planInputs) = _planProof(alice, b, 2);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, plan, planInputs)));
         assertFalse(ok, "split closed without a bound structuring proof");
+    }
+
+    /// Alice's planned split is structured, so no clean STRUCTURING proof over it exists; she
+    /// registers and settles a leg anyway. Refused only if the analysis gates the first leg.
+    /// (Added by lifecycle-gating research.)
+    function test_attack_legsSettleBeforeAnalysis() public {
+        vm.prank(alice);
+        (bool registered, bytes memory ret) = address(registry)
+            .call(abi.encodeCall(registry.registerTrade, (_tradeId("no-analysis"), 0, 2, bytes32(0), "")));
+        if (!registered) return; // refused at registration
+        bytes32 t = abi.decode(ret, (bytes32));
+        vm.warp(block.timestamp + 1 minutes);
+        bytes32 leg = _submitCompliance(alice, 0);
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.recordSubSettlement, (t, 0, leg)));
+        assertFalse(ok, "leg settled before any structuring analysis of its split");
     }
 
     /// Alice commits her analysed set at registration, the legs settle, then she finalizes
@@ -373,8 +395,15 @@ contract StructuringAttacks is Test {
 
     /// Register reference `ref` as `who`; returns the trade id every other call uses.
     function _register(address who, bytes32 ref, uint8 n) internal returns (bytes32 t) {
+        (bytes32 plan, bytes memory planInputs) = _planProof(who, ref, n);
         vm.prank(who);
-        t = registry.registerTrade(ref, 0, n, PLAN);
+        t = registry.registerTrade(ref, 0, n, plan, planInputs);
+    }
+
+    /// STRUCTURING proof over the planned split (set PLAN) for `who` registering `ref`.
+    function _planProof(address who, bytes32 ref, uint8 n) internal returns (bytes32, bytes memory) {
+        bytes32 root = registry.computePlanRoot(registry.computeTradeId(who, ref), 0, n);
+        return _submitPattern(who, STRUCTURING, J0_THRESHOLD, 1 hours, root, block.timestamp);
     }
 
     /// Submit and record `n` legs, `spacing` seconds apart (first leg after 1 minute).
