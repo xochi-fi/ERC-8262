@@ -116,12 +116,13 @@ fn main(
     // Anchor submitter as a public input (oracle enforces submitter == msg.sender).
     assert(submitter != 0, "submitter must be non-zero");
 
-    // Validate active slots have sane timestamps inside the analysis window ending at
-    // the proof timestamp (so, for an honest prover, Oracle freshness implies recent
-    // transactions); ensure inactive slots are zeroed
+    // Active slots lie inside the analysis window ending at the proof timestamp (so,
+    // for an honest prover, Oracle freshness implies recent transactions); inactive
+    // slots are zeroed. No per-slot validate_timestamp: ts <= proof_ts < 2^40 bounds
+    // them above, the window (Oracle: <= 90 days) below, and bound legs' timestamps
+    // were validated by their own compliance proofs.
     for i in 0..MAX_TRANSACTIONS {
         if (i as u32) < num_transactions {
-            validate_timestamp(timestamps[i] as Field);
             assert(timestamps[i] <= proof_ts, "Transaction after proof timestamp");
             assert(proof_ts - timestamps[i] <= time_window, "Transaction outside time window");
         } else {
