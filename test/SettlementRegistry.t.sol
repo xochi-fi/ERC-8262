@@ -384,6 +384,26 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice One compliance attestation must not back legs of two trades.
+    function test_recordSubSettlement_revert_sameProofOnTwoTrades() public {
+        bytes32 tradeA = keccak256("trade-a");
+        bytes32 tradeB = keccak256("trade-b");
+        vm.startPrank(alice);
+        registry.registerTrade(tradeA, 0, 2);
+        registry.registerTrade(tradeB, 0, 2);
+        vm.stopPrank();
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeA, 0, proofHash);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.DuplicateSubSettlementProof.selector, tradeA, proofHash)
+        );
+        registry.recordSubSettlement(tradeB, 0, proofHash);
+        vm.stopPrank();
+    }
+
     /// @notice Sub-settlements MUST be one of the compliance variants.
     /// @dev Without the proof-type guard, a MEMBERSHIP proof (subject in some
     ///      registered set) satisfies `subject` + `jurisdictionId` matching and
@@ -823,14 +843,9 @@ contract SettlementRegistryTest is Test {
     }
 
     /// @notice A single PATTERN proof cannot finalize two distinct trades.
-    /// @dev Setup: record the SAME two compliance proofHashes in two distinct
-    ///      trades A and B (same order). `recordSubSettlement` only validates
-    ///      that the attestation exists in the Oracle -- it has no per-trade
-    ///      "used" flag -- so the same `proofHash` can legitimately appear in
-    ///      multiple trades. Both trades therefore compute identical
-    ///      `settlement_root`s, which means a single PATTERN proof bound to
-    ///      A's root also matches B's. The reuse-prevention flag fires on the
-    ///      second finalize.
+    /// @dev Leg proof hashes are globally unique, so two trades never share a
+    ///      `settlement_root`; the reuse flag is checked first and fires on the
+    ///      second finalize regardless.
     function test_finalizeTrade_revert_patternProofReuse() public {
         bytes32 tradeA = keccak256("reuse-A");
         bytes32 tradeB = keccak256("reuse-B");
@@ -841,18 +856,16 @@ contract SettlementRegistryTest is Test {
 
         bytes32 p1 = _submitComplianceForAlice(0);
         bytes32 p2 = _submitComplianceForAlice(0);
+        bytes32 p3 = _submitComplianceForAlice(0);
+        bytes32 p4 = _submitComplianceForAlice(0);
 
         vm.startPrank(alice);
         registry.recordSubSettlement(tradeA, 0, p1);
         registry.recordSubSettlement(tradeA, 1, p2);
-        registry.recordSubSettlement(tradeB, 0, p1);
-        registry.recordSubSettlement(tradeB, 1, p2);
+        registry.recordSubSettlement(tradeB, 0, p3);
+        registry.recordSubSettlement(tradeB, 1, p4);
         vm.stopPrank();
 
-        // Both trades have the same expected settlement root.
-        assertEq(registry.computeSettlementRoot(tradeA), registry.computeSettlementRoot(tradeB));
-
-        // Single pattern proof bound to both (since the root is identical).
         (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeA);
 
         // Finalize tradeA first -- pattern proof is consumed.

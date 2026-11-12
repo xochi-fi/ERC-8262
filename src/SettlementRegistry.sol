@@ -40,8 +40,9 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         finalizing more than one settlement.
     mapping(bytes32 patternProofHash => bool used) internal _usedPatternProofs;
 
-    /// @notice Compliance proof hashes already backing a leg of each trade.
-    mapping(bytes32 tradeId => mapping(bytes32 proofHash => bool used)) internal _usedLegProofs;
+    /// @notice Trade each compliance proof hash backs a leg of. Global, not per trade: one
+    ///         attestation evidences one payment, so it backs at most one leg of one trade.
+    mapping(bytes32 proofHash => bytes32 tradeId) internal _legProofTrade;
 
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
@@ -125,9 +126,10 @@ contract SettlementRegistry is ISettlementRegistry {
         if (attestation.timestamp < settlement.createdAt) {
             revert AttestationPredatesTrade(proofHash, attestation.timestamp, settlement.createdAt);
         }
-        if (_usedLegProofs[tradeId][proofHash]) revert DuplicateSubSettlementProof(tradeId, proofHash);
+        bytes32 holder = _legProofTrade[proofHash];
+        if (holder != bytes32(0)) revert DuplicateSubSettlementProof(holder, proofHash);
 
-        _usedLegProofs[tradeId][proofHash] = true;
+        _legProofTrade[proofHash] = tradeId;
 
         _subSettlements[tradeId][index] =
             SubSettlement({index: index, proofHash: proofHash, settledAt: block.timestamp});
