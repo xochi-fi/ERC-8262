@@ -34,8 +34,14 @@ interface ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @notice Emitted when a new trade is registered
+    /// @param tradeId `computeTradeId(subject, tradeRef)`
+    /// @param tradeRef Caller-chosen reference the id was derived from
     event TradeRegistered(
-        bytes32 indexed tradeId, address indexed subject, uint8 indexed jurisdictionId, uint8 subTradeCount
+        bytes32 indexed tradeId,
+        address indexed subject,
+        uint8 indexed jurisdictionId,
+        uint8 subTradeCount,
+        bytes32 tradeRef
     );
 
     /// @notice Emitted when a sub-settlement is recorded against a trade
@@ -97,10 +103,19 @@ interface ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @notice Register a new multi-leg trade for settlement tracking
-    /// @param tradeId Unique identifier for the trade
+    /// @dev The trade is keyed by `computeTradeId(msg.sender, tradeRef)`, so no other caller
+    ///      can register, and thereby occupy, the caller's id.
+    /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 100])
-    function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external;
+    /// @return tradeId The registry key for every later call on this trade
+    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
+        external
+        returns (bytes32 tradeId);
+
+    /// @notice Registry key of the trade `subject` registers under `tradeRef`
+    /// @return tradeId `keccak256(abi.encode(subject, tradeRef))`
+    function computeTradeId(address subject, bytes32 tradeRef) external pure returns (bytes32 tradeId);
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
     /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,

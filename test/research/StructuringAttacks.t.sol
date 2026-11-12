@@ -69,7 +69,7 @@ contract StructuringAttacks is Test {
 
     function test_honest_twoLegs() public {
         bytes32 t = _tradeId("honest-2");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         _finalize(alice, t, J0_THRESHOLD, 1 days, block.timestamp);
         assertTrue(_finalized(t));
@@ -77,7 +77,7 @@ contract StructuringAttacks is Test {
 
     function test_honest_sixteenLegs() public {
         bytes32 t = _tradeId("honest-16");
-        _register(alice, t, 16);
+        t = _register(alice, t, 16);
         _recordLegs(alice, t, 16, 0);
         _finalize(alice, t, J0_THRESHOLD, 1 days, block.timestamp);
         assertTrue(_finalized(t));
@@ -88,7 +88,7 @@ contract StructuringAttacks is Test {
     function test_honest_legsOverTwoDays() public {
         bytes32 t = _tradeId("honest-spread");
         uint256 start = block.timestamp;
-        _register(alice, t, 3);
+        t = _register(alice, t, 3);
         _recordLegs(alice, t, 3, 1 days);
         _finalize(alice, t, J0_THRESHOLD, block.timestamp - start + 1 hours, block.timestamp);
         assertTrue(_finalized(t));
@@ -97,11 +97,11 @@ contract StructuringAttacks is Test {
     /// A user who finalized one split can open another.
     function test_honest_secondTradeAfterFinalized() public {
         bytes32 t1 = _tradeId("honest-a");
-        _register(alice, t1, 2);
+        t1 = _register(alice, t1, 2);
         _recordLegs(alice, t1, 2, 0);
         _finalize(alice, t1, J0_THRESHOLD, 1 days, block.timestamp);
         bytes32 t2 = _tradeId("honest-b");
-        _register(alice, t2, 2);
+        t2 = _register(alice, t2, 2);
         _recordLegs(alice, t2, 2, 0);
         _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
         assertTrue(_finalized(t2));
@@ -115,8 +115,8 @@ contract StructuringAttacks is Test {
     function test_attack_crossTradeLegReuse() public {
         bytes32 a = _tradeId("reuse-a");
         bytes32 b = _tradeId("reuse-b");
-        _register(alice, a, 2);
-        _register(alice, b, 2);
+        a = _register(alice, a, 2);
+        b = _register(alice, b, 2);
         bytes32 leg = _submitCompliance(alice, 0);
         vm.prank(alice);
         registry.recordSubSettlement(a, 0, leg);
@@ -137,7 +137,7 @@ contract StructuringAttacks is Test {
     /// Pattern proof analysed against another jurisdiction's (higher) threshold.
     function test_attack_foreignThreshold() public {
         bytes32 t = _tradeId("foreign");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         assertFalse(_tryFinalize(alice, t, FOREIGN_THRESHOLD, 1 days, block.timestamp), "foreign threshold accepted");
     }
@@ -145,7 +145,7 @@ contract StructuringAttacks is Test {
     /// Pattern proof generated after leg 0 but before leg 1 is recorded; finalized later.
     function test_attack_patternPredatesLastLeg() public {
         bytes32 t = _tradeId("early-pattern");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         vm.warp(block.timestamp + 10 minutes);
         bytes32 leg0 = _submitCompliance(alice, 0);
         bytes32 leg1 = _submitCompliance(alice, 0);
@@ -170,7 +170,7 @@ contract StructuringAttacks is Test {
     /// last leg.
     function test_attack_windowDoesNotCoverLegs() public {
         bytes32 t = _tradeId("short-window");
-        _register(alice, t, 3);
+        t = _register(alice, t, 3);
         _recordLegs(alice, t, 3, 36 hours);
         assertFalse(_tryFinalize(alice, t, J0_THRESHOLD, 1 hours, block.timestamp), "1h window over 3 days of legs");
     }
@@ -181,6 +181,7 @@ contract StructuringAttacks is Test {
         vm.prank(alice);
         (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17)));
         if (!registered) return; // refused at registration
+        t = registry.computeTradeId(alice, t);
         _recordLegs(alice, t, 17, 0);
         assertFalse(_tryFinalize(alice, t, J0_THRESHOLD, 1 days, block.timestamp), "17 legs on a 16-slot proof");
     }
@@ -189,7 +190,7 @@ contract StructuringAttacks is Test {
     /// split. The registry must not let her repeat that indefinitely.
     function test_attack_abandonAndRepeat() public {
         bytes32 a = _tradeId("abandon-a");
-        _register(alice, a, 2);
+        a = _register(alice, a, 2);
         _recordLegs(alice, a, 2, 0);
         vm.warp(block.timestamp + 7 days + 1);
         registry.expireTrade(a);
@@ -202,7 +203,7 @@ contract StructuringAttacks is Test {
     /// Expired trade must never read as finalized.
     function test_attack_expiredReadsFinalized() public {
         bytes32 t = _tradeId("expired");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         vm.warp(block.timestamp + 7 days + 1);
         registry.expireTrade(t);
@@ -212,14 +213,14 @@ contract StructuringAttacks is Test {
     /// One pattern proof finalizes two trades.
     function test_attack_patternReuse() public {
         bytes32 a = _tradeId("pr-a");
-        _register(alice, a, 2);
+        a = _register(alice, a, 2);
         _recordLegs(alice, a, 2, 0);
         (bytes32 pattern, bytes memory inputs) =
             _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, registry.computeSettlementRoot(a), block.timestamp);
         vm.prank(alice);
         registry.finalizeTrade(a, pattern, inputs);
         bytes32 b = _tradeId("pr-b");
-        _register(alice, b, 2);
+        b = _register(alice, b, 2);
         _recordLegs(alice, b, 2, 0);
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.finalizeTrade, (b, pattern, inputs)));
@@ -229,7 +230,7 @@ contract StructuringAttacks is Test {
     /// A VELOCITY analysis stands in for STRUCTURING.
     function test_attack_wrongAnalysisType() public {
         bytes32 t = _tradeId("velocity");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         (bytes32 pattern, bytes memory inputs) =
             _submitPattern(alice, VELOCITY, J0_THRESHOLD, 1 days, registry.computeSettlementRoot(t), block.timestamp);
@@ -241,7 +242,7 @@ contract StructuringAttacks is Test {
     /// Pattern proof not bound to this trade's legs.
     function test_attack_unboundSettlementRoot() public {
         bytes32 t = _tradeId("unbound");
-        _register(alice, t, 2);
+        t = _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         (bytes32 pattern, bytes memory inputs) =
             _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, bytes32(0), block.timestamp);
@@ -258,9 +259,10 @@ contract StructuringAttacks is Test {
         return keccak256(bytes(label));
     }
 
-    function _register(address who, bytes32 t, uint8 n) internal {
+    /// Register `t` as `who`'s trade reference; returns the registry's trade id.
+    function _register(address who, bytes32 t, uint8 n) internal returns (bytes32) {
         vm.prank(who);
-        registry.registerTrade(t, 0, n);
+        return registry.registerTrade(t, 0, n);
     }
 
     /// Submit and record `n` legs, `spacing` seconds apart (first leg after 1 minute).
