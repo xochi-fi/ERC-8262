@@ -45,6 +45,9 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         second (possibly abandoned) split.
     mapping(bytes32 proofHash => bool used) internal _usedLegProofs;
 
+    /// @notice Expired trades per subject that settled at least one leg unfinalized.
+    mapping(address subject => uint256 count) internal _abandonedSettledTrades;
+
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
     ///         Solidity check matches the in-circuit representation.
@@ -63,6 +66,7 @@ contract SettlementRegistry is ISettlementRegistry {
 
     /// @inheritdoc ISettlementRegistry
     function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external {
+        if (_abandonedSettledTrades[msg.sender] != 0) revert SubjectHasAbandonedTrade(msg.sender);
         if (_settlements[tradeId].createdAt != 0) revert TradeAlreadyExists(tradeId);
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
@@ -273,6 +277,7 @@ contract SettlementRegistry is ISettlementRegistry {
 
         // Record/finalize are already closed by the `block.timestamp > expiresAt` guard.
         settlement.expired = true;
+        if (settlement.settledCount != 0) _abandonedSettledTrades[settlement.subject]++;
 
         emit TradeExpired(tradeId, block.timestamp);
     }

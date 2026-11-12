@@ -91,6 +91,8 @@ interface ISettlementRegistry {
     error PatternProofPredatesTrade(bytes32 proofHash, uint256 proofTimestamp, uint256 tradeCreatedAt);
     /// @notice Proof hash already backs a leg of this or any other trade.
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
+    /// @notice Subject has an expired trade with settled legs that was never finalized.
+    error SubjectHasAbandonedTrade(address subject);
 
     // -------------------------------------------------------------------------
     // Functions
