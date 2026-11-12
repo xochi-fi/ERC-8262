@@ -68,7 +68,7 @@ contract ValidatorChecksTest is OracleTestBase {
         oracle.submitCompliance(jurisdictionId, proofType, proof, inputs, providerSetHash);
     }
 
-    /// @dev The 8-word PATTERN layout (proof timestamp at word 7), dated now.
+    /// @dev The 11-word PATTERN layout (proof timestamp at word 7), dated now.
     function _patternInputs(address submitter) internal view returns (bytes memory) {
         return _patternInputs(submitter, block.timestamp);
     }

@@ -21,11 +21,17 @@
 ///                     replayed against a different Oracle on the same chain
 ///                     (audit F-6)
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
+///   - settlement_link_in / settlement_link_out (XIP-1): one link of a split
+///     settlement's chain, link_out = settlement_link(link_in, leg_amount, timestamp,
+///     leg_salt). SettlementRegistry accepts the leg only if link_in is the trade's
+///     current root and then stores link_out. Standalone use: any link_in. Not part
+///     of the signed digest.
 ///
 /// Private inputs (known only to prover):
 ///   - signals, weights, weight_sum, provider_ids, num_providers (as in `compliance`)
 ///   - signature: 64-byte secp256k1 ECDSA signature (r || s)
 ///   - pubkey_x, pubkey_y: 32-byte big-endian secp256k1 pubkey coordinates
+///   - leg_amount / leg_salt: the settlement leg's amount and blinding (XIP-1)
 
 use erc8262_shared::{
     compute_risk_score,
@@ -38,6 +44,7 @@ use erc8262_shared::{
     compute_signed_payload_hash,
     verify_provider_signed_signals,
     DOMAIN_SIGNED_SIGNALS,
+    settlement_link,
 };
 
 fn main(
@@ -50,6 +57,8 @@ fn main(
     signature: [u8; 64],
     pubkey_x: [u8; 32],
     pubkey_y: [u8; 32],
+    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
     jurisdiction_id: pub u8,
@@ -62,6 +71,8 @@ fn main(
     chain_id: pub Field,
     oracle_address: pub Field,
     submitter: pub Field,
+    settlement_link_in: pub Field,  // XIP-1: settlement chain root before this leg
+    settlement_link_out: pub Field, // XIP-1: settlement chain root after this leg
 ) {
     // 1. Validate weight_sum is positive
     assert(weight_sum > 0, "Weight sum must be positive");
@@ -118,6 +129,40 @@ fn main(
         payload_hash,
         signer_pubkey_hash,
     );
+
+    // 12. XIP-1: extend the settlement chain by this leg (timestamp = proof time).
+    let link = settlement_link(settlement_link_in, leg_amount, timestamp as u64, leg_salt);
+    assert(link == settlement_link_out, "Settlement link mismatch");
+}
+
+/// Pre-XIP-1 call shape for the tests: standalone use (link_in 0, zero leg).
+fn run(
+    signals: [u32; 8],
+    weights: [u32; 8],
+    weight_sum: u32,
+    provider_ids: [Field; 8],
+    num_providers: u32,
+    signature: [u8; 64],
+    pubkey_x: [u8; 32],
+    pubkey_y: [u8; 32],
+    jurisdiction_id: u8,
+    provider_set_hash: Field,
+    config_hash: Field,
+    timestamp: Field,
+    meets_threshold: bool,
+    signer_pubkey_hash: Field,
+    chain_id: Field,
+    oracle_address: Field,
+    submitter: Field,
+) {
+    let link_out = settlement_link(0, 0, timestamp as u64, 0);
+    main(
+        signals, weights, weight_sum, provider_ids, num_providers,
+        signature, pubkey_x, pubkey_y, 0, 0,
+        jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold,
+        signer_pubkey_hash, chain_id, oracle_address, submitter,
+        0, link_out,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +186,7 @@ fn test_main_revert_wrong_pubkey_hash() {
     let zero_x: [u8; 32] = [0; 32];
     let zero_y: [u8; 32] = [0; 32];
 
-    main(
+    run(
         signals, weights, 100, provider_ids, 1,
         zero_sig, zero_x, zero_y,
         0, // EU
@@ -169,7 +214,7 @@ fn test_main_revert_wrong_meets_threshold() {
     let zero_x: [u8; 32] = [0; 32];
     let zero_y: [u8; 32] = [0; 32];
 
-    main(
+    run(
         signals, weights, 100, provider_ids, 1,
         zero_sig, zero_x, zero_y,
         0, // EU
@@ -197,7 +242,7 @@ fn test_main_revert_inactive_signal_nonzero() {
     let zero_x: [u8; 32] = [0; 32];
     let zero_y: [u8; 32] = [0; 32];
 
-    main(
+    run(
         signals, weights, 100, provider_ids, 1,
         zero_sig, zero_x, zero_y,
         0,
@@ -248,7 +293,7 @@ fn prove_fixture_bundle(signature: [u8; 64]) {
     let signals = [25, 0, 0, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
     let provider_ids: [Field; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
-    main(
+    run(
         signals, weights, 100, provider_ids, 1,
         signature, FIXTURE_PUBKEY_X, FIXTURE_PUBKEY_Y,
         0, // EU
@@ -272,4 +317,44 @@ fn test_main_accepts_compliance_signed_bundle() {
 fn test_main_rejects_risk_signed_bundle() {
     // Same key and bundle, signed for RISK_SCORE_SIGNED (0x08): not a 0x07 signature.
     prove_fixture_bundle(FIXTURE_SIG_RISK_SIGNED);
+}
+
+/// The fixture bundle's valid proof as one settlement leg.
+fn fixture_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+    let signals = [25, 0, 0, 0, 0, 0, 0, 0];
+    let weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
+    let provider_ids: [Field; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+    main(
+        signals, weights, 100, provider_ids, 1,
+        FIXTURE_SIG_COMPLIANCE_SIGNED, FIXTURE_PUBKEY_X, FIXTURE_PUBKEY_Y, leg_amount, leg_salt,
+        0, // EU
+        compute_provider_set_hash(provider_ids, weights),
+        compute_config_hash(weights),
+        1700000000,
+        true,
+        FIXTURE_SIGNER_PUBKEY_HASH,
+        31337,                                      // chain_id
+        0x2e234dae75c793f67a35089c9d99245e1c58470b, // oracle_address
+        0xdead,
+        link_in,
+        link_out,
+    );
+}
+
+#[test]
+fn test_leg_extends_settlement_chain() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eed, 9500, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_for_other_amount() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eed, 950, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_from_other_root() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eee, 9500, 42, link_out);
 }

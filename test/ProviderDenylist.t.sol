@@ -57,7 +57,9 @@ contract ProviderDenylistTest is Test {
             INITIAL_CONFIG,
             bytes32(block.timestamp),
             bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(uint160(submitter)))
+            bytes32(uint256(uint160(submitter))),
+            bytes32(0), // settlement_link_in
+            bytes32(uint256(0x11a7)) // settlement_link_out (opaque to the Oracle)
         );
     }
 
@@ -235,7 +237,9 @@ contract ProviderDenylistTest is Test {
             v2,
             bytes32(block.timestamp),
             bytes32(uint256(1)),
-            bytes32(uint256(uint160(alice)))
+            bytes32(uint256(uint160(alice))),
+            bytes32(0), // settlement_link_in
+            bytes32(uint256(0x11a7)) // settlement_link_out (opaque to the Oracle)
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.ProviderDenied.selector, SUMSUB));

@@ -67,10 +67,20 @@ interface ISettlementRegistry {
     error InvalidSubTradeCount(uint8 count);
     error PatternPublicInputsMismatch(bytes32 expected, bytes32 actual);
     error PatternAnalysisTypeMismatch(uint256 expected, uint256 actual);
-    /// @notice Raised when the pattern proof's `settlement_root` public input does
-    ///         not match the keccak commitment over this trade's recorded
-    ///         sub-settlement proof hashes (audit H-1).
+    /// @notice Raised when the pattern proof's `settlement_root` public input is not
+    ///         this trade's XIP-1 settlement chain root after its last recorded leg.
     error SettlementRootMismatch(bytes32 expected, bytes32 actual);
+    /// @notice Raised when the pattern proof's `settlement_seed` is not this trade's seed.
+    error SettlementSeedMismatch(bytes32 expected, bytes32 actual);
+    /// @notice Raised when the pattern proof's `jurisdiction_id` is not the trade's.
+    error PatternJurisdictionMismatch(uint8 expected, uint256 actual);
+    /// @notice Raised when the caller-supplied leg public inputs do not hash to the
+    ///         leg attestation's stored publicInputsHash.
+    error LegPublicInputsMismatch(bytes32 expected, bytes32 actual);
+    /// @notice Raised when a leg proof's `settlement_link_in` is not the trade's
+    ///         current settlement chain root (XIP-1): the leg was proven for another
+    ///         trade or another position in this one.
+    error SettlementLinkMismatch(bytes32 tradeId, bytes32 expected, bytes32 actual);
     /// @notice Raised when the same pattern proof is presented to finalize more
     ///         than one trade (audit H-1 reuse-prevention).
     error PatternProofAlreadyUsed(bytes32 patternProofHash);
@@ -99,16 +109,21 @@ interface ISettlementRegistry {
     /// @notice Register a new multi-leg trade for settlement tracking
     /// @param tradeId Unique identifier for the trade
     /// @param jurisdictionId Jurisdiction for compliance verification
-    /// @param subTradeCount Number of sub-trades (must be in [2, 100])
+    /// @param subTradeCount Number of sub-trades (must be in [2, 16], the pattern circuit capacity)
     function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external;
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
     /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,
     ///      `block.timestamp <= expiresAt`, `timestamp >= createdAt`, unused in this trade.
+    ///      XIP-1: `legPublicInputs` must hash to the attestation's publicInputsHash and
+    ///      its last two words (settlement_link_in, settlement_link_out) must extend the
+    ///      trade's settlement chain: link_in == current root; the root becomes link_out.
     /// @param tradeId The trade to record against
     /// @param index The sub-trade index (0-based, must be < subTradeCount)
     /// @param proofHash The proof hash from a prior oracle submission
-    function recordSubSettlement(bytes32 tradeId, uint8 index, bytes32 proofHash) external;
+    /// @param legPublicInputs The leg proof's original public inputs
+    function recordSubSettlement(bytes32 tradeId, uint8 index, bytes32 proofHash, bytes calldata legPublicInputs)
+        external;
 
     /// @notice Finalize a trade after all sub-settlements are recorded
     /// @dev Requires a pattern detection proof of analysis_type=STRUCTURING for the subject.

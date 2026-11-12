@@ -56,7 +56,7 @@ contract CheckVerifierArityTest is Test {
 
     function test_check_acceptsMatchingArity() public view {
         assertEq(checker.check(address(0), riskScoreVerifier, ProofTypes.RISK_SCORE), 9);
-        assertEq(checker.check(address(0), patternVerifier, ProofTypes.PATTERN), 8);
+        assertEq(checker.check(address(0), patternVerifier, ProofTypes.PATTERN), 11);
     }
 
     function test_check_acceptsMatchingLiveVerifier() public {
@@ -79,7 +79,7 @@ contract CheckVerifierArityTest is Test {
         checker.check(address(0), patternVerifier, ProofTypes.RISK_SCORE);
     }
 
-    /// @dev The router routes RISK_SCORE to an 8-input verifier, as a deployment built from
+    /// @dev The router routes RISK_SCORE to an 11-input verifier, as a deployment built from
     ///      another commit would: the checkout's 9 is not trusted.
     function test_check_refusesLiveArityMismatch() public {
         router.setVerifierInitial(ProofTypes.RISK_SCORE, patternVerifier);

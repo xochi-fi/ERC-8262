@@ -30,26 +30,29 @@ library ProofTypes {
     /// @param proofType The proof type identifier (0x01-0x09)
     /// @return count Number of bytes32 public inputs expected
     function expectedPublicInputCount(uint8 proofType) internal pure returns (uint256 count) {
-        // compliance: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
-        if (proofType == COMPLIANCE) return 6;
+        // compliance: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter,
+        //   settlement_link_in, settlement_link_out
+        if (proofType == COMPLIANCE) return 8;
         // risk_score: proof_type, direction, bound_lower, bound_upper, result, config_hash, provider_set_hash,
         //   timestamp, submitter
         if (proofType == RISK_SCORE) return 9;
         // pattern: analysis_type, result, reporting_threshold, time_window, tx_set_hash, submitter, settlement_root,
-        //   timestamp
-        if (proofType == PATTERN) return 8;
+        //   timestamp, settlement_seed, jurisdiction_id, aggregate_reportable
+        if (proofType == PATTERN) return 11;
         // attestation: provider_id, credential_type, is_valid, credential_root, current_timestamp, submitter
         if (proofType == ATTESTATION) return 6;
         // membership: merkle_root, set_id, timestamp, is_member, submitter
         if (proofType == MEMBERSHIP) return 5;
         // non_membership: merkle_root, set_id, timestamp, is_non_member, submitter
         if (proofType == NON_MEMBERSHIP) return 5;
-        // compliance_signed: compliance fields + signer_pubkey_hash + chain_id + oracle_address
-        if (proofType == COMPLIANCE_SIGNED) return 9;
+        // compliance_signed: compliance fields + signer_pubkey_hash + chain_id + oracle_address + settlement_link_in
+        //   + settlement_link_out
+        if (proofType == COMPLIANCE_SIGNED) return 11;
         // risk_score_signed: risk_score fields + timestamp + signer_pubkey_hash + chain_id + oracle_address
         if (proofType == RISK_SCORE_SIGNED) return 12;
-        // compliance_multi_signed: compliance fields + threshold_m + 5 signer_pubkey_hash slots + chain_id + oracle_address
-        if (proofType == COMPLIANCE_MULTI_SIGNED) return 14;
+        // compliance_multi_signed: compliance fields + threshold_m + 5 signer_pubkey_hash slots + chain_id
+        //   + oracle_address + settlement_link_in + settlement_link_out
+        if (proofType == COMPLIANCE_MULTI_SIGNED) return 16;
         revert InvalidProofType(proofType);
     }
 

@@ -117,11 +117,11 @@ contract StructuringAttacks is Test {
         bytes32 b = _tradeId("reuse-b");
         _register(alice, a, 2);
         _register(alice, b, 2);
-        bytes32 leg = _submitCompliance(alice, 0);
+        (bytes32 leg, bytes memory legInputs) = _submitCompliance(alice, 0, registry.computeSettlementRoot(a));
         vm.prank(alice);
-        registry.recordSubSettlement(a, 0, leg);
+        registry.recordSubSettlement(a, 0, leg, legInputs);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.recordSubSettlement, (b, 0, leg)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.recordSubSettlement, (b, 0, leg, legInputs)));
         assertFalse(ok, "attestation reused across trades");
     }
 
@@ -147,20 +147,17 @@ contract StructuringAttacks is Test {
         bytes32 t = _tradeId("early-pattern");
         _register(alice, t, 2);
         vm.warp(block.timestamp + 10 minutes);
-        bytes32 leg0 = _submitCompliance(alice, 0);
-        bytes32 leg1 = _submitCompliance(alice, 0);
+        (bytes32 leg0, bytes memory in0) = _submitCompliance(alice, 0, registry.computeSettlementRoot(t));
+        (bytes32 leg1, bytes memory in1) = _submitCompliance(alice, 0, _linkOut(in0));
         vm.prank(alice);
-        registry.recordSubSettlement(t, 0, leg0);
-        bytes32[] memory hashes = new bytes32[](2);
-        hashes[0] = leg0;
-        hashes[1] = leg1;
-        bytes32 root = _offchainRoot(2, hashes);
+        registry.recordSubSettlement(t, 0, leg0, in0);
+        bytes32 root = _linkOut(in1);
         vm.warp(block.timestamp + 20 minutes);
         (bytes32 pattern, bytes memory inputs) =
-            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, root, block.timestamp);
+            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, t, root, block.timestamp);
         vm.warp(block.timestamp + 2 hours);
         vm.prank(alice);
-        registry.recordSubSettlement(t, 1, leg1);
+        registry.recordSubSettlement(t, 1, leg1, in1);
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.finalizeTrade, (t, pattern, inputs)));
         assertFalse(ok, "pattern proof made before the last leg finalized the trade");
@@ -214,8 +211,9 @@ contract StructuringAttacks is Test {
         bytes32 a = _tradeId("pr-a");
         _register(alice, a, 2);
         _recordLegs(alice, a, 2, 0);
-        (bytes32 pattern, bytes memory inputs) =
-            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, registry.computeSettlementRoot(a), block.timestamp);
+        (bytes32 pattern, bytes memory inputs) = _submitPattern(
+            alice, STRUCTURING, J0_THRESHOLD, 1 days, a, registry.computeSettlementRoot(a), block.timestamp
+        );
         vm.prank(alice);
         registry.finalizeTrade(a, pattern, inputs);
         bytes32 b = _tradeId("pr-b");
@@ -232,7 +230,7 @@ contract StructuringAttacks is Test {
         _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         (bytes32 pattern, bytes memory inputs) =
-            _submitPattern(alice, VELOCITY, J0_THRESHOLD, 1 days, registry.computeSettlementRoot(t), block.timestamp);
+            _submitPattern(alice, VELOCITY, J0_THRESHOLD, 1 days, t, registry.computeSettlementRoot(t), block.timestamp);
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.finalizeTrade, (t, pattern, inputs)));
         assertFalse(ok, "velocity proof finalized");
@@ -244,7 +242,7 @@ contract StructuringAttacks is Test {
         _register(alice, t, 2);
         _recordLegs(alice, t, 2, 0);
         (bytes32 pattern, bytes memory inputs) =
-            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, bytes32(0), block.timestamp);
+            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, t, bytes32(0), block.timestamp);
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.finalizeTrade, (t, pattern, inputs)));
         assertFalse(ok, "unbound pattern proof finalized");
@@ -264,18 +262,19 @@ contract StructuringAttacks is Test {
     }
 
     /// Submit and record `n` legs, `spacing` seconds apart (first leg after 1 minute).
+    /// Each leg extends the trade's settlement chain (XIP-1).
     function _recordLegs(address who, bytes32 t, uint8 n, uint256 spacing) internal {
         for (uint8 i; i < n; i++) {
             vm.warp(block.timestamp + (i == 0 ? 1 minutes : spacing));
-            bytes32 leg = _submitCompliance(who, 0);
+            (bytes32 leg, bytes memory inputs) = _submitCompliance(who, 0, registry.computeSettlementRoot(t));
             vm.prank(who);
-            registry.recordSubSettlement(t, i, leg);
+            registry.recordSubSettlement(t, i, leg, inputs);
         }
     }
 
     function _finalize(address who, bytes32 t, uint256 threshold, uint256 window, uint256 ts) internal {
         (bytes32 pattern, bytes memory inputs) =
-            _submitPattern(who, STRUCTURING, threshold, window, registry.computeSettlementRoot(t), ts);
+            _submitPattern(who, STRUCTURING, threshold, window, t, registry.computeSettlementRoot(t), ts);
         vm.prank(who);
         registry.finalizeTrade(t, pattern, inputs);
     }
@@ -287,7 +286,7 @@ contract StructuringAttacks is Test {
         (bool submitted, bytes memory ret) = address(this)
             .call(
                 abi.encodeCall(
-                    this.submitPatternExternal, (who, threshold, window, registry.computeSettlementRoot(t), ts)
+                    this.submitPatternExternal, (who, threshold, window, t, registry.computeSettlementRoot(t), ts)
                 )
             );
         if (!submitted) return false; // refused by the Oracle
@@ -297,20 +296,23 @@ contract StructuringAttacks is Test {
         return ok;
     }
 
-    function submitPatternExternal(address who, uint256 threshold, uint256 window, bytes32 root, uint256 ts)
+    function submitPatternExternal(address who, uint256 threshold, uint256 window, bytes32 t, bytes32 root, uint256 ts)
         external
         returns (bytes32, bytes memory)
     {
-        return _submitPattern(who, STRUCTURING, threshold, window, root, ts);
+        return _submitPattern(who, STRUCTURING, threshold, window, t, root, ts);
     }
 
     function _finalized(bytes32 t) internal view returns (bool) {
         return registry.getSettlement(t).finalized;
     }
 
-    function _offchainRoot(uint8 n, bytes32[] memory hashes) internal pure returns (bytes32) {
-        uint256 modulus = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
-        return bytes32(uint256(keccak256(abi.encode(n, hashes))) % modulus);
+    /// settlement_link_out of a leg's public inputs (last word). With the pass-through
+    /// verifier any value stands in for the circuit's Poseidon2 link.
+    function _linkOut(bytes memory legInputs) internal pure returns (bytes32 out) {
+        assembly {
+            out := mload(add(legInputs, mload(legInputs)))
+        }
     }
 
     function _proof() internal returns (bytes memory proof) {
@@ -322,26 +324,33 @@ contract StructuringAttacks is Test {
         }
     }
 
-    function _submitCompliance(address who, uint8 jurisdictionId) internal returns (bytes32) {
+    function _submitCompliance(address who, uint8 jurisdictionId, bytes32 linkIn)
+        internal
+        returns (bytes32, bytes memory inputs)
+    {
         bytes memory proof = _proof();
-        bytes memory inputs = abi.encodePacked(
+        inputs = abi.encodePacked(
             bytes32(uint256(jurisdictionId)),
             DEFAULT_PROVIDER_SET_HASH,
             INITIAL_CONFIG,
             bytes32(block.timestamp),
             bytes32(uint256(1)),
-            bytes32(uint256(uint160(who)))
+            bytes32(uint256(uint160(who))),
+            linkIn,
+            keccak256(abi.encode("link", _nonce))
         );
         vm.prank(who);
         oracle.submitCompliance(jurisdictionId, ProofTypes.COMPLIANCE, proof, inputs, DEFAULT_PROVIDER_SET_HASH);
-        return oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);
+        return (oracle.computeProofHash(proof, ProofTypes.COMPLIANCE), inputs);
     }
 
+    /// Pattern inputs pinned to trade `t`'s seed and jurisdiction 0.
     function _submitPattern(
         address who,
         uint256 analysisType,
         uint256 threshold,
         uint256 window,
+        bytes32 t,
         bytes32 root,
         uint256 ts
     ) internal returns (bytes32, bytes memory inputs) {
@@ -354,7 +363,10 @@ contract StructuringAttacks is Test {
             bytes32(uint256(0xabcd)),
             bytes32(uint256(uint160(who))),
             root,
-            bytes32(ts)
+            bytes32(ts),
+            registry.settlementSeed(t),
+            bytes32(uint256(0)),
+            bytes32(uint256(0))
         );
         vm.prank(who);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, inputs, bytes32(0));

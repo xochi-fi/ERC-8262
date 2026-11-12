@@ -96,11 +96,11 @@ contract ERC8262VerifierTest is ERC8262TestBase {
     }
 
     function test_verifyProof_revert_wrongPublicInputCount() public {
-        // Compliance expects 6 inputs, give it 3
+        // Compliance expects 8 inputs, give it 3
         bytes memory badInputs = abi.encodePacked(bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         vm.expectRevert(
-            abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.COMPLIANCE, 6, 3)
+            abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.COMPLIANCE, 8, 3)
         );
         verifier.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), badInputs);
     }
@@ -837,15 +837,15 @@ contract ERC8262VerifierTest is ERC8262TestBase {
     // -------------------------------------------------------------------------
 
     function test_verifyProof_revert_unalignedPublicInputs() public {
-        bytes memory unaligned = new bytes(193); // 6*32 + 1
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 193));
+        bytes memory unaligned = new bytes(257); // 8*32 + 1
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 257));
         verifier.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), unaligned);
     }
 
     function testFuzz_verifyProof_revert_unalignedPublicInputs(uint256 extra) public {
         extra = bound(extra, 1, 31);
-        bytes memory unaligned = new bytes(6 * 32 + extra);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 6 * 32 + extra));
+        bytes memory unaligned = new bytes(8 * 32 + extra);
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 8 * 32 + extra));
         verifier.verifyProof(ProofTypes.COMPLIANCE, _dummyProof(), unaligned);
     }
 
@@ -1063,7 +1063,8 @@ contract ERC8262VerifierTest is ERC8262TestBase {
     // Helpers
     // -------------------------------------------------------------------------
 
-    /// @dev 6 public inputs: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter
+    /// @dev 8 public inputs: jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter,
+    ///      settlement_link_in, settlement_link_out
     function _complianceInputs() internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(0)), // jurisdiction_id: EU
@@ -1071,7 +1072,9 @@ contract ERC8262VerifierTest is ERC8262TestBase {
             bytes32(uint256(0xccdd)), // config_hash
             bytes32(uint256(1700000)), // timestamp
             bytes32(uint256(1)), // meets_threshold: true
-            bytes32(uint256(0xdead)) // submitter
+            bytes32(uint256(0xdead)), // submitter
+            bytes32(0), // settlement_link_in
+            bytes32(uint256(0x11a7)) // settlement_link_out
         );
     }
 
@@ -1091,8 +1094,9 @@ contract ERC8262VerifierTest is ERC8262TestBase {
         );
     }
 
-    /// @dev 8 public inputs: analysis_type, result, reporting_threshold, time_window,
-    ///      tx_set_hash, submitter, settlement_root (audit H-1), timestamp
+    /// @dev 11 public inputs: analysis_type, result, reporting_threshold, time_window,
+    ///      tx_set_hash, submitter, settlement_root (audit H-1), timestamp, settlement_seed,
+    ///      jurisdiction_id, aggregate_reportable
     function _patternInputs() internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(1)), // analysis_type: structuring
@@ -1102,7 +1106,10 @@ contract ERC8262VerifierTest is ERC8262TestBase {
             bytes32(uint256(0xeeff)), // tx_set_hash
             bytes32(uint256(0xdead)), // submitter
             bytes32(0), // settlement_root (audit H-1)
-            bytes32(uint256(1700000000)) // timestamp
+            bytes32(uint256(1700000000)), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
     }
 

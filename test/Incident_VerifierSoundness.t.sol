@@ -50,7 +50,7 @@ contract IncidentVerifierSoundnessTest is Test {
     }
 
     function _validInputs() internal view returns (bytes memory) {
-        // COMPLIANCE has 6 logical pubs; the router only validates length, the
+        // COMPLIANCE has 8 logical pubs; the router only validates length, the
         // generated verifier is replaced by the stub which ignores contents.
         return abi.encodePacked(
             bytes32(uint256(0)), // jurisdictionId
@@ -58,7 +58,9 @@ contract IncidentVerifierSoundnessTest is Test {
             bytes32(uint256(2)), // configHash
             bytes32(block.timestamp), // timestamp
             bytes32(uint256(1)), // meetsThreshold
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlementLinkIn
+            bytes32(uint256(0x11a7)) // settlementLinkOut
         );
     }
 

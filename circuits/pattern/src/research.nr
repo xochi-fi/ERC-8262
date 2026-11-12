@@ -22,7 +22,7 @@
 //! units; 999_999 units is another jurisdiction's threshold.
 
 use crate::main;
-use erc8262_shared::compute_tx_set_hash;
+use erc8262_shared::{compute_tx_set_hash, settlement_link};
 
 global MAXR: u32 = 32;
 global UNIT: u128 = 1000000000000000000;
@@ -34,6 +34,8 @@ global J0_THRESHOLD: u128 = 10000;
 global FOREIGN_THRESHOLD: u128 = 999999;
 global SUBMITTER: Field = 0xdead;
 global STRUCTURING: u8 = 1;
+/// Registry-derived per-trade chain seed (keccak(...) mod p on-chain).
+global SEED: Field = 0x5eed;
 
 pub struct Legs {
     amounts: [u128; MAXR],
@@ -56,27 +58,43 @@ pub struct Claim {
 }
 
 // ---------------------------------------------------------------------------
-// Design adapter (baseline: current circuit)
+// Design adapter (H1: settlement chain over whole-unit legs)
 // ---------------------------------------------------------------------------
 
-/// Baseline: nothing the chain knows reaches the analysis. The registry's
-/// settlement_root is keccak over leg proof hashes, which the circuit never
-/// constrains, so any value stands in for it. The prover downscales base units
-/// to whole units to fit u64 and picks the threshold from the Oracle's global set.
+/// Leg amount as committed in the settlement chain (H1: whole units, u64).
+fn committed_amount(base_units: u128) -> u64 {
+    (base_units / UNIT) as u64
+}
+
+/// The root the registry holds after recording every pinned leg: each leg's
+/// compliance proof extended the chain by one link from the trade's seed.
+fn registry_root(p: Pinned) -> Field {
+    let mut root = SEED;
+    for i in 0..MAXR {
+        if i < p.legs.n {
+            root = settlement_link(root, committed_amount(p.legs.amounts[i]), p.legs.timestamps[i], p.legs.salts[i]);
+        }
+    }
+    root
+}
+
+/// H1: the registry pins settlement_seed, settlement_root and jurisdiction_id;
+/// the circuit refolds the chain over the analysed legs. Threshold still free
+/// (any Oracle-registered value).
 fn attempt(pinned: Pinned, c: Claim) {
-    let _ = pinned;
-    let _ = c.reportable; // baseline has no aggregate output
     let mut amounts: [u64; 16] = [0; 16];
     let mut timestamps: [u64; 16] = [0; 16];
+    let mut salts: [Field; 16] = [0; 16];
     for i in 0..16 {
-        amounts[i] = (c.legs.amounts[i] / UNIT) as u64;
+        amounts[i] = committed_amount(c.legs.amounts[i]);
         timestamps[i] = c.legs.timestamps[i];
+        salts[i] = c.legs.salts[i];
     }
     let tx_set_hash = compute_tx_set_hash(amounts, timestamps);
-    let registry_root: Field = 0x5e77;
     main(
         amounts,
         timestamps,
+        salts,
         c.legs.n,
         STRUCTURING,
         c.clean,
@@ -84,8 +102,11 @@ fn attempt(pinned: Pinned, c: Claim) {
         c.window,
         tx_set_hash,
         SUBMITTER,
-        registry_root,
+        registry_root(pinned),
         PROOF_TS as Field,
+        SEED,
+        pinned.jurisdiction_id,
+        c.reportable,
     );
 }
 

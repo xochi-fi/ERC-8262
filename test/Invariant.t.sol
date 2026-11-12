@@ -65,7 +65,9 @@ contract Handler is Test {
             oracle.providerConfigHash(),
             bytes32(proofTimestamp),
             bytes32(uint256(1)),
-            bytes32(uint256(uint160(address(this))))
+            bytes32(uint256(uint160(address(this)))),
+            bytes32(0), // settlement_link_in
+            bytes32(uint256(0x11a7)) // settlement_link_out (opaque to the Oracle)
         );
 
         bytes32 proofHash = oracle.computeProofHash(proof, ProofTypes.COMPLIANCE);

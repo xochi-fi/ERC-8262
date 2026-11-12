@@ -16,7 +16,7 @@
 ///     prover convention is weight_sum=1, weights=[1,0,..], signals=[0;8] so that
 ///     compute_risk_score does not divide by zero and verify_weight_sum is satisfied.
 ///
-/// Public inputs (14 logical, all 32-byte aligned in the Solidity calldata):
+/// Public inputs (16 logical, all 32-byte aligned in the Solidity calldata):
 ///   - jurisdiction_id
 ///   - provider_set_hash       (shared across slots)
 ///   - config_hash             (shared across slots)
@@ -27,6 +27,16 @@
 ///   - chain_id                (audit F-6)
 ///   - oracle_address          (audit F-6)
 ///   - submitter
+///   - settlement_link_in / settlement_link_out (XIP-1): one link of a split
+///     settlement's chain, link_out = settlement_link(link_in, leg_amount, timestamp,
+///     leg_salt). SettlementRegistry accepts the leg only if link_in is the trade's
+///     current root and then stores link_out. Standalone use: any link_in. Not part
+///     of any slot's signed digest.
+///
+/// Private inputs (known only to prover):
+///   - signals, weights, weight_sums: per-slot screening data
+///   - pubkey_xs, pubkey_ys, signatures: per-slot provider keys and ECDSA signatures
+///   - leg_amount / leg_salt: the settlement leg's amount and blinding (XIP-1)
 
 use erc8262_shared::{
     compute_risk_score,
@@ -38,6 +48,7 @@ use erc8262_shared::{
     assert_distinct_signers,
     count_active_signers,
     validate_timestamp,
+    settlement_link,
 };
 
 fn main(
@@ -49,6 +60,8 @@ fn main(
     pubkey_xs: [[u8; 32]; 5],
     pubkey_ys: [[u8; 32]; 5],
     signatures: [[u8; 64]; 5],
+    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
     jurisdiction_id: pub u8,
@@ -65,6 +78,8 @@ fn main(
     chain_id: pub Field,
     oracle_address: pub Field,
     submitter: pub Field,
+    settlement_link_in: pub Field,  // XIP-1: settlement chain root before this leg
+    settlement_link_out: pub Field, // XIP-1: settlement chain root after this leg
 ) {
     // 1. Threshold bounds
     assert(threshold_m >= 1, "threshold_m must be at least 1");
@@ -139,15 +154,53 @@ fn main(
     //    >= threshold_m slots, each individually below the floor). The public output
     //    must commit to true.
     assert(meets_threshold, "meets_threshold must be true");
+
+    // 10. XIP-1: extend the settlement chain by this leg (timestamp = proof time).
+    let link = settlement_link(settlement_link_in, leg_amount, timestamp as u64, leg_salt);
+    assert(link == settlement_link_out, "Settlement link mismatch");
+}
+
+/// Pre-XIP-1 call shape for the tests: standalone use (link_in 0, zero leg).
+fn run(
+    signals: [[u32; 8]; 5],
+    weights: [[u32; 8]; 5],
+    weight_sums: [u32; 5],
+    pubkey_xs: [[u8; 32]; 5],
+    pubkey_ys: [[u8; 32]; 5],
+    signatures: [[u8; 64]; 5],
+    jurisdiction_id: u8,
+    provider_set_hash: Field,
+    config_hash: Field,
+    timestamp: Field,
+    meets_threshold: bool,
+    threshold_m: u8,
+    signer_pubkey_hash_0: Field,
+    signer_pubkey_hash_1: Field,
+    signer_pubkey_hash_2: Field,
+    signer_pubkey_hash_3: Field,
+    signer_pubkey_hash_4: Field,
+    chain_id: Field,
+    oracle_address: Field,
+    submitter: Field,
+) {
+    let link_out = settlement_link(0, 0, timestamp as u64, 0);
+    main(
+        signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures, 0, 0,
+        jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold,
+        threshold_m,
+        signer_pubkey_hash_0, signer_pubkey_hash_1, signer_pubkey_hash_2,
+        signer_pubkey_hash_3, signer_pubkey_hash_4,
+        chain_id, oracle_address, submitter,
+        0, link_out,
+    );
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 //
-// Happy-path tests require valid secp256k1 signatures over the in-circuit Pedersen
-// digest; those are exercised via Foundry fixtures with ethers/alloy signing keys.
-// Nargo tests below cover structural failures that do not need a valid signature.
+// The structural-failure tests below need no valid signature. The settlement-leg
+// tests at the end reuse Prover.toml's signed 2-of-5 bundle.
 
 #[test(should_fail_with = "threshold_m must be at least 1")]
 fn test_main_revert_threshold_zero() {
@@ -163,7 +216,7 @@ fn test_main_revert_threshold_zero() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, // EU
         0xdead,
@@ -191,7 +244,7 @@ fn test_main_revert_threshold_too_high() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, 0xdead, 0xbeef, 1700000000, true,
         6, // > MAX_PROVIDERS_MULTI (5)
@@ -214,7 +267,7 @@ fn test_main_revert_active_count_below_threshold() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, 0xdead, 0xbeef, 1700000000, true,
         3, // demand 3 active
@@ -237,7 +290,7 @@ fn test_main_revert_duplicate_signers() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, 0xdead, 0xbeef, 1700000000, true,
         2,
@@ -260,7 +313,7 @@ fn test_main_revert_zero_submitter() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, 0xdead, 0xbeef, 1700000000, true, 1,
         0, 0, 0, 0, 0,
@@ -287,7 +340,7 @@ fn test_main_revert_active_slot_above_floor() {
     let pubkey_ys: [[u8; 32]; 5] = [zero_pk; 5];
     let signatures: [[u8; 64]; 5] = [zero_sig; 5];
 
-    main(
+    run(
         signals, weights, weight_sums, pubkey_xs, pubkey_ys, signatures,
         0, // EU, threshold 7100
         0xdead, 0xbeef, 1700000000, true, 1,
@@ -300,3 +353,102 @@ fn test_main_revert_active_slot_above_floor() {
 // the active_count check fires first when slots are inactive (and signature verify
 // fires when slots are active but the witness has dummy keys). Exercised via Foundry
 // fixtures with real ECDSA signing keys instead.
+
+// ---------------------------------------------------------------------------
+// Settlement-leg tests (XIP-1). The witness is Prover.toml's US 2-of-5 bundle (slots
+// 0 and 2 active, signed via @xochi/provider signSlotPayload; see Prover.toml for
+// provenance). Inactive slots carry pubkey 2G and signature r = s = 1.
+// ---------------------------------------------------------------------------
+
+global FIXTURE_PUBKEY_X_0: [u8; 32] = [
+    32, 200, 84, 126, 134, 190, 235, 89, 194, 183, 197, 14, 72, 83, 155, 145, 70, 127, 150, 181,
+    178, 60, 72, 184, 9, 78, 30, 217, 164, 212, 226, 66,
+];
+global FIXTURE_PUBKEY_Y_0: [u8; 32] = [
+    45, 74, 60, 178, 139, 138, 55, 189, 66, 187, 156, 255, 146, 98, 182, 228, 212, 219, 184, 140,
+    139, 128, 126, 35, 147, 85, 247, 92, 95, 166, 66, 144,
+];
+global FIXTURE_PUBKEY_X_2: [u8; 32] = [
+    253, 204, 83, 103, 21, 78, 54, 83, 31, 229, 89, 136, 198, 83, 192, 36, 97, 182, 29, 228, 19,
+    233, 173, 0, 15, 134, 197, 86, 168, 195, 17, 190,
+];
+global FIXTURE_PUBKEY_Y_2: [u8; 32] = [
+    15, 246, 126, 99, 123, 111, 128, 191, 152, 137, 238, 22, 206, 92, 15, 114, 232, 218, 126,
+    206, 193, 36, 184, 169, 129, 187, 231, 144, 86, 75, 30, 6,
+];
+global PAD_PUBKEY_X: [u8; 32] = [
+    198, 4, 127, 148, 65, 237, 125, 109, 48, 69, 64, 110, 149, 192, 124, 216, 92, 119, 142, 75,
+    140, 239, 60, 167, 171, 172, 9, 185, 92, 112, 158, 229,
+];
+global PAD_PUBKEY_Y: [u8; 32] = [
+    26, 225, 104, 254, 166, 61, 195, 57, 163, 197, 132, 25, 70, 108, 234, 238, 247, 246, 50, 101,
+    50, 102, 208, 225, 35, 100, 49, 169, 80, 207, 229, 42,
+];
+global FIXTURE_SIG_0: [u8; 64] = [
+    204, 73, 40, 53, 125, 29, 157, 48, 165, 157, 193, 191, 52, 146, 252, 105, 82, 168, 151, 186,
+    220, 169, 12, 75, 41, 199, 95, 153, 214, 33, 75, 64, 123, 156, 210, 17, 96, 88, 221, 84, 247,
+    242, 142, 57, 218, 156, 15, 172, 96, 242, 138, 212, 197, 181, 83, 199, 103, 184, 237, 244,
+    242, 164, 224, 53,
+];
+global FIXTURE_SIG_2: [u8; 64] = [
+    88, 175, 244, 218, 171, 130, 90, 176, 10, 110, 162, 173, 198, 210, 91, 167, 35, 0, 184, 82,
+    108, 214, 1, 96, 247, 50, 122, 115, 33, 187, 127, 37, 127, 160, 104, 4, 235, 108, 16, 182, 1,
+    18, 206, 203, 160, 162, 96, 114, 254, 136, 27, 176, 160, 192, 26, 121, 170, 113, 246, 44,
+    189, 55, 71, 68,
+];
+
+/// Prove the fixture 2-of-5 bundle as one settlement leg.
+fn fixture_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+    let active_signals: [u32; 8] = [25, 0, 0, 0, 0, 0, 0, 0];
+    let pad_signals: [u32; 8] = [0; 8];
+    let active_weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
+    let pad_weights: [u32; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+    let mut pad_sig: [u8; 64] = [0; 64];
+    pad_sig[31] = 1;
+    pad_sig[63] = 1;
+
+    main(
+        [active_signals, pad_signals, active_signals, pad_signals, pad_signals],
+        [active_weights, pad_weights, active_weights, pad_weights, pad_weights],
+        [100, 1, 100, 1, 1],
+        [FIXTURE_PUBKEY_X_0, PAD_PUBKEY_X, FIXTURE_PUBKEY_X_2, PAD_PUBKEY_X, PAD_PUBKEY_X],
+        [FIXTURE_PUBKEY_Y_0, PAD_PUBKEY_Y, FIXTURE_PUBKEY_Y_2, PAD_PUBKEY_Y, PAD_PUBKEY_Y],
+        [FIXTURE_SIG_0, pad_sig, FIXTURE_SIG_2, pad_sig, pad_sig],
+        leg_amount,
+        leg_salt,
+        1, // US
+        0x14b6becf762f80a24078e62fc9a7eca246b8e406d19962dda817b173f30a94b2, // provider_set_hash
+        0x18574f427f33c6c77af53be06544bd749c9a1db855599d950af61ea613df8405, // config_hash
+        1700000000,
+        true,
+        2, // threshold_m
+        0x294fc7a4edbc711b1c3ceceb89474957aea2974dbf3d27efe759a1ecef35d6dc,
+        0,
+        0x2eb905640e16a7a7cb2fc08f412e4db744621a9b8ea6c760cedeefc5004e1b20,
+        0,
+        0,
+        31337,                                      // chain_id
+        0x2e234dae75c793f67a35089c9d99245e1c58470b, // oracle_address
+        0xdead,
+        link_in,
+        link_out,
+    );
+}
+
+#[test]
+fn test_leg_extends_settlement_chain() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eed, 9500, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_for_other_amount() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eed, 950, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_from_other_root() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    fixture_leg(0x5eee, 9500, 42, link_out);
+}

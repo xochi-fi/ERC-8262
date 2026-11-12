@@ -26,6 +26,11 @@ abstract contract OracleTestBase is ERC8262TestBase {
     uint256 internal constant DEFAULT_PROVIDER_ID = 42;
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
 
+    /// @dev Placeholder `settlement_link_out` (XIP-1) for compliance-family inputs. The
+    ///      Oracle treats the settlement link words as opaque, so any value is accepted;
+    ///      `settlement_link_in` is 0 (no predecessor leg).
+    bytes32 internal constant DEFAULT_SETTLEMENT_LINK_OUT = bytes32(uint256(0x11a7));
+
     /// @dev Deterministic test signing key for credential-root signatures (audit C-1).
     ///      Registered as the credential signer for `DEFAULT_PROVIDER_ID` in `_setUpOracle`.
     uint256 internal constant CREDENTIAL_SIGNER_KEY = uint256(keccak256("erc8262-test-credential-signer"));
@@ -147,7 +152,7 @@ abstract contract OracleTestBase is ERC8262TestBase {
     // Public-input builders (per proof type)
     // -------------------------------------------------------------------------
 
-    /// @dev 6 public inputs matching the compliance circuit (jurisdiction = 0, alice submitter).
+    /// @dev 8 public inputs matching the compliance circuit (jurisdiction = 0, alice submitter).
     function _complianceInputs() internal view returns (bytes memory) {
         return _complianceInputsFor(0, DEFAULT_PROVIDER_SET_HASH, alice);
     }
@@ -169,11 +174,14 @@ abstract contract OracleTestBase is ERC8262TestBase {
             INITIAL_CONFIG,
             bytes32(block.timestamp),
             bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(uint160(submitter)))
+            bytes32(uint256(uint160(submitter))),
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
     }
 
-    /// @dev COMPLIANCE_SIGNED public inputs (9 slots: compliance + signer_pubkey_hash + chain_id + oracle_address).
+    /// @dev COMPLIANCE_SIGNED public inputs (11 slots: compliance + signer_pubkey_hash + chain_id + oracle_address
+    ///      + submitter + settlement_link_in + settlement_link_out).
     function _complianceSignedInputs(
         uint8 jurisdictionId,
         bytes32 providerSetHash,
@@ -189,12 +197,15 @@ abstract contract OracleTestBase is ERC8262TestBase {
             signerPubkeyHash,
             bytes32(block.chainid),
             bytes32(uint256(uint160(address(oracle)))),
-            bytes32(uint256(uint160(submitter)))
+            bytes32(uint256(uint160(submitter))),
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
     }
 
-    /// @dev COMPLIANCE_MULTI_SIGNED public inputs (14 slots: compliance + threshold_m
-    ///      + 5 signer_pubkey_hash slots + chain_id + oracle_address).
+    /// @dev COMPLIANCE_MULTI_SIGNED public inputs (16 slots: compliance + threshold_m
+    ///      + 5 signer_pubkey_hash slots + chain_id + oracle_address + submitter
+    ///      + settlement_link_in + settlement_link_out).
     function _complianceMultiSignedInputs(
         uint8 jurisdictionId,
         bytes32 providerSetHash,
@@ -202,21 +213,28 @@ abstract contract OracleTestBase is ERC8262TestBase {
         bytes32[5] memory signerHashes,
         address submitter
     ) internal view returns (bytes memory) {
-        return abi.encodePacked(
-            bytes32(uint256(jurisdictionId)),
-            providerSetHash,
-            INITIAL_CONFIG,
-            bytes32(block.timestamp),
-            bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(thresholdM)),
-            signerHashes[0],
-            signerHashes[1],
-            signerHashes[2],
-            signerHashes[3],
-            signerHashes[4],
-            bytes32(block.chainid),
-            bytes32(uint256(uint160(address(oracle)))),
-            bytes32(uint256(uint160(submitter)))
+        // Two halves: a single 16-argument encodePacked is stack-too-deep under legacy codegen.
+        return bytes.concat(
+            abi.encodePacked(
+                bytes32(uint256(jurisdictionId)),
+                providerSetHash,
+                INITIAL_CONFIG,
+                bytes32(block.timestamp),
+                bytes32(uint256(1)), // meets_threshold
+                bytes32(uint256(thresholdM)),
+                signerHashes[0],
+                signerHashes[1]
+            ),
+            abi.encodePacked(
+                signerHashes[2],
+                signerHashes[3],
+                signerHashes[4],
+                bytes32(block.chainid),
+                bytes32(uint256(uint160(address(oracle)))),
+                bytes32(uint256(uint160(submitter))),
+                bytes32(0), // settlement_link_in
+                DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
+            )
         );
     }
 
@@ -273,8 +291,9 @@ abstract contract OracleTestBase is ERC8262TestBase {
         );
     }
 
-    /// @dev PATTERN public inputs (8 slots: structuring analysis, registered 10000 threshold,
-    ///      settlement_root = 0) with an explicit proof timestamp.
+    /// @dev PATTERN public inputs (11 slots: structuring analysis, registered 10000 threshold,
+    ///      settlement_root = 0, settlement_seed = 0, jurisdiction_id = 0, aggregate_reportable = 0)
+    ///      with an explicit proof timestamp.
     function _patternInputs(address submitter, uint256 timestamp) internal pure returns (bytes memory) {
         return abi.encodePacked(
             bytes32(uint256(1)), // analysis_type: structuring
@@ -284,7 +303,10 @@ abstract contract OracleTestBase is ERC8262TestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(submitter))), // submitter
             bytes32(0), // settlement_root
-            bytes32(timestamp) // timestamp
+            bytes32(timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
     }
 

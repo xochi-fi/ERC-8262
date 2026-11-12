@@ -17,25 +17,32 @@
 ///                  lies in [timestamp - time_window, timestamp]
 ///   - tx_set_hash: commitment to the transaction set analyzed
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
-///   - settlement_root: opaque, prover-declared binding to a downstream consumer's
-///                      settlement set (audit H-1). The circuit treats this as
-///                      opaque; consumers (e.g. SettlementRegistry) recompute the
-///                      expected value from their own state and assert equality.
-///                      Set to 0 for standalone use (no downstream binding).
+///   - settlement_root: XIP-1 binding. The circuit folds the settlement chain from
+///                      `settlement_seed` over the analysed transactions
+///                      (shared::settlement) and asserts the result equals this
+///                      value. SettlementRegistry pins it to the chain its legs'
+///                      compliance proofs built, so the analysis covers exactly the
+///                      recorded legs with their committed amounts and timestamps.
 ///   - timestamp: prover-chosen proof time; the Oracle enforces freshness
 ///                (MAX_PROOF_AGE, no future timestamps). The circuit binds every
 ///                active transaction timestamp into [timestamp - time_window, timestamp],
-///                so an honest prover's analyzed set is recent. The transactions are
-///                private, unsigned witness data: a dishonest prover can relabel old
-///                ones into the window, so this is a consistency rule, not a control.
+///                so the analysed set is recent. With a registry-pinned settlement_root
+///                the timestamps are the legs' committed ones, so they cannot be
+///                relabelled; standalone (unbound) use is a consistency rule only.
 ///                Appended last so settlement_root keeps its index.
+///   - settlement_seed: chain start; SettlementRegistry pins it to its per-trade seed
+///                      (standalone use: any value, settlement_root is then unbound).
+///   - jurisdiction_id: trade jurisdiction (SettlementRegistry pins it).
+///   - aggregate_reportable: whether the analysed transactions sum to at least the
+///                           reporting threshold.
 ///
 /// Private inputs:
 ///   - amounts: transaction amounts
 ///   - timestamps: transaction timestamps
+///   - salts: per-leg blinding committed in the settlement chain
 ///   - num_transactions: how many are active
 
-use erc8262_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, validate_timestamp};
+use erc8262_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, fold_settlement_root, validate_timestamp};
 
 mod research;
 
@@ -63,6 +70,7 @@ fn main(
     // --- Private ---
     amounts: [u64; 16],
     timestamps: [u64; 16],
+    salts: [Field; 16],
     num_transactions: u32,
 
     // --- Public ---
@@ -72,14 +80,15 @@ fn main(
     time_window: pub u64,          // analysis window in seconds
     tx_set_hash: pub Field,        // commitment to the analyzed set
     submitter: pub Field,          // authorized submitter address (oracle enforces == msg.sender)
-    settlement_root: pub Field,    // audit H-1: opaque declarative binding to a downstream
-                                   // settlement set; consumers verify off-circuit (0 = unbound)
+    settlement_root: pub Field,    // XIP-1: settlement chain folded over the analysed set
     timestamp: pub Field,          // prover-chosen; Oracle enforces freshness
+    settlement_seed: pub Field,    // XIP-1: chain start (registry-pinned per trade)
+    jurisdiction_id: pub u8,       // XIP-1: trade jurisdiction (registry-pinned)
+    aggregate_reportable: pub bool, // XIP-1: sum of analysed amounts >= threshold
 ) {
-    // Reference settlement_root so the compiler keeps it as a public input.
-    // Intentionally unconstrained: the circuit makes no claim about the value;
-    // verification of binding (or unboundedness) is the downstream consumer's job.
-    let _ = settlement_root;
+    // Not yet constrained (later XIP-1 hypotheses); referenced so they stay public.
+    let _ = jurisdiction_id;
+    let _ = aggregate_reportable;
     // Validate inputs
     assert(num_transactions >= 1, "At least one transaction required");
     assert(num_transactions <= MAX_TRANSACTIONS, "Too many transactions");
@@ -108,8 +117,13 @@ fn main(
         } else {
             assert(amounts[i] == 0, "Inactive amount must be zero");
             assert(timestamps[i] == 0, "Inactive timestamp must be zero");
+            assert(salts[i] == 0, "Inactive salt must be zero");
         }
     }
+
+    // XIP-1: the analysed set is exactly the settlement chain's legs.
+    let root = fold_settlement_root(settlement_seed, amounts, timestamps, salts, num_transactions);
+    assert(root == settlement_root, "Settlement root mismatch");
 
     // Verify tx_set_hash
     let computed_hash = compute_tx_set_hash(amounts, timestamps);
@@ -245,7 +259,7 @@ fn test_main_structuring_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -255,7 +269,7 @@ fn test_main_velocity_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -265,7 +279,7 @@ fn test_main_round_amounts_clean() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -276,7 +290,7 @@ fn test_main_structuring_detected() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -287,7 +301,7 @@ fn test_structuring_threshold_boundary() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -297,7 +311,7 @@ fn test_velocity_exactly_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -307,7 +321,7 @@ fn test_velocity_exceeds_max() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -318,7 +332,7 @@ fn test_round_amounts_all_round() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -331,7 +345,7 @@ fn test_structuring_max_threshold_single_tx() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
@@ -345,7 +359,7 @@ fn test_structuring_max_threshold_single_tx_suspicious() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test(should_fail_with = "Timestamp before 2021")]
@@ -355,7 +369,7 @@ fn test_main_revert_timestamp_before_2021() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1000);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1000);
 }
 
 #[test(should_fail_with = "Timestamp unreasonably far future")]
@@ -365,7 +379,7 @@ fn test_main_revert_timestamp_far_future() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1099511627776);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1099511627776);
 }
 
 #[test(should_fail_with = "Transaction after proof timestamp")]
@@ -375,7 +389,7 @@ fn test_main_revert_transaction_after_proof_timestamp() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700002999);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700002999);
 }
 
 #[test(should_fail_with = "Transaction outside time window")]
@@ -386,7 +400,7 @@ fn test_main_revert_transaction_outside_time_window() {
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
     // Oldest transaction is 3601s before the proof timestamp; window is 3600s.
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003601);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003601);
 }
 
 #[test]
@@ -397,5 +411,47 @@ fn test_main_transaction_at_proof_timestamp() {
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    main(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003000);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003000);
+}
+
+/// Analysis-test call shape: unbound use (seed 0, zero salts), jurisdiction 0,
+/// aggregate flag computed from the amounts. `_unbound_root` keeps the pre-XIP-1
+/// argument order; the root is derived.
+fn run(
+    amounts: [u64; 16],
+    timestamps: [u64; 16],
+    num_transactions: u32,
+    analysis_type: u8,
+    result: bool,
+    reporting_threshold: u64,
+    time_window: u64,
+    tx_set_hash: Field,
+    submitter: Field,
+    _unbound_root: Field,
+    timestamp: Field,
+) {
+    let salts: [Field; 16] = [0; 16];
+    let root = fold_settlement_root(0, amounts, timestamps, salts, num_transactions);
+    let mut sum: u128 = 0;
+    for i in 0..16 {
+        sum += amounts[i] as u128;
+    }
+    let aggregate_reportable = sum >= reporting_threshold as u128;
+    main(
+        amounts,
+        timestamps,
+        salts,
+        num_transactions,
+        analysis_type,
+        result,
+        reporting_threshold,
+        time_window,
+        tx_set_hash,
+        submitter,
+        root,
+        timestamp,
+        0,
+        0,
+        aggregate_reportable,
+    );
 }

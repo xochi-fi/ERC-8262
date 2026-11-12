@@ -57,7 +57,9 @@ contract AttestationRatchetTest is Test {
             INITIAL_CONFIG,
             bytes32(proofTimestamp),
             bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(uint160(submitter)))
+            bytes32(uint256(uint160(submitter))),
+            bytes32(0), // settlement_link_in
+            bytes32(uint256(0x11a7)) // settlement_link_out (opaque to the Oracle)
         );
     }
 

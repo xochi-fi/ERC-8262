@@ -495,7 +495,9 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xdead)), // config_hash (not registered)
             bytes32(uint256(1700000)), // timestamp
             bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ERC8262Oracle.InvalidConfigHash.selector, bytes32(uint256(0xdead))));
@@ -635,7 +637,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root (audit H-1)
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
@@ -711,12 +716,12 @@ contract ERC8262OracleTest is OracleTestBase {
     // -------------------------------------------------------------------------
 
     function test_submitCompliance_revert_nonAlignedPublicInputs() public {
-        // 193 bytes = 6*32 + 1 -- extra trailing byte
+        // 257 bytes = 8*32 + 1 -- extra trailing byte
         // Build valid compliance inputs then append one byte
         bytes memory aligned = _complianceInputs();
         bytes memory unaligned = abi.encodePacked(aligned, uint8(0xff));
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 193));
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.UnalignedPublicInputs.selector, 257));
         oracle.submitCompliance(0, ProofTypes.COMPLIANCE, _uniqueProof(), unaligned, DEFAULT_PROVIDER_SET_HASH);
     }
 
@@ -847,7 +852,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0)), // tx_set_hash = 0 (invalid)
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
@@ -866,7 +874,9 @@ contract ERC8262OracleTest is OracleTestBase {
             INITIAL_CONFIG, // config_hash
             bytes32(uint256(1700000)), // timestamp
             bytes32(uint256(0)), // meets_threshold = false
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
@@ -901,7 +911,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.ProofResultNegative.selector);
@@ -984,7 +997,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         oracle.submitCompliance(0, ProofTypes.PATTERN, proof, patternInputs, bytes32(0));
@@ -1603,7 +1619,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         vm.expectRevert(
@@ -1621,7 +1640,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         uint256 minWindow = oracle.MIN_TIME_WINDOW();
         vm.prank(alice);
@@ -1638,7 +1660,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
@@ -1655,7 +1680,10 @@ contract ERC8262OracleTest is OracleTestBase {
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
             bytes32(0), // settlement_root
-            bytes32(block.timestamp) // timestamp
+            bytes32(block.timestamp), // timestamp
+            bytes32(0), // settlement_seed
+            bytes32(0), // jurisdiction_id
+            bytes32(0) // aggregate_reportable
         );
     }
 
@@ -1698,7 +1726,9 @@ contract ERC8262OracleTest is OracleTestBase {
             INITIAL_CONFIG,
             bytes32(uint256(1700000000 - 3601)), // timestamp: 1 second past MAX_PROOF_AGE
             bytes32(uint256(1)), // meets_threshold
-            bytes32(uint256(uint160(alice))) // submitter
+            bytes32(uint256(uint160(alice))), // submitter
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
         vm.prank(alice);
         vm.expectRevert(
@@ -1715,7 +1745,9 @@ contract ERC8262OracleTest is OracleTestBase {
             INITIAL_CONFIG,
             bytes32(uint256(1700000000 + 1)), // timestamp: any future is rejected (audit M-1)
             bytes32(uint256(1)),
-            bytes32(uint256(uint160(alice)))
+            bytes32(uint256(uint160(alice))),
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
         vm.prank(alice);
         vm.expectRevert(
@@ -1732,7 +1764,9 @@ contract ERC8262OracleTest is OracleTestBase {
             INITIAL_CONFIG,
             bytes32(uint256(1700000000 - 3600)), // exactly at MAX_PROOF_AGE boundary
             bytes32(uint256(1)),
-            bytes32(uint256(uint160(alice)))
+            bytes32(uint256(uint160(alice))),
+            bytes32(0), // settlement_link_in
+            DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
         );
         vm.prank(alice);
         IERC8262Oracle.ComplianceAttestation memory att =
@@ -1873,7 +1907,7 @@ contract ERC8262OracleTest is OracleTestBase {
             abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.RISK_SCORE, 9, 8)
         );
         oracle.submitCompliance(0, ProofTypes.RISK_SCORE, _uniqueProof(), legacyRisk, bytes32(0));
-        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.PATTERN, 8, 7));
+        vm.expectRevert(abi.encodeWithSelector(ProofTypes.InvalidPublicInputLength.selector, ProofTypes.PATTERN, 11, 7));
         oracle.submitCompliance(0, ProofTypes.PATTERN, _uniqueProof(), legacyPattern, bytes32(0));
         vm.stopPrank();
     }
@@ -1998,7 +2032,10 @@ contract ERC8262OracleTest is OracleTestBase {
                 bytes32(uint256(0xabcd)),
                 bytes32(uint256(uint160(alice))),
                 bytes32(0), // settlement_root
-                bytes32(block.timestamp) // timestamp
+                bytes32(block.timestamp), // timestamp
+                bytes32(0), // settlement_seed
+                bytes32(0), // jurisdiction_id
+                bytes32(0) // aggregate_reportable
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));
@@ -2483,7 +2520,9 @@ contract ERC8262OracleTest is OracleTestBase {
                 INITIAL_CONFIG,
                 bytes32(block.timestamp),
                 bytes32(uint256(0)), // meets_threshold = 0
-                bytes32(uint256(uint160(alice))) // submitter
+                bytes32(uint256(uint160(alice))), // submitter
+                bytes32(0), // settlement_link_in
+                DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
             );
         } else if (proofType == ProofTypes.RISK_SCORE) {
             publicInputs = abi.encodePacked(
@@ -2506,7 +2545,10 @@ contract ERC8262OracleTest is OracleTestBase {
                 bytes32(uint256(0xabcd)),
                 bytes32(uint256(uint160(alice))), // submitter
                 bytes32(0), // settlement_root
-                bytes32(block.timestamp) // timestamp
+                bytes32(block.timestamp), // timestamp
+                bytes32(0), // settlement_seed
+                bytes32(0), // jurisdiction_id
+                bytes32(0) // aggregate_reportable
             );
         } else if (proofType == ProofTypes.ATTESTATION) {
             bytes32 root = bytes32(uint256(0xbeef));
@@ -3330,21 +3372,27 @@ contract ERC8262OracleTest is OracleTestBase {
         bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
 
         // Tamper chain_id (slot [11]) with a wrong value.
-        bytes memory inputs = abi.encodePacked(
-            bytes32(uint256(0)), // [0] jurisdiction_id
-            DEFAULT_PROVIDER_SET_HASH, // [1]
-            INITIAL_CONFIG, // [2]
-            bytes32(block.timestamp), // [3]
-            bytes32(uint256(1)), // [4] meets_threshold
-            bytes32(uint256(2)), // [5] threshold_m
-            hashes[0],
-            hashes[1],
-            hashes[2],
-            hashes[3],
-            hashes[4],
-            bytes32(uint256(0xdeadbeef)), // [11] wrong chain_id
-            bytes32(uint256(uint160(address(oracle)))), // [12]
-            bytes32(uint256(uint160(alice))) // [13]
+        bytes memory inputs = bytes.concat(
+            abi.encodePacked(
+                bytes32(uint256(0)), // [0] jurisdiction_id
+                DEFAULT_PROVIDER_SET_HASH, // [1]
+                INITIAL_CONFIG, // [2]
+                bytes32(block.timestamp), // [3]
+                bytes32(uint256(1)), // [4] meets_threshold
+                bytes32(uint256(2)), // [5] threshold_m
+                hashes[0],
+                hashes[1]
+            ),
+            abi.encodePacked(
+                hashes[2],
+                hashes[3],
+                hashes[4],
+                bytes32(uint256(0xdeadbeef)), // [11] wrong chain_id
+                bytes32(uint256(uint160(address(oracle)))), // [12]
+                bytes32(uint256(uint160(alice))), // [13]
+                bytes32(0), // [14] settlement_link_in
+                DEFAULT_SETTLEMENT_LINK_OUT // [15] settlement_link_out
+            )
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);
@@ -3357,21 +3405,27 @@ contract ERC8262OracleTest is OracleTestBase {
         _registerThreeSigners();
         bytes32[5] memory hashes = [SIGNER_HASH_A, SIGNER_HASH_B, bytes32(0), bytes32(0), bytes32(0)];
 
-        bytes memory inputs = abi.encodePacked(
-            bytes32(uint256(0)),
-            DEFAULT_PROVIDER_SET_HASH,
-            INITIAL_CONFIG,
-            bytes32(block.timestamp),
-            bytes32(uint256(1)),
-            bytes32(uint256(2)),
-            hashes[0],
-            hashes[1],
-            hashes[2],
-            hashes[3],
-            hashes[4],
-            bytes32(block.chainid),
-            bytes32(uint256(uint160(address(0xdead)))), // [12] wrong oracle_address
-            bytes32(uint256(uint160(alice)))
+        bytes memory inputs = bytes.concat(
+            abi.encodePacked(
+                bytes32(uint256(0)),
+                DEFAULT_PROVIDER_SET_HASH,
+                INITIAL_CONFIG,
+                bytes32(block.timestamp),
+                bytes32(uint256(1)),
+                bytes32(uint256(2)),
+                hashes[0],
+                hashes[1]
+            ),
+            abi.encodePacked(
+                hashes[2],
+                hashes[3],
+                hashes[4],
+                bytes32(block.chainid),
+                bytes32(uint256(uint160(address(0xdead)))), // [12] wrong oracle_address
+                bytes32(uint256(uint160(alice))),
+                bytes32(0), // settlement_link_in
+                DEFAULT_SETTLEMENT_LINK_OUT // settlement_link_out
+            )
         );
         vm.prank(alice);
         vm.expectRevert(ERC8262Oracle.PublicInputMismatch.selector);

@@ -1316,6 +1316,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [3]: timestamp
         //   [4]: meets_threshold
         //   [5]: submitter
+        //   [6]: settlement_link_in     (XIP-1 -- opaque to Oracle, SettlementRegistry checks)
+        //   [7]: settlement_link_out    (XIP-1 -- opaque to Oracle)
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
@@ -1381,9 +1383,9 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
     ///      NOTE: callers that require a specific analysis (e.g. anti-structuring) MUST
     ///      verify the analysis_type field themselves; this validator only enforces
     ///      that it is well-formed.
-    ///      NOTE (audit H-1): `settlement_root` is treated as opaque here. Downstream
-    ///      consumers (e.g. SettlementRegistry) recompute it from their own state and
-    ///      assert equality; the Oracle has no opinion on its value.
+    ///      NOTE (XIP-1): `settlement_root`, `settlement_seed` and `jurisdiction_id` are
+    ///      opaque here. SettlementRegistry pins them to the trade's settlement chain
+    ///      and jurisdiction; the circuit refolds the chain over the analysed legs.
     function _validatePatternInputs(bytes calldata publicInputs) internal view returns (uint256 proofTimestamp) {
         // PATTERN public inputs layout (each 32 bytes):
         //   [0]: analysis_type
@@ -1392,8 +1394,11 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [3]: time_window
         //   [4]: tx_set_hash
         //   [5]: submitter
-        //   [6]: settlement_root        (audit H-1 -- opaque to Oracle)
+        //   [6]: settlement_root        (XIP-1 -- opaque to Oracle)
         //   [7]: timestamp              (appended so settlement_root keeps its index)
+        //   [8]: settlement_seed        (XIP-1 -- opaque to Oracle)
+        //   [9]: jurisdiction_id        (XIP-1 -- opaque to Oracle)
+        //   [10]: aggregate_reportable  (XIP-1 -- sum of analysed amounts >= threshold)
         uint256 analysisType = uint256(bytes32(publicInputs[0:32]));
         if (
             analysisType != PATTERN_STRUCTURING && analysisType != PATTERN_VELOCITY
@@ -1503,6 +1508,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [6]: chain_id            (audit F-6)
         //   [7]: oracle_address      (audit F-6)
         //   [8]: submitter
+        //   [9]: settlement_link_in  (XIP-1 -- opaque to Oracle, SettlementRegistry checks)
+        //   [10]: settlement_link_out (XIP-1 -- opaque to Oracle)
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);
@@ -1544,6 +1551,8 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [11]: chain_id            (audit F-6)
         //   [12]: oracle_address      (audit F-6)
         //   [13]: submitter
+        //   [14]: settlement_link_in  (XIP-1 -- opaque to Oracle, SettlementRegistry checks)
+        //   [15]: settlement_link_out (XIP-1 -- opaque to Oracle)
         bytes32 proofJurisdiction = bytes32(publicInputs[0:32]);
         bytes32 proofProviderSet = bytes32(publicInputs[32:64]);
         bytes32 proofConfigHash = bytes32(publicInputs[64:96]);

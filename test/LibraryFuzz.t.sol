@@ -92,13 +92,17 @@ contract LibraryFuzzTest is Test {
         // Signed variants add signer_pubkey_hash + chain_id + oracle_address (audit F-6)
         // to their unsigned siblings -- 3 extra slots each. RISK_SCORE and RISK_SCORE_SIGNED
         // both expose the proof timestamp at index 7 (TRUST-24#2).
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE), 6);
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 9);
+        // XIP-1 appends settlement_link_in + settlement_link_out to every compliance-family
+        // layout, so COMPLIANCE_SIGNED stays 3 slots above COMPLIANCE.
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE), 8);
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_SIGNED), 11);
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE), 9);
         assertEq(proofTypes.expectedPublicInputCount(ProofTypes.RISK_SCORE_SIGNED), 12);
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.PATTERN), 8);
-        // Multi-signed: compliance fields + threshold_m + 5 signer slots + chain_id + oracle_address = 14
-        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_MULTI_SIGNED), 14);
+        // Pattern: 8 legacy words + settlement_seed + jurisdiction_id + aggregate_reportable (XIP-1) = 11
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.PATTERN), 11);
+        // Multi-signed: compliance fields + threshold_m + 5 signer slots + chain_id + oracle_address
+        // + settlement_link_in + settlement_link_out = 16
+        assertEq(proofTypes.expectedPublicInputCount(ProofTypes.COMPLIANCE_MULTI_SIGNED), 16);
     }
 
     // -------------------------------------------------------------------------

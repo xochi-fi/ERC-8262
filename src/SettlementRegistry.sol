@@ -25,8 +25,13 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Minimum number of sub-trades per settlement
     uint8 internal constant MIN_SUB_TRADES = 2;
 
-    /// @notice Maximum number of sub-trades per settlement
-    uint8 internal constant MAX_SUB_TRADES = 100;
+    /// @notice Maximum number of sub-trades per settlement: the pattern circuit's
+    ///         MAX_TRANSACTIONS. A trade with more legs could not be finalized by a
+    ///         pattern proof that analyses all of them (XIP-1).
+    uint8 internal constant MAX_SUB_TRADES = 16;
+
+    /// @notice Domain tag for the per-trade settlement chain seed (XIP-1).
+    bytes32 internal constant SETTLEMENT_SEED_DOMAIN = keccak256("ERC8262.XIP1.settlementSeed");
 
     /// @notice Settlement storage by tradeId
     mapping(bytes32 tradeId => Settlement settlement) internal _settlements;
@@ -43,9 +48,12 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Compliance proof hashes already backing a leg of each trade.
     mapping(bytes32 tradeId => mapping(bytes32 proofHash => bool used)) internal _usedLegProofs;
 
-    /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
-    ///         element; the keccak commitment must be reduced mod this so the
-    ///         Solidity check matches the in-circuit representation.
+    /// @notice XIP-1 settlement chain root per trade. Starts at the trade's seed;
+    ///         each recorded leg replaces it with the leg proof's settlement_link_out.
+    mapping(bytes32 tradeId => bytes32 root) internal _settlementRoots;
+
+    /// @notice BN254 scalar field modulus. Seeds and chain links are Field elements;
+    ///         the keccak seed is reduced mod this so it is a valid public input.
     uint256 internal constant BN254_FR_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
@@ -77,12 +85,15 @@ contract SettlementRegistry is ISettlementRegistry {
             finalized: false,
             expired: false
         });
+        _settlementRoots[tradeId] = _settlementSeed(tradeId, msg.sender, jurisdictionId, subTradeCount);
 
         emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount);
     }
 
     /// @inheritdoc ISettlementRegistry
-    function recordSubSettlement(bytes32 tradeId, uint8 index, bytes32 proofHash) external {
+    function recordSubSettlement(bytes32 tradeId, uint8 index, bytes32 proofHash, bytes calldata legPublicInputs)
+        external
+    {
         Settlement storage settlement = _settlements[tradeId];
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (msg.sender != settlement.subject) revert NotTradeSubject(msg.sender, settlement.subject);
@@ -127,6 +138,19 @@ contract SettlementRegistry is ISettlementRegistry {
         }
         if (_usedLegProofs[tradeId][proofHash]) revert DuplicateSubSettlementProof(tradeId, proofHash);
 
+        // XIP-1: the leg proof must extend this trade's settlement chain. Every compliance
+        // variant carries (settlement_link_in, settlement_link_out) as its last two public
+        // inputs; the Oracle fixed the input length per proof type at submission.
+        bytes32 inputsHash = keccak256(legPublicInputs);
+        if (inputsHash != attestation.publicInputsHash) {
+            revert LegPublicInputsMismatch(attestation.publicInputsHash, inputsHash);
+        }
+        uint256 len = legPublicInputs.length;
+        bytes32 linkIn = bytes32(legPublicInputs[len - 64:len - 32]);
+        bytes32 root = _settlementRoots[tradeId];
+        if (linkIn != root) revert SettlementLinkMismatch(tradeId, root, linkIn);
+        _settlementRoots[tradeId] = bytes32(legPublicInputs[len - 32:len]);
+
         _usedLegProofs[tradeId][proofHash] = true;
 
         _subSettlements[tradeId][index] =
@@ -155,24 +179,19 @@ contract SettlementRegistry is ISettlementRegistry {
         //   3. The attestation exists and subject matches
         //   4. The pattern proof's own `timestamp` public input (word 7) is >= the trade's
         //      createdAt. This is stricter than the attestation (submission) time, which the
-        //      Oracle already holds at or after the proof timestamp. It does not prove the
-        //      proof was generated after registerTrade: the timestamp is prover-chosen and
-        //      `settlement_root` does not commit to tradeId, so a prover holding the leg proof
-        //      hashes can build inputs dated after createdAt in advance and submit them once
-        //      the chain reaches that date. Legs use the submission time instead (see
-        //      `recordSubSettlement`).
+        //      Oracle already holds at or after the proof timestamp.
         //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
         //      (checked before reading any field, including the timestamp in check 4)
         //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
         //      satisfy the anti-structuring guarantee that this registry depends on
-        //   7. The pattern proof's `settlement_root` public input matches the keccak
-        //      commitment over this trade's recorded sub-settlement proof hashes
-        //      (audit H-1; binds the pattern attestation to THIS specific settlement)
-        //   8. The pattern proof has not been used to finalize a different trade
+        //   7. XIP-1: `settlement_seed` (word 8) is this trade's seed and `settlement_root`
+        //      (word 6) is the chain root after its last recorded leg. The circuit refolds the
+        //      chain from the seed over the transactions it analyses, so the analysis covers
+        //      exactly this trade's legs, with the amounts and timestamps the leg proofs
+        //      committed.
+        //   8. XIP-1: `jurisdiction_id` (word 9) is the trade's jurisdiction.
+        //   9. The pattern proof has not been used to finalize a different trade
         //      (audit H-1 reuse-prevention; one PATTERN attestation per trade)
-        //
-        // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
-        // they analyze transaction patterns, not jurisdiction-specific thresholds.
         if (patternProofHash == bytes32(0)) revert PatternProofRequired(tradeId);
         if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
         uint8 proofType = oracle.getProofType(patternProofHash);
@@ -189,9 +208,10 @@ contract SettlementRegistry is ISettlementRegistry {
         if (inputsHash != patternAttestation.publicInputsHash) {
             revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
         }
-        // PATTERN public inputs layout (32 bytes each, 8 fields total):
+        // PATTERN public inputs layout (32 bytes each, 11 fields total):
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
-        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
+        //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp,
+        //   [8]=settlement_seed, [9]=jurisdiction_id, [10]=aggregate_reportable
         // Length is enforced by the Oracle on submission.
         uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
         if (proofTimestamp < settlement.createdAt) {
@@ -203,11 +223,7 @@ contract SettlementRegistry is ISettlementRegistry {
             revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
         }
 
-        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
-        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
-        if (patternSettlementRoot != expectedSettlementRoot) {
-            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
-        }
+        _checkPatternBinding(tradeId, settlement, patternPublicInputs);
 
         _usedPatternProofs[patternProofHash] = true;
         settlement.finalized = true;
@@ -215,33 +231,26 @@ contract SettlementRegistry is ISettlementRegistry {
         emit TradeFinalized(tradeId, block.timestamp);
     }
 
-    /// @notice Compute the `settlement_root` public input that a PATTERN proof
-    ///         must commit to in order to bind to `tradeId`.
-    /// @dev `bytes32(uint256(keccak256(abi.encode(subTradeCount, proofHashes))) % BN254_FR_MODULUS)`,
-    ///      where `proofHashes[i] = _subSettlements[tradeId][i].proofHash` for
-    ///      `i` in `[0, subTradeCount)`. The mod reduces the keccak digest into
-    ///      the BN254 scalar field so the value matches the in-circuit `Field`
-    ///      representation when interpreted as a public input. Provers MUST call
-    ///      this view function (or replicate `abi.encode(uint8, bytes32[])` +
-    ///      keccak256 + field reduction off-chain bit-for-bit) before generating
-    ///      their pattern proof. Off-chain replication note: `abi.encode` of
-    ///      `(uint8, bytes32[])` produces 32 (subTradeCount, padded) + 32 (array
-    ///      offset = 0x40) + 32 (array length = subTradeCount) + 32 * N (elements)
-    ///      = 96 + 32*N bytes -- NOT a simple `||` concatenation.
-    ///      Audit H-1: this binding is declarative -- the circuit does not verify
-    ///      that the analyzed transactions correspond to the sub-settlements'
-    ///      underlying transactions. The compliance circuits do not expose
-    ///      transaction-amount commitments; a fully cryptographic binding would
-    ///      require a v2 compliance circuit. This declarative binding is strictly
-    ///      better than the previous (no binding) state: a single pattern proof
-    ///      can no longer finalize multiple trades, and the pattern proof has to
-    ///      be generated with knowledge of the specific sub-settlement set.
-    /// @param tradeId The trade whose settlement root to compute
-    /// @return root The expected settlement_root value
+    /// @notice The `settlement_root` public input a PATTERN proof must carry to finalize
+    ///         `tradeId`: the XIP-1 settlement chain root after the last recorded leg
+    ///         (the seed while no leg is recorded). It is also the `settlement_link_in`
+    ///         the next leg's compliance proof must carry.
+    /// @param tradeId The trade whose settlement root to return
+    /// @return root The current chain root
     function computeSettlementRoot(bytes32 tradeId) external view returns (bytes32 root) {
+        if (_settlements[tradeId].createdAt == 0) revert TradeNotFound(tradeId);
+        return _settlementRoots[tradeId];
+    }
+
+    /// @notice The `settlement_seed` public input a PATTERN proof must carry to finalize
+    ///         `tradeId`: `keccak256(abi.encode(SETTLEMENT_SEED_DOMAIN, chainid, registry,
+    ///         tradeId, subject, jurisdictionId, subTradeCount)) mod BN254_FR_MODULUS`.
+    /// @param tradeId The trade whose seed to return
+    /// @return seed The chain seed
+    function settlementSeed(bytes32 tradeId) external view returns (bytes32 seed) {
         Settlement storage settlement = _settlements[tradeId];
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
-        return _computeSettlementRoot(tradeId, settlement.subTradeCount);
+        return _settlementSeed(tradeId, settlement.subject, settlement.jurisdictionId, settlement.subTradeCount);
     }
 
     /// @notice Whether a pattern proof has already been consumed to finalize a trade.
@@ -249,16 +258,39 @@ contract SettlementRegistry is ISettlementRegistry {
         return _usedPatternProofs[patternProofHash];
     }
 
-    function _computeSettlementRoot(bytes32 tradeId, uint8 subTradeCount) internal view returns (bytes32 root) {
-        bytes32[] memory hashes = new bytes32[](subTradeCount);
-        for (uint8 i; i < subTradeCount;) {
-            hashes[i] = _subSettlements[tradeId][i].proofHash;
-            unchecked {
-                ++i;
-            }
+    function _settlementSeed(bytes32 tradeId, address subject, uint8 jurisdictionId, uint8 subTradeCount)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 digest = keccak256(
+            abi.encode(
+                SETTLEMENT_SEED_DOMAIN, block.chainid, address(this), tradeId, subject, jurisdictionId, subTradeCount
+            )
+        );
+        return bytes32(uint256(digest) % BN254_FR_MODULUS);
+    }
+
+    /// @dev XIP-1 finalize checks 7-8: seed, chain root and jurisdiction pinned to the trade.
+    function _checkPatternBinding(bytes32 tradeId, Settlement storage settlement, bytes calldata patternPublicInputs)
+        internal
+        view
+    {
+        bytes32 expectedSeed =
+            _settlementSeed(tradeId, settlement.subject, settlement.jurisdictionId, settlement.subTradeCount);
+        bytes32 patternSeed = bytes32(patternPublicInputs[256:288]);
+        if (patternSeed != expectedSeed) revert SettlementSeedMismatch(expectedSeed, patternSeed);
+
+        bytes32 expectedSettlementRoot = _settlementRoots[tradeId];
+        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
+        if (patternSettlementRoot != expectedSettlementRoot) {
+            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
         }
-        uint256 reduced = uint256(keccak256(abi.encode(subTradeCount, hashes))) % BN254_FR_MODULUS;
-        return bytes32(reduced);
+
+        uint256 patternJurisdiction = uint256(bytes32(patternPublicInputs[288:320]));
+        if (patternJurisdiction != settlement.jurisdictionId) {
+            revert PatternJurisdictionMismatch(settlement.jurisdictionId, patternJurisdiction);
+        }
     }
 
     /// @inheritdoc ISettlementRegistry

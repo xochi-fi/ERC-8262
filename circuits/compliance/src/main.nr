@@ -13,12 +13,17 @@
 ///   - timestamp: block timestamp binding the proof
 ///   - meets_threshold: boolean result (1 = compliant, 0 = not)
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
+///   - settlement_link_in / settlement_link_out (XIP-1): one link of a split
+///     settlement's chain, link_out = settlement_link(link_in, leg_amount, timestamp,
+///     leg_salt). SettlementRegistry accepts the leg only if link_in is the trade's
+///     current root and then stores link_out. Standalone use: any link_in.
 ///
 /// Private inputs (known only to prover):
 ///   - signals: risk scores from each screening provider (0-100)
 ///   - weights: published weights for each provider
 ///   - weight_sum: sum of all weights (for normalization)
 ///   - provider_ids: identifiers for each provider
+///   - leg_amount / leg_salt: the settlement leg's amount and blinding (XIP-1)
 
 use erc8262_shared::{
     compute_risk_score,
@@ -28,6 +33,7 @@ use erc8262_shared::{
     compute_config_hash,
     validate_timestamp,
     validate_provider_slots,
+    settlement_link,
 };
 
 fn main(
@@ -36,7 +42,9 @@ fn main(
     weights: [u32; 8],           // per-provider weights (published, but hidden in proof)
     weight_sum: u32,             // sum of active weights
     provider_ids: [Field; 8],    // provider identifiers
-    num_providers: u32,          // how many providers are active (1-8)
+    num_providers: u32,          // how many are active (1-8)
+    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
     jurisdiction_id: pub u8,     // 0=EU, 1=US, 2=UK, 3=SG, 4=UAE
@@ -45,6 +53,8 @@ fn main(
     timestamp: pub Field,        // prover-chosen; Oracle enforces freshness
     meets_threshold: pub bool,   // the compliance result
     submitter: pub Field,        // authorized submitter address (oracle enforces == msg.sender)
+    settlement_link_in: pub Field,  // XIP-1: settlement chain root before this leg
+    settlement_link_out: pub Field, // XIP-1: settlement chain root after this leg
 ) {
     // 1. Validate weight_sum is positive
     assert(weight_sum > 0, "Weight sum must be positive");
@@ -79,6 +89,60 @@ fn main(
     // 11. Anchor submitter as a public input (oracle enforces submitter == msg.sender).
     // Non-zero check prevents the compiler from stripping this public input.
     assert(submitter != 0, "submitter must be non-zero");
+
+    // 12. XIP-1: extend the settlement chain by this leg (timestamp = proof time).
+    let link = settlement_link(settlement_link_in, leg_amount, timestamp as u64, leg_salt);
+    assert(link == settlement_link_out, "Settlement link mismatch");
+}
+
+/// Pre-XIP-1 call shape for the scoring tests: standalone use (link_in 0, zero leg).
+fn run(
+    signals: [u32; 8],
+    weights: [u32; 8],
+    weight_sum: u32,
+    provider_ids: [Field; 8],
+    num_providers: u32,
+    jurisdiction_id: u8,
+    provider_set_hash: Field,
+    config_hash: Field,
+    timestamp: Field,
+    meets_threshold: bool,
+    submitter: Field,
+) {
+    let link_out = settlement_link(0, 0, timestamp as u64, 0);
+    main(
+        signals, weights, weight_sum, provider_ids, num_providers, 0, 0,
+        jurisdiction_id, provider_set_hash, config_hash, timestamp, meets_threshold, submitter,
+        0, link_out,
+    );
+}
+
+fn compliant_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+    let weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
+    let provider_ids: [Field; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
+    main(
+        [20, 0, 0, 0, 0, 0, 0, 0], weights, 100, provider_ids, 1, leg_amount, leg_salt,
+        0, compute_provider_set_hash(provider_ids, weights), compute_config_hash(weights),
+        1700000000, true, 0xdead, link_in, link_out,
+    );
+}
+
+#[test]
+fn test_leg_extends_settlement_chain() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    compliant_leg(0x5eed, 9500, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_for_other_amount() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    compliant_leg(0x5eed, 950, 42, link_out);
+}
+
+#[test(should_fail_with = "Settlement link mismatch")]
+fn test_leg_rejects_link_from_other_root() {
+    let link_out = settlement_link(0x5eed, 9500, 1700000000, 42);
+    compliant_leg(0x5eee, 9500, 42, link_out);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +201,7 @@ fn test_main_compliant_single_provider() {
     let config_hash = compute_config_hash(weights);
 
     // score = 20*100*100/100 = 2000 bps, EU threshold = 7100 -> meets
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, num_providers,
         0, // EU
         provider_set_hash,
@@ -160,7 +224,7 @@ fn test_main_non_compliant_high_risk() {
     let config_hash = compute_config_hash(weights);
 
     // score = 8000 bps, EU threshold = 7100 -> does NOT meet
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, 1,
         0, // EU
         provider_set_hash,
@@ -185,7 +249,7 @@ fn test_main_multi_provider_all_jurisdictions() {
     // weighted_sum = 30*50 + 40*30 + 20*20 = 1500+1200+400 = 3100
     // score = 3100*100/100 = 3100 bps (31%), below all thresholds
     for j in 0..4 {
-        main(
+        run(
             signals, weights, weight_sum, provider_ids, 3,
             j as u8,
             provider_set_hash,
@@ -209,7 +273,7 @@ fn test_score_at_exact_threshold_boundary() {
     let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
     let config_hash = compute_config_hash(weights);
 
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, 1,
         0, // EU
         provider_set_hash,
@@ -232,7 +296,7 @@ fn test_score_just_below_threshold() {
     let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
     let config_hash = compute_config_hash(weights);
 
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, 1,
         0, // EU
         provider_set_hash,
@@ -262,7 +326,7 @@ fn test_score_one_bps_below_threshold_eu() {
     let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
     let config_hash = compute_config_hash(weights);
 
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, 2,
         0, // EU
         provider_set_hash,
@@ -289,7 +353,7 @@ fn test_score_one_bps_below_threshold_us() {
     let provider_set_hash = compute_provider_set_hash(provider_ids, weights);
     let config_hash = compute_config_hash(weights);
 
-    main(
+    run(
         signals, weights, weight_sum, provider_ids, 2,
         1, // US
         provider_set_hash,

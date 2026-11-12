@@ -11,6 +11,7 @@ pub mod providers;
 pub mod sig;
 pub mod multi_sig;
 pub mod validation;
+pub mod settlement;
 
 // Re-export everything at the crate root for backwards compatibility.
 // Circuits can use either `erc8262_shared::hash2` or `erc8262_shared::hash::hash2`.
@@ -25,3 +26,4 @@ pub use providers::compute_provider_set_hash;
 pub use sig::{compute_signed_payload_hash, compute_signer_pubkey_hash, verify_provider_signed_signals};
 pub use multi_sig::{MAX_PROVIDERS_MULTI, DOMAIN_MULTI_SIGNED_SIGNALS, compute_slot_payload_hash, verify_slot_or_skip, assert_distinct_signers, count_active_signers};
 pub use validation::{validate_timestamp, compute_tx_set_hash, validate_provider_slots};
+pub use settlement::{settlement_link, fold_settlement_root};

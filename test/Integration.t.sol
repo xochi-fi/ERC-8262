@@ -74,7 +74,8 @@ contract IntegrationTest is Test {
     /// @dev Prover-chosen proof timestamp of the risk_score and pattern fixtures (TRUST-24#2);
     ///      the Oracle enforces MAX_PROOF_AGE on it. Both carry it at word 7, for different
     ///      reasons: risk_score inserts it before `submitter` (now word 8) to match
-    ///      RISK_SCORE_SIGNED; pattern appends it last so `settlement_root` stays at word 6.
+    ///      RISK_SCORE_SIGNED; pattern appended it after `settlement_root` (word 6), ahead of
+    ///      the XIP-1 words 8-10.
     uint256 internal constant FIXTURE_PROOF_TIMESTAMP = 1700000000;
 
     /// @dev Generated HonkVerifier error for a proof whose transcript does not match its inputs.
@@ -379,8 +380,12 @@ contract IntegrationTest is Test {
 
     function test_realProof_pattern_redatedTimestampFailsVerification() public {
         (bytes memory proof, bytes memory publicInputs) = _loadFixture("pattern");
-        // Word 7 (the last word) is the timestamp.
-        bytes memory redated = bytes.concat(_slice(publicInputs, 0, 7 * 32), bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days));
+        // Word 7 is the timestamp; the XIP-1 words 8-10 follow it.
+        bytes memory redated = bytes.concat(
+            _slice(publicInputs, 0, 7 * 32),
+            bytes32(FIXTURE_PROOF_TIMESTAMP + 1 days),
+            _slice(publicInputs, 8 * 32, publicInputs.length)
+        );
         vm.expectRevert(SUMCHECK_FAILED);
         verifier.verifyProof(ProofTypes.PATTERN, proof, redated);
     }
