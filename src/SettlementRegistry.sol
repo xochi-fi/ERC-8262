@@ -35,6 +35,15 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Number of jurisdiction ids the threshold table can hold (two words of four u64).
     uint8 internal constant MAX_JURISDICTIONS = 8;
 
+    /// @notice Maximum trades per subject with at least one leg recorded and neither finalized
+    ///         nor released. Bounds how many partially paid splits a subject can abandon:
+    ///         on-chain a deliberately unpaid last leg is indistinguishable from a failed one.
+    uint128 internal constant MAX_OPEN_TRADES = 3;
+
+    /// @notice Time after `expiresAt` before an abandoned, partially settled trade stops
+    ///         counting against `MAX_OPEN_TRADES` (`releaseTrade`).
+    uint256 internal constant ABANDON_COOLDOWN = 30 days;
+
     /// @notice Reporting thresholds for jurisdictions 0-3 and 4-7, one u64 per jurisdiction
     ///         (jurisdiction `j` at bits `64 * (j % 4)`). Zero marks an unsupported jurisdiction.
     ///         Fixed at deployment: the registry has no owner, so a threshold change is a
@@ -58,11 +67,19 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         attestation evidences one payment, so it backs at most one leg of one trade.
     mapping(bytes32 proofHash => bytes32 tradeId) internal _legProofTrade;
 
-    /// @notice Per subject: trades with every leg recorded but not finalized. While non-zero
-    ///         the subject cannot register another trade. Expiry never decrements it, so a
-    ///         fully settled trade left to expire bars its subject from the registry for good:
-    ///         paying every leg and skipping the pattern proof cannot be repeated.
-    mapping(address subject => uint256 count) internal _unfinalizedSettled;
+    /// @notice Per-subject counters gating `registerTrade`.
+    /// @param settled Trades with every leg recorded, not finalized. Must be zero to register.
+    ///        Expiry never lowers it: a fully settled trade left to expire bars its subject
+    ///        from the registry for good, so paying every leg and skipping the pattern proof
+    ///        cannot be repeated.
+    /// @param withLegs Trades with at least one leg recorded, neither finalized nor released.
+    ///        Must be below `MAX_OPEN_TRADES` to register.
+    struct OpenTrades {
+        uint128 settled;
+        uint128 withLegs;
+    }
+
+    mapping(address subject => OpenTrades open) internal _openTrades;
 
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
@@ -101,8 +118,9 @@ contract SettlementRegistry is ISettlementRegistry {
             revert InvalidSubTradeCount(subTradeCount);
         }
         if (reportingThreshold(jurisdictionId) == 0) revert UnsupportedJurisdiction(jurisdictionId);
-        uint256 unfinalized = _unfinalizedSettled[msg.sender];
-        if (unfinalized != 0) revert UnfinalizedSettledTrades(msg.sender, unfinalized);
+        OpenTrades memory open = _openTrades[msg.sender];
+        if (open.settled != 0) revert UnfinalizedSettledTrades(msg.sender, open.settled);
+        if (open.withLegs >= MAX_OPEN_TRADES) revert TooManyOpenTrades(msg.sender, open.withLegs);
 
         _settlements[tradeId] = Settlement({
             tradeId: tradeId,
@@ -114,7 +132,8 @@ contract SettlementRegistry is ISettlementRegistry {
             createdAt: block.timestamp,
             expiresAt: block.timestamp + TRADE_TTL,
             finalized: false,
-            expired: false
+            expired: false,
+            released: false
         });
 
         emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef);
@@ -178,8 +197,11 @@ contract SettlementRegistry is ISettlementRegistry {
             SubSettlement({index: index, proofHash: proofHash, settledAt: block.timestamp});
 
         settlement.lastSettledAt = uint64(block.timestamp);
-        if (++settlement.settledCount == settlement.subTradeCount) {
-            ++_unfinalizedSettled[msg.sender];
+        uint8 settled = ++settlement.settledCount;
+        if (settled == 1 || settled == settlement.subTradeCount) {
+            OpenTrades storage open = _openTrades[msg.sender];
+            if (settled == 1) ++open.withLegs;
+            if (settled == settlement.subTradeCount) ++open.settled;
         }
 
         emit SubSettlementRecorded(tradeId, index, proofHash);
@@ -278,7 +300,9 @@ contract SettlementRegistry is ISettlementRegistry {
 
         _usedPatternProofs[patternProofHash] = true;
         settlement.finalized = true;
-        --_unfinalizedSettled[msg.sender];
+        OpenTrades storage open = _openTrades[msg.sender];
+        --open.settled;
+        --open.withLegs;
 
         emit TradeFinalized(tradeId, block.timestamp);
     }
@@ -291,8 +315,25 @@ contract SettlementRegistry is ISettlementRegistry {
     }
 
     /// @inheritdoc ISettlementRegistry
-    function unfinalizedSettledTrades(address subject) external view returns (uint256 count) {
-        return _unfinalizedSettled[subject];
+    function releaseTrade(bytes32 tradeId) external {
+        Settlement storage settlement = _settlements[tradeId];
+        if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
+        if (
+            settlement.finalized || settlement.released || settlement.settledCount == 0
+                || settlement.settledCount == settlement.subTradeCount
+                || block.timestamp <= settlement.expiresAt + ABANDON_COOLDOWN
+        ) revert TradeNotReleasable(tradeId);
+
+        settlement.released = true;
+        --_openTrades[settlement.subject].withLegs;
+
+        emit TradeReleased(tradeId, block.timestamp);
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function openTrades(address subject) external view returns (uint256 settledUnfinalized, uint256 withLegs) {
+        OpenTrades memory open = _openTrades[subject];
+        return (open.settled, open.withLegs);
     }
 
     /// @notice Compute the `settlement_root` public input that a PATTERN proof

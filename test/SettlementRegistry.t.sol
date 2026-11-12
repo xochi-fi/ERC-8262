@@ -1148,7 +1148,7 @@ contract SettlementRegistryTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // Settled-but-unfinalized trades block registration
+    // Open-trade counters gate registration
     // -------------------------------------------------------------------------
 
     function _registerAndSettle(bytes32 tradeRef) internal returns (bytes32 tradeId) {
@@ -1162,9 +1162,24 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
     }
 
+    function _assertOpen(address subject, uint256 settled, uint256 withLegs) internal view {
+        (uint256 s, uint256 w) = registry.openTrades(subject);
+        assertEq(s, settled, "settledUnfinalized");
+        assertEq(w, withLegs, "withLegs");
+    }
+
+    /// @dev Register a 2-leg trade and record one leg.
+    function _registerAndRecordOne(bytes32 tradeRef) internal returns (bytes32 tradeId) {
+        vm.prank(alice);
+        tradeId = registry.registerTrade(tradeRef, 0, 2);
+        bytes32 p1 = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+    }
+
     function test_registerTrade_revert_settledTradeUnfinalized() public {
         _registerAndSettle(keccak256("trade-a"));
-        assertEq(registry.unfinalizedSettledTrades(alice), 1);
+        _assertOpen(alice, 1, 1);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnfinalizedSettledTrades.selector, alice, 1));
@@ -1176,7 +1191,7 @@ contract SettlementRegistryTest is Test {
         (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
         vm.prank(alice);
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
-        assertEq(registry.unfinalizedSettledTrades(alice), 0);
+        _assertOpen(alice, 0, 0);
 
         vm.prank(alice);
         registry.registerTrade(keccak256("trade-b"), 0, 2);
@@ -1194,19 +1209,91 @@ contract SettlementRegistryTest is Test {
         registry.registerTrade(keccak256("trade-b"), 0, 2);
     }
 
-    /// @notice A trade that expires with legs missing (a genuine leg failure) does not block.
+    /// @notice A trade that expires with legs missing (a genuine leg failure) does not block
+    ///         by itself; it counts against the open-trade cap until released.
     function test_registerTrade_afterIncompleteTradeExpired() public {
-        vm.prank(alice);
-        bytes32 tradeId = registry.registerTrade(keccak256("trade-a"), 0, 2);
-        bytes32 p1 = _submitComplianceForAlice(0);
-        vm.prank(alice);
-        registry.recordSubSettlement(tradeId, 0, p1);
+        bytes32 tradeId = _registerAndRecordOne(keccak256("trade-a"));
         vm.warp(block.timestamp + 7 days + 1);
         registry.expireTrade(tradeId);
-        assertEq(registry.unfinalizedSettledTrades(alice), 0);
+        _assertOpen(alice, 0, 1);
 
         vm.prank(alice);
         registry.registerTrade(keccak256("trade-b"), 0, 2);
+    }
+
+    /// @notice A registered trade with no legs recorded does not count.
+    function test_registerTrade_emptyTradesDoNotCount() public {
+        vm.startPrank(alice);
+        for (uint256 i; i < 5; i++) {
+            registry.registerTrade(keccak256(abi.encode("empty", i)), 0, 2);
+        }
+        vm.stopPrank();
+        _assertOpen(alice, 0, 0);
+    }
+
+    function test_registerTrade_revert_tooManyOpenTrades() public {
+        _registerAndRecordOne(keccak256("trade-a"));
+        _registerAndRecordOne(keccak256("trade-b"));
+        _registerAndRecordOne(keccak256("trade-c"));
+        _assertOpen(alice, 0, 3);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TooManyOpenTrades.selector, alice, 3));
+        registry.registerTrade(keccak256("trade-d"), 0, 2);
+    }
+
+    function test_releaseTrade_afterCooldown() public {
+        bytes32 tradeId = _registerAndRecordOne(keccak256("trade-a"));
+        _registerAndRecordOne(keccak256("trade-b"));
+        _registerAndRecordOne(keccak256("trade-c"));
+        uint256 expiresAt = registry.getSettlement(tradeId).expiresAt;
+
+        vm.warp(expiresAt + 30 days);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotReleasable.selector, tradeId));
+        registry.releaseTrade(tradeId);
+
+        vm.warp(expiresAt + 30 days + 1);
+        vm.expectEmit(true, true, true, true);
+        emit ISettlementRegistry.TradeReleased(tradeId, block.timestamp);
+        vm.prank(bob);
+        registry.releaseTrade(tradeId);
+        assertTrue(registry.getSettlement(tradeId).released);
+        _assertOpen(alice, 0, 2);
+
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotReleasable.selector, tradeId));
+        registry.releaseTrade(tradeId);
+
+        vm.prank(alice);
+        registry.registerTrade(keccak256("trade-d"), 0, 2);
+    }
+
+    /// @notice Fully settled trades are never released: they stay a permanent block.
+    function test_releaseTrade_revert_settledTrade() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("trade-a"));
+        vm.warp(block.timestamp + 7 days + 30 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotReleasable.selector, tradeId));
+        registry.releaseTrade(tradeId);
+    }
+
+    function test_releaseTrade_revert_noLegs() public {
+        vm.prank(alice);
+        bytes32 tradeId = registry.registerTrade(keccak256("trade-a"), 0, 2);
+        vm.warp(block.timestamp + 7 days + 30 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotReleasable.selector, tradeId));
+        registry.releaseTrade(tradeId);
+    }
+
+    function test_releaseTrade_revert_finalized() public {
+        bytes32 tradeId = _setupAndFinalizeTradeForAlice();
+        vm.warp(block.timestamp + 7 days + 30 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotReleasable.selector, tradeId));
+        registry.releaseTrade(tradeId);
+    }
+
+    function test_releaseTrade_revert_notFound() public {
+        bytes32 tradeId = keccak256("nonexistent");
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotFound.selector, tradeId));
+        registry.releaseTrade(tradeId);
     }
 
     /// @notice The block is per subject.

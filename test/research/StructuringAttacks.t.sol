@@ -258,6 +258,23 @@ contract StructuringAttacks is Test {
         assertFalse(ok, "settled, unfinalized, unexpired-on-chain split did not block the next one");
     }
 
+    /// Variant found in this research: Alice pays all but the last leg of each split, so no
+    /// trade is ever fully settled, lets it expire, and repeats. On-chain this looks like a
+    /// genuine leg failure; the registry must still not allow it indefinitely (ten rounds).
+    function test_attack_abandonPartialAndRepeat() public {
+        for (uint256 round; round < 10; round++) {
+            bytes32 ref = keccak256(abi.encode("abandon-partial", round));
+            vm.prank(alice);
+            (bool ok, bytes memory ret) = address(registry).call(abi.encodeCall(registry.registerTrade, (ref, 0, 2)));
+            if (!ok) return; // refused
+            bytes32 t = abi.decode(ret, (bytes32));
+            _recordLegs(alice, t, 1, 0);
+            vm.warp(block.timestamp + 7 days + 1);
+            registry.expireTrade(t);
+        }
+        fail("ten partially paid splits abandoned in a row");
+    }
+
     /// Expired trade must never read as finalized.
     function test_attack_expiredReadsFinalized() public {
         bytes32 t = _tradeId("expired");

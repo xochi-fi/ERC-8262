@@ -9,7 +9,8 @@ import {IERC8262Oracle} from "./IERC8262Oracle.sol";
 interface ISettlementRegistry {
     /// @notice A registered trade awaiting sub-settlement completion
     /// @dev pending -> finalized (`finalizeTrade`) or pending -> expired (`expireTrade`);
-    ///      terminal flags are mutually exclusive.
+    ///      terminal flags are mutually exclusive. `released` only marks an unfinalized,
+    ///      partially settled trade past `expiresAt + 30 days` (`releaseTrade`).
     struct Settlement {
         bytes32 tradeId;
         address subject; // address that registered the trade
@@ -21,6 +22,7 @@ interface ISettlementRegistry {
         uint256 expiresAt;
         bool finalized; // true only after a successful finalizeTrade
         bool expired; // true only after expireTrade closed the trade unfinalized
+        bool released; // partially settled, abandoned, no longer counted against the subject (releaseTrade)
     }
 
     /// @notice A single sub-settlement linked to a compliance proof
@@ -54,6 +56,9 @@ interface ISettlementRegistry {
     /// @notice Emitted when a trade expires without finalization
     event TradeExpired(bytes32 indexed tradeId, uint256 timestamp);
 
+    /// @notice Emitted when an abandoned, partially settled trade stops counting against its subject
+    event TradeReleased(bytes32 indexed tradeId, uint256 timestamp);
+
     // -------------------------------------------------------------------------
     // Errors
     // -------------------------------------------------------------------------
@@ -80,6 +85,11 @@ interface ISettlementRegistry {
     error ReportingThresholdMismatch(uint256 expected, uint256 actual);
     /// @notice The subject has trades with every leg recorded that were never finalized.
     error UnfinalizedSettledTrades(address subject, uint256 count);
+    /// @notice The subject has `MAX_OPEN_TRADES` trades with legs recorded that are neither
+    ///         finalized nor released.
+    error TooManyOpenTrades(address subject, uint256 count);
+    /// @notice `releaseTrade` preconditions not met.
+    error TradeNotReleasable(bytes32 tradeId);
     /// @notice Raised when the pattern proof's `settlement_root` public input does
     ///         not match the keccak commitment over this trade's recorded
     ///         sub-settlement proof hashes (audit H-1).
@@ -116,7 +126,8 @@ interface ISettlementRegistry {
     /// @dev The trade is keyed by `computeTradeId(msg.sender, tradeRef)`, so no other caller
     ///      can register, and thereby occupy, the caller's id. Reverts if `jurisdictionId` has no
     ///      reporting threshold (`UnsupportedJurisdiction`) or the caller has a fully settled,
-    ///      unfinalized trade (`UnfinalizedSettledTrades`).
+    ///      unfinalized trade (`UnfinalizedSettledTrades`) or 3 trades with legs recorded that are
+    ///      neither finalized nor released (`TooManyOpenTrades`).
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 16], the PATTERN circuit's capacity)
@@ -171,10 +182,19 @@ interface ISettlementRegistry {
     /// @return threshold The threshold, or 0 if the jurisdiction is unsupported
     function reportingThreshold(uint8 jurisdictionId) external view returns (uint64 threshold);
 
-    /// @notice Trades of `subject` with every leg recorded and no finalization yet
-    /// @dev `registerTrade` reverts while this is non-zero. Only `finalizeTrade` lowers it;
-    ///      a fully settled trade that expires keeps it raised permanently.
-    function unfinalizedSettledTrades(address subject) external view returns (uint256 count);
+    /// @notice Per-subject counters gating `registerTrade`
+    /// @return settledUnfinalized Trades with every leg recorded, not finalized (must be 0 to
+    ///         register; only `finalizeTrade` lowers it, so a fully settled trade that expires
+    ///         keeps it raised permanently)
+    /// @return withLegs Trades with at least one leg recorded, neither finalized nor released
+    ///         (must be below the registry's open-trade cap, 3, to register)
+    function openTrades(address subject) external view returns (uint256 settledUnfinalized, uint256 withLegs);
+
+    /// @notice Stop counting an abandoned, partially settled trade against its subject
+    /// @dev Permissionless. Requires at least one but not every leg recorded, not finalized, not
+    ///      released, and `block.timestamp > expiresAt + 30 days`. Bounds abandoned partial
+    ///      splits to the open-trade cap per cooldown period.
+    function releaseTrade(bytes32 tradeId) external;
 
     /// @notice The oracle contract used for attestation lookups
     /// @return The oracle address
