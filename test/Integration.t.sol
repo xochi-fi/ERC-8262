@@ -124,8 +124,8 @@ contract IntegrationTest is Test {
         oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
         oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
 
-        // Register reporting threshold needed by pattern fixture (10000)
-        oracle.registerReportingThreshold(bytes32(uint256(10000)));
+        // Register reporting threshold needed by pattern fixture (10_000 units = 10_000e18 base units)
+        oracle.registerReportingThreshold(bytes32(uint256(10_000e18)));
 
         // Signed fixture signers (circuits/*_signed/Prover.toml). COMPLIANCE_MULTI_SIGNED
         // counts providers, so its two signers map to two providers.

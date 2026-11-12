@@ -57,7 +57,7 @@ contract GasBenchmarkTest is Test {
         }
         oracle.registerMerkleRoot(ProofTypes.MEMBERSHIP, FIXTURE_MEMBERSHIP_ROOT);
         oracle.registerMerkleRoot(ProofTypes.NON_MEMBERSHIP, FIXTURE_NON_MEMBERSHIP_ROOT);
-        oracle.registerReportingThreshold(bytes32(uint256(10000)));
+        oracle.registerReportingThreshold(bytes32(uint256(10_000e18))); // pattern fixture (XIP-1 base units)
         // ATTESTATION fixtures use the per-provider credentials tree (post C-1 redesign).
         // Two-key separation: publisher EOA for tx submission; separate signer for content auth.
         oracle.setProviderPublisher(FIXTURE_PROVIDER_ID, publisher);
