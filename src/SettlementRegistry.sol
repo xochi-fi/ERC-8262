@@ -72,7 +72,13 @@ contract SettlementRegistry is ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc ISettlementRegistry
-    function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external {
+    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
+        external
+        returns (bytes32 tradeId)
+    {
+        // The id is namespaced by the caller, so copying a pending registration from the
+        // mempool claims only the copier's own id, never the victim's.
+        tradeId = computeTradeId(msg.sender, tradeRef);
         if (_settlements[tradeId].createdAt != 0) revert TradeAlreadyExists(tradeId);
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
@@ -94,7 +100,12 @@ contract SettlementRegistry is ISettlementRegistry {
             abandoned: false
         });
 
-        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount);
+        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef);
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function computeTradeId(address subject, bytes32 tradeRef) public pure returns (bytes32 tradeId) {
+        return keccak256(abi.encode(subject, tradeRef));
     }
 
     /// @inheritdoc ISettlementRegistry

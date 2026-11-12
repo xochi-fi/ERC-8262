@@ -38,8 +38,13 @@ interface ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @notice Emitted when a new trade is registered
+    /// @param tradeRef Caller-chosen reference; `tradeId = computeTradeId(subject, tradeRef)`
     event TradeRegistered(
-        bytes32 indexed tradeId, address indexed subject, uint8 indexed jurisdictionId, uint8 subTradeCount
+        bytes32 indexed tradeId,
+        address indexed subject,
+        uint8 indexed jurisdictionId,
+        uint8 subTradeCount,
+        bytes32 tradeRef
     );
 
     /// @notice Emitted when a sub-settlement is recorded against a trade
@@ -113,10 +118,16 @@ interface ISettlementRegistry {
     /// @dev Reverts `UnresolvedTrade` while the caller holds a trade past expiry with a recorded
     ///      leg that was neither finalized nor abandoned, and `OpenTradeLimit` when the caller
     ///      already holds the maximum number of open trades.
-    /// @param tradeId Unique identifier for the trade
+    /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 100])
-    function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external;
+    /// @return tradeId `computeTradeId(msg.sender, tradeRef)`, the key for every other call
+    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
+        external
+        returns (bytes32 tradeId);
+
+    /// @notice Trade key for a subject's reference: `keccak256(abi.encode(subject, tradeRef))`
+    function computeTradeId(address subject, bytes32 tradeRef) external pure returns (bytes32 tradeId);
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
     /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,
