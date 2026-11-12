@@ -39,3 +39,4 @@ zk-x-ray/
 
 # autoresearch run log (lifecycle-gating experiment)
 autoresearch.jsonl
+run.log
