@@ -24,8 +24,8 @@
 /// that contexts using each arity are structurally distinct (no preimage of a hashN
 /// can be confused with a preimage of a hashM in our codebase) plus Pedersen preimage
 /// resistance, but this is fragile. Merkle and signed-payload hashes carry domain tags
-/// (merkle.nr, sig.nr, multi_sig.nr); these untagged helpers serve the provider-set,
-/// config and transaction-set commitments.
+/// (merkle.nr, sig.nr, multi_sig.nr); these untagged helpers serve the provider-set
+/// and config commitments.
 ///
 /// When Poseidon2 becomes available, migrate to it for stronger random-oracle properties.
 
@@ -53,11 +53,6 @@ pub fn hash8(input: [Field; 8]) -> Field {
 
 /// Hash a 16-element field array
 pub fn hash16(input: [Field; 16]) -> Field {
-    pedersen_hash(input)
-}
-
-/// Hash a 32-element field array
-pub fn hash32(input: [Field; 32]) -> Field {
     pedersen_hash(input)
 }
 

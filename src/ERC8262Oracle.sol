@@ -1392,7 +1392,7 @@ contract ERC8262Oracle is IERC8262Oracle, IERC165, AccessControl, Pausable {
         //   [1]: result
         //   [2]: reporting_threshold
         //   [3]: time_window
-        //   [4]: tx_set_hash
+        //   [4]: tx_set_hash            (XIP-1: circuit-constrained == settlement_root)
         //   [5]: submitter
         //   [6]: settlement_root        (XIP-1 -- opaque to Oracle)
         //   [7]: timestamp              (appended so settlement_root keeps its index)

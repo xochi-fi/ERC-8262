@@ -22,7 +22,7 @@
 //! units; 999_999 units is another jurisdiction's threshold.
 
 use crate::main;
-use erc8262_shared::{compute_tx_set_hash, settlement_link};
+use erc8262_shared::settlement_link;
 
 global MAXR: u32 = 32;
 global UNIT: u128 = 1000000000000000000;
@@ -90,7 +90,9 @@ fn attempt(pinned: Pinned, c: Claim) {
         timestamps[i] = c.legs.timestamps[i];
         salts[i] = c.legs.salts[i];
     }
-    let tx_set_hash = compute_tx_set_hash(amounts, timestamps);
+    // tx_set_hash is unpinned (Oracle: non-zero); the circuit requires it to equal
+    // settlement_root, so the prover supplies the registry root.
+    let root = registry_root(pinned);
     main(
         amounts,
         timestamps,
@@ -100,9 +102,9 @@ fn attempt(pinned: Pinned, c: Claim) {
         c.clean,
         (c.threshold / UNIT) as u64,
         c.window,
-        tx_set_hash,
+        root,
         SUBMITTER,
-        registry_root(pinned),
+        root,
         PROOF_TS as Field,
         SEED,
         pinned.jurisdiction_id,

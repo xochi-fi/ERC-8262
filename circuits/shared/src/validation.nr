@@ -1,7 +1,6 @@
 /// Common validation utilities for ERC-8262 circuits
 
 use crate::constants::MAX_PROVIDERS;
-use crate::hash::hash32;
 
 /// Validate that a timestamp is within reasonable bounds.
 /// Lower bound: 2021-01-01 (1609459200). Upper bound: 2^40 (~year 36812).
@@ -44,17 +43,6 @@ pub fn validate_provider_slots(
     }
 }
 
-/// Compute a commitment to a transaction set (amounts + timestamps interleaved).
-/// Layout: [amount_0, timestamp_0, amount_1, timestamp_1, ..., amount_15, timestamp_15]
-pub fn compute_tx_set_hash(amounts: [u64; 16], timestamps: [u64; 16]) -> Field {
-    let mut hash_inputs: [Field; 32] = [0; 32];
-    for i in 0..16 {
-        hash_inputs[i * 2] = amounts[i] as Field;
-        hash_inputs[i * 2 + 1] = timestamps[i] as Field;
-    }
-    hash32(hash_inputs)
-}
-
 #[test]
 fn test_validate_timestamp_valid() {
     validate_timestamp(1700000000); // 2023
@@ -74,13 +62,4 @@ fn test_validate_timestamp_rejects_u64_wraparound() {
 #[test(should_fail_with = "Timestamp unreasonably far future")]
 fn test_validate_timestamp_too_far_future() {
     validate_timestamp(1099511627776); // 2^40
-}
-
-#[test]
-fn test_compute_tx_set_hash_deterministic() {
-    let amounts: [u64; 16] = [100, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let timestamps: [u64; 16] = [1000, 2000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let h1 = compute_tx_set_hash(amounts, timestamps);
-    let h2 = compute_tx_set_hash(amounts, timestamps);
-    assert(h1 == h2);
 }

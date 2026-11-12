@@ -16,7 +16,7 @@
 ///                          equals shared::get_reporting_threshold(jurisdiction_id)
 ///   - time_window: the analysis window in seconds; every active transaction
 ///                  lies in [timestamp - time_window, timestamp]
-///   - tx_set_hash: commitment to the transaction set analyzed
+///   - tx_set_hash: commitment to the analysed set; equals settlement_root (salted chain)
 ///   - submitter: address of the authorized proof submitter (anti-frontrun)
 ///   - settlement_root: XIP-1 binding. The circuit folds the settlement chain from
 ///                      `settlement_seed` over the analysed transactions
@@ -44,7 +44,7 @@
 ///   - num_transactions: how many are active
 
 use erc8262_shared::{
-    MAX_TRANSACTIONS, compute_tx_set_hash, fold_settlement_root, get_reporting_threshold,
+    MAX_TRANSACTIONS, fold_settlement_root, get_reporting_threshold,
     validate_timestamp,
 };
 
@@ -78,7 +78,7 @@ fn main(
     result: pub bool,              // true = clean (no structuring)
     reporting_threshold: pub u64,  // jurisdiction reporting threshold
     time_window: pub u64,          // analysis window in seconds
-    tx_set_hash: pub Field,        // commitment to the analyzed set
+    tx_set_hash: pub Field,        // commitment to the analyzed set (== settlement_root)
     submitter: pub Field,          // authorized submitter address (oracle enforces == msg.sender)
     settlement_root: pub Field,    // XIP-1: settlement chain folded over the analysed set
     timestamp: pub Field,          // prover-chosen; Oracle enforces freshness
@@ -123,9 +123,10 @@ fn main(
     let root = fold_settlement_root(settlement_seed, amounts, timestamps, salts, num_transactions);
     assert(root == settlement_root, "Settlement root mismatch");
 
-    // Verify tx_set_hash
-    let computed_hash = compute_tx_set_hash(amounts, timestamps);
-    assert(computed_hash == tx_set_hash, "Transaction set hash mismatch");
+    // tx_set_hash (Oracle: non-zero commitment to the analysed set) is the same salted
+    // chain root; the former unsalted Pedersen-32 over (amount, timestamp) pairs cost
+    // ~7.6k gates and was brute-forceable for small sets.
+    assert(tx_set_hash == root, "Transaction set hash mismatch");
 
     // Run the appropriate analysis
     if analysis_type == ANALYSIS_STRUCTURING {
@@ -255,9 +256,7 @@ fn test_main_structuring_clean() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -265,9 +264,7 @@ fn test_main_velocity_clean() {
     let amounts: [u64; 16] = [100, 200, 300, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700000500, 1700001000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 3, ANALYSIS_VELOCITY, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -275,9 +272,7 @@ fn test_main_round_amounts_clean() {
     let amounts: [u64; 16] = [1234, 5678, 3000, 9876, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -286,9 +281,7 @@ fn test_main_structuring_detected() {
     let amounts: [u64; 16] = [9500, 9800, 9200, 500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, false, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -297,9 +290,7 @@ fn test_structuring_threshold_boundary() {
     let amounts: [u64; 16] = [10000, 10000, 10000, 10000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -307,9 +298,7 @@ fn test_velocity_exactly_max() {
     let amounts: [u64; 16] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700000100, 1700000200, 1700000300, 1700000400, 1700000500, 1700000600, 1700000700, 1700000800, 1700000900, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 10, ANALYSIS_VELOCITY, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -317,9 +306,7 @@ fn test_velocity_exceeds_max() {
     let amounts: [u64; 16] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700000100, 1700000200, 1700000300, 1700000400, 1700000500, 1700000600, 1700000700, 1700000800, 1700000900, 1700001000, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 11, ANALYSIS_VELOCITY, false, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -328,9 +315,7 @@ fn test_round_amounts_all_round() {
     let amounts: [u64; 16] = [1000, 2000, 3000, 4000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, 1700003600);
 }
 
 /// XIP-1: the threshold comes from the jurisdiction table (EU = 10_000), so the
@@ -342,9 +327,7 @@ fn test_structuring_single_tx_below_floor() {
     let amounts: [u64; 16] = [8999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003600);
 }
 
 #[test]
@@ -353,9 +336,7 @@ fn test_structuring_single_tx_at_floor_suspicious() {
     let amounts: [u64; 16] = [9000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, 10000, 3600, 1700003600);
 }
 
 #[test(should_fail_with = "Threshold is not the jurisdiction's")]
@@ -363,9 +344,7 @@ fn test_main_revert_threshold_not_jurisdictions() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 20000, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 20000, 3600, 1700003600);
 }
 
 #[test(should_fail_with = "Timestamp before 2021")]
@@ -373,9 +352,7 @@ fn test_main_revert_timestamp_before_2021() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1000);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1000);
 }
 
 #[test(should_fail_with = "Timestamp unreasonably far future")]
@@ -383,9 +360,7 @@ fn test_main_revert_timestamp_far_future() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1099511627776);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1099511627776);
 }
 
 #[test(should_fail_with = "Transaction after proof timestamp")]
@@ -393,9 +368,7 @@ fn test_main_revert_transaction_after_proof_timestamp() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700002999);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700002999);
 }
 
 #[test(should_fail_with = "Transaction outside time window")]
@@ -403,10 +376,8 @@ fn test_main_revert_transaction_outside_time_window() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
     // Oldest transaction is 3601s before the proof timestamp; window is 3600s.
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003601);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003601);
 }
 
 #[test]
@@ -415,14 +386,11 @@ fn test_main_transaction_at_proof_timestamp() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    let tx_hash = compute_tx_set_hash(amounts, timestamps);
-
-    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003000);
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003000);
 }
 
 /// Analysis-test call shape: unbound use (seed 0, zero salts), jurisdiction 0,
-/// aggregate flag computed from the amounts. `_unbound_root` keeps the pre-XIP-1
-/// argument order; the root is derived.
+/// submitter 0xdead; root, tx_set_hash and aggregate flag derived from the amounts.
 fn run(
     amounts: [u64; 16],
     timestamps: [u64; 16],
@@ -431,9 +399,6 @@ fn run(
     result: bool,
     reporting_threshold: u64,
     time_window: u64,
-    tx_set_hash: Field,
-    submitter: Field,
-    _unbound_root: Field,
     timestamp: Field,
 ) {
     let salts: [Field; 16] = [0; 16];
@@ -452,8 +417,8 @@ fn run(
         result,
         reporting_threshold,
         time_window,
-        tx_set_hash,
-        submitter,
+        root,
+        0xdead,
         root,
         timestamp,
         0,
