@@ -125,7 +125,7 @@ interface ISettlementRegistry {
     ///      already holds the maximum number of open trades.
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
-    /// @param subTradeCount Number of sub-trades (must be in [2, 100])
+    /// @param subTradeCount Number of sub-trades (must be in [2, 16], the pattern circuit's capacity)
     /// @return tradeId `computeTradeId(msg.sender, tradeRef)`, the key for every other call
     function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
         external

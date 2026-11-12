@@ -132,18 +132,18 @@ contract SettlementRegistryTest is Test {
 
     function test_registerTrade_revert_subTradeCountTooHigh() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 101));
-        registry.registerTrade(keccak256("trade-1"), 0, 101);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 17));
+        registry.registerTrade(keccak256("trade-1"), 0, 17);
     }
 
     function test_registerTrade_boundsAccepted() public {
         vm.startPrank(alice);
         bytes32 minId = registry.registerTrade(keccak256("trade-min"), 0, 2);
-        bytes32 maxId = registry.registerTrade(keccak256("trade-max"), 0, 100);
+        bytes32 maxId = registry.registerTrade(keccak256("trade-max"), 0, 16);
         vm.stopPrank();
 
         assertEq(registry.getSettlement(minId).subTradeCount, 2);
-        assertEq(registry.getSettlement(maxId).subTradeCount, 100);
+        assertEq(registry.getSettlement(maxId).subTradeCount, 16);
     }
 
     // -------------------------------------------------------------------------

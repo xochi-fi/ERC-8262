@@ -25,8 +25,10 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Minimum number of sub-trades per settlement
     uint8 internal constant MIN_SUB_TRADES = 2;
 
-    /// @notice Maximum number of sub-trades per settlement
-    uint8 internal constant MAX_SUB_TRADES = 100;
+    /// @notice Maximum number of sub-trades per settlement: the pattern circuit's capacity
+    ///         (`MAX_TRANSACTIONS` in circuits/shared), so one STRUCTURING proof can analyse
+    ///         every leg it is bound to. Must match the circuit.
+    uint8 internal constant MAX_SUB_TRADES = 16;
 
     /// @notice Maximum trades a subject may hold open at once (registered, not closed).
     /// @dev Bounds the scan in `registerTrade`. A trade is closed when finalized, abandoned,
