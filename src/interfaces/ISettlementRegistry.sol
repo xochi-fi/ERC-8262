@@ -104,6 +104,9 @@ interface ISettlementRegistry {
     ///         recorded leg, so it cannot have analysed that leg.
     /// @dev `proofTimestamp` is public input 7, not the Oracle attestation time, which may be later.
     error PatternProofPredatesLastLeg(bytes32 proofHash, uint256 proofTimestamp, uint256 lastSettledAt);
+    /// @notice The PATTERN proof's analysis window starts after the trade was registered, so
+    ///         it cannot contain every leg.
+    error PatternWindowExcludesTrade(bytes32 proofHash, uint256 windowStart, uint256 tradeCreatedAt);
     /// @notice Proof hash already backs a leg of this or any other trade.
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
     error TradeAlreadyAbandoned(bytes32 tradeId);

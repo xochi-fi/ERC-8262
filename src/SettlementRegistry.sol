@@ -236,6 +236,11 @@ contract SettlementRegistry is ISettlementRegistry {
         //      (audit H-1; binds the pattern attestation to THIS specific settlement)
         //   8. The pattern proof has not been used to finalize a different trade
         //      (audit H-1 reuse-prevention; one PATTERN attestation per trade)
+        //   9. The analysis window [timestamp - time_window, timestamp] reaches back to
+        //      createdAt, so it can contain every leg. The circuit binds each analysed
+        //      transaction into that window; a shorter window cannot have analysed the
+        //      early legs. Consequence: a trade can only be closed with a proof while
+        //      `timestamp - createdAt` fits the Oracle's MAX_TIME_WINDOW.
         //
         // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
         // they analyze transaction patterns, not jurisdiction-specific thresholds.
@@ -262,6 +267,11 @@ contract SettlementRegistry is ISettlementRegistry {
         uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
         if (proofTimestamp < settlement.lastSettledAt) {
             revert PatternProofPredatesLastLeg(patternProofHash, proofTimestamp, settlement.lastSettledAt);
+        }
+        // A window longer than the timestamp starts at or before time zero and covers all.
+        uint256 timeWindow = uint256(bytes32(patternPublicInputs[96:128]));
+        if (timeWindow < proofTimestamp && proofTimestamp - timeWindow > settlement.createdAt) {
+            revert PatternWindowExcludesTrade(patternProofHash, proofTimestamp - timeWindow, settlement.createdAt);
         }
 
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
