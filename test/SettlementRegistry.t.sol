@@ -43,7 +43,7 @@ contract SettlementRegistryTest is Test {
         for (uint8 i = ProofTypes.COMPLIANCE; i <= ProofTypes.NON_MEMBERSHIP; i++) {
             verifier.setVerifierInitial(i, address(stubVerifier));
         }
-        oracle.registerReportingThreshold(bytes32(uint256(10000)));
+        oracle.registerReportingThreshold(bytes32(uint256(10_000e18))); // jurisdiction 0 (XIP-1 base units)
         vm.stopPrank();
 
         registry = new SettlementRegistry(address(oracle));
@@ -571,7 +571,7 @@ contract SettlementRegistryTest is Test {
         bytes memory publicInputs = abi.encodePacked(
             bytes32(uint256(1)), // analysis_type
             bytes32(uint256(1)), // result
-            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(10_000e18)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))), // submitter
@@ -804,7 +804,7 @@ contract SettlementRegistryTest is Test {
         bytes memory tamperedInputs = abi.encodePacked(
             bytes32(uint256(1)), // analysis_type
             bytes32(uint256(1)), // result
-            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(10_000e18)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xbeef)), // tx_set_hash (different from original 0xabcd)
             bytes32(uint256(uint160(alice))),
@@ -960,7 +960,7 @@ contract SettlementRegistryTest is Test {
         bytes memory publicInputs = abi.encodePacked(
             bytes32(uint256(99)), // analysis_type (invalid)
             bytes32(uint256(1)), // result
-            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(10_000e18)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(alice))),
@@ -1268,7 +1268,7 @@ contract SettlementRegistryTest is Test {
         publicInputs = abi.encodePacked(
             bytes32(analysisType), // analysis_type
             bytes32(uint256(1)), // result
-            bytes32(uint256(10000)), // reporting_threshold
+            bytes32(uint256(10_000e18)), // reporting_threshold
             bytes32(uint256(86400)), // time_window
             bytes32(uint256(0xabcd)), // tx_set_hash
             bytes32(uint256(uint160(who))), // submitter

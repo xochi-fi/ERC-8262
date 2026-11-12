@@ -60,7 +60,7 @@ fn main(
     pubkey_xs: [[u8; 32]; 5],
     pubkey_ys: [[u8; 32]; 5],
     signatures: [[u8; 64]; 5],
-    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
@@ -398,7 +398,7 @@ global FIXTURE_SIG_2: [u8; 64] = [
 ];
 
 /// Prove the fixture 2-of-5 bundle as one settlement leg.
-fn fixture_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+fn fixture_leg(link_in: Field, leg_amount: u128, leg_salt: Field, link_out: Field) {
     let active_signals: [u32; 8] = [25, 0, 0, 0, 0, 0, 0, 0];
     let pad_signals: [u32; 8] = [0; 8];
     let active_weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];

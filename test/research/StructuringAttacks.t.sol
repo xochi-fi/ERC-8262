@@ -26,8 +26,9 @@ contract ResearchPassVerifier is IUltraVerifier {
 ///        threshold registration step, or per-sender trade keys).
 ///      - Honest flows MAY gain steps the design requires (for example registering a
 ///        commitment up front), but MUST still end finalized.
-///      - Jurisdiction 0's reporting threshold is 10000. 999999 is another
-///        jurisdiction's threshold: registered in the Oracle, but not jurisdiction 0's.
+///      - Jurisdiction 0's reporting threshold is 10000 units (10_000e18 base units since
+///        XIP-1 H3). 999999 units is another jurisdiction's threshold: registered in the
+///        Oracle, but not jurisdiction 0's.
 contract StructuringAttacks is Test {
     SettlementRegistry internal registry;
     ERC8262Oracle internal oracle;
@@ -39,8 +40,8 @@ contract StructuringAttacks is Test {
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
-    uint256 internal constant J0_THRESHOLD = 10000;
-    uint256 internal constant FOREIGN_THRESHOLD = 999999;
+    uint256 internal constant J0_THRESHOLD = 10_000e18;
+    uint256 internal constant FOREIGN_THRESHOLD = 999_999e18;
     uint256 internal constant STRUCTURING = 1;
     uint256 internal constant VELOCITY = 2;
 

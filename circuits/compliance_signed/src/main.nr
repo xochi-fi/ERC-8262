@@ -57,7 +57,7 @@ fn main(
     signature: [u8; 64],
     pubkey_x: [u8; 32],
     pubkey_y: [u8; 32],
-    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
@@ -320,7 +320,7 @@ fn test_main_rejects_risk_signed_bundle() {
 }
 
 /// The fixture bundle's valid proof as one settlement leg.
-fn fixture_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+fn fixture_leg(link_in: Field, leg_amount: u128, leg_salt: Field, link_out: Field) {
     let signals = [25, 0, 0, 0, 0, 0, 0, 0];
     let weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
     let provider_ids: [Field; 8] = [1, 0, 0, 0, 0, 0, 0, 0];

@@ -43,7 +43,7 @@ fn main(
     weight_sum: u32,             // sum of active weights
     provider_ids: [Field; 8],    // provider identifiers
     num_providers: u32,          // how many are active (1-8)
-    leg_amount: u64,             // XIP-1: settlement leg amount
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
@@ -117,7 +117,7 @@ fn run(
     );
 }
 
-fn compliant_leg(link_in: Field, leg_amount: u64, leg_salt: Field, link_out: Field) {
+fn compliant_leg(link_in: Field, leg_amount: u128, leg_salt: Field, link_out: Field) {
     let weights: [u32; 8] = [100, 0, 0, 0, 0, 0, 0, 0];
     let provider_ids: [Field; 8] = [1, 0, 0, 0, 0, 0, 0, 0];
     main(

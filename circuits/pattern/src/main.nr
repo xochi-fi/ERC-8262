@@ -38,13 +38,14 @@
 ///                           reporting threshold.
 ///
 /// Private inputs:
-///   - amounts: transaction amounts
+///   - amounts: transaction amounts in base units (shared::AMOUNT_UNIT per whole unit of
+///              the jurisdiction's reporting currency), each < 2^96
 ///   - timestamps: transaction timestamps
 ///   - salts: per-leg blinding committed in the settlement chain
 ///   - num_transactions: how many are active
 
 use erc8262_shared::{
-    MAX_TRANSACTIONS, fold_settlement_root, get_reporting_threshold,
+    AMOUNT_UNIT, MAX_TRANSACTIONS, fold_settlement_root, get_reporting_threshold,
     validate_timestamp,
 };
 
@@ -58,17 +59,17 @@ global ANALYSIS_VELOCITY: u8 = 2;
 global ANALYSIS_ROUND_AMOUNT: u8 = 3;
 
 /// Percentage of threshold that defines "just below" (90%)
-global STRUCTURING_FLOOR_PCT: u64 = 90;
+global STRUCTURING_FLOOR_PCT: u128 = 90;
 /// Maximum allowed transactions in a time window before flagging
 global MAX_VELOCITY: u32 = 10;
-/// Round amount divisor (amounts divisible by this are "round")
-global ROUND_DIVISOR: u64 = 1000;
+/// Round amount divisor: 1000 whole units (amounts divisible by this are "round")
+global ROUND_DIVISOR: u128 = 1000 * AMOUNT_UNIT;
 /// Maximum percentage of round amounts before flagging
 global MAX_ROUND_PCT: u32 = 80;
 
 fn main(
     // --- Private ---
-    amounts: [u64; 16],
+    amounts: [u128; 16],
     timestamps: [u64; 16],
     salts: [Field; 16],
     num_transactions: u32,
@@ -76,7 +77,7 @@ fn main(
     // --- Public ---
     analysis_type: pub u8,
     result: pub bool,              // true = clean (no structuring)
-    reporting_threshold: pub u64,  // jurisdiction reporting threshold
+    reporting_threshold: pub u128, // jurisdiction reporting threshold (base units)
     time_window: pub u64,          // analysis window in seconds
     tx_set_hash: pub Field,        // commitment to the analyzed set (== settlement_root)
     submitter: pub Field,          // authorized submitter address (oracle enforces == msg.sender)
@@ -100,10 +101,10 @@ fn main(
     // diluted by adding small legs.
     let mut total: u128 = 0;
     for i in 0..16 {
-        total += amounts[i] as u128; // inactive slots are asserted zero below
+        total += amounts[i]; // each < 2^96 (settlement_link) or zero (inactive)
     }
     assert(
-        aggregate_reportable == (total >= reporting_threshold as u128),
+        aggregate_reportable == (total >= reporting_threshold),
         "Aggregate reportability mismatch",
     );
     assert(time_window > 0, "Time window must be positive");
@@ -157,9 +158,9 @@ fn main(
 /// Check for structuring: count amounts in [threshold*90%, threshold)
 /// If more than 50% of transactions are in this range, flag as structuring
 fn check_structuring(
-    amounts: [u64; 16],
+    amounts: [u128; 16],
     num_transactions: u32,
-    reporting_threshold: u64,
+    reporting_threshold: u128,
 ) -> bool {
     let floor = (reporting_threshold * STRUCTURING_FLOOR_PCT) / 100;
     let mut suspicious_count: u32 = 0;
@@ -215,7 +216,7 @@ fn check_velocity(
 
 /// Check for suspicious concentration of round amounts
 fn check_round_amounts(
-    amounts: [u64; 16],
+    amounts: [u128; 16],
     num_transactions: u32,
 ) -> bool {
     let mut round_count: u32 = 0;
@@ -235,7 +236,7 @@ fn check_round_amounts(
 #[test]
 fn test_clean_structuring() {
     let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let clean = check_structuring(amounts, 4, 10000);
+    let clean = check_structuring(whole_units(amounts), 4, 10000 * AMOUNT_UNIT);
     assert(clean == true);
 }
 
@@ -243,7 +244,7 @@ fn test_clean_structuring() {
 fn test_detected_structuring() {
     // 3 of 4 amounts are just below the 10000 threshold (in 9000-9999 range)
     let amounts: [u64; 16] = [9500, 9800, 9200, 500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let clean = check_structuring(amounts, 4, 10000);
+    let clean = check_structuring(whole_units(amounts), 4, 10000 * AMOUNT_UNIT);
     assert(clean == false);
 }
 
@@ -258,7 +259,7 @@ fn test_clean_velocity() {
 fn test_clean_round_amounts() {
     // Only 1 of 4 is a round amount (3000), which is 25% < 80%
     let amounts: [u64; 16] = [1234, 5678, 3000, 9876, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let clean = check_round_amounts(amounts, 4);
+    let clean = check_round_amounts(whole_units(amounts), 4);
     assert(clean == true);
 }
 
@@ -400,25 +401,37 @@ fn test_main_transaction_at_proof_timestamp() {
     run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 10000, 3600, 1700003000);
 }
 
-/// Analysis-test call shape: unbound use (seed 0, zero salts), jurisdiction 0,
-/// submitter 0xdead; root, tx_set_hash and aggregate flag derived from the amounts.
+/// Test amounts are whole reporting-currency units; the circuit takes base units.
+fn whole_units(amounts: [u64; 16]) -> [u128; 16] {
+    let mut out: [u128; 16] = [0; 16];
+    for i in 0..16 {
+        out[i] = amounts[i] as u128 * AMOUNT_UNIT;
+    }
+    out
+}
+
+/// Analysis-test call shape: amounts and threshold in whole units (scaled to base
+/// units here); unbound use (seed 0, zero salts), jurisdiction 0, submitter 0xdead;
+/// root, tx_set_hash and aggregate flag derived from the amounts.
 fn run(
-    amounts: [u64; 16],
+    whole_amounts: [u64; 16],
     timestamps: [u64; 16],
     num_transactions: u32,
     analysis_type: u8,
     result: bool,
-    reporting_threshold: u64,
+    whole_threshold: u64,
     time_window: u64,
     timestamp: Field,
 ) {
+    let amounts = whole_units(whole_amounts);
+    let reporting_threshold = whole_threshold as u128 * AMOUNT_UNIT;
     let salts: [Field; 16] = [0; 16];
     let root = fold_settlement_root(0, amounts, timestamps, salts, num_transactions);
     let mut sum: u128 = 0;
     for i in 0..16 {
-        sum += amounts[i] as u128;
+        sum += amounts[i];
     }
-    let aggregate_reportable = sum >= reporting_threshold as u128;
+    let aggregate_reportable = sum >= reporting_threshold;
     main(
         amounts,
         timestamps,

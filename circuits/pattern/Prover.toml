@@ -1,21 +1,23 @@
 # Clean structuring analysis: 4 transactions, all well below threshold.
 # Every transaction lies in [timestamp - time_window, timestamp] (circuit-enforced).
-amounts = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+# Amounts and threshold are base units (shared::AMOUNT_UNIT = 1e18 per whole unit):
+# 500, 1200, 3000, 7500 units against jurisdiction 0's 10_000.
+amounts = ["500000000000000000000", "1200000000000000000000", "3000000000000000000000", "7500000000000000000000", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]
 timestamps = [1699990000, 1699991000, 1699992000, 1699993000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 salts = [1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 num_transactions = 4
 analysis_type = 1
 result = true
-reporting_threshold = 10000
+reporting_threshold = "10000000000000000000000"
 time_window = 86400
 # == settlement_root (XIP-1: the salted chain root is the analysed-set commitment)
-tx_set_hash = "0x5ba4157ddab8dbeeccce4119c24b3aa3e68cb8a1f702f5f8bbc867d1053517"
+tx_set_hash = "0x1710f7fa0cf7d5d856c639d2926aaad4677ca92b83ff2fe28bd8ae3dd966f6dd"
 submitter = "0xdead"
 # XIP-1: settlement chain folded from settlement_seed over the 4 legs
 # (shared::fold_settlement_root). SettlementRegistry pins seed and root per trade.
-settlement_root = "0x5ba4157ddab8dbeeccce4119c24b3aa3e68cb8a1f702f5f8bbc867d1053517"
+settlement_root = "0x1710f7fa0cf7d5d856c639d2926aaad4677ca92b83ff2fe28bd8ae3dd966f6dd"
 timestamp = "1700000000"
 settlement_seed = "0x5eed"
 jurisdiction_id = 0
-# 500 + 1200 + 3000 + 7500 = 12200 >= 10000
+# 500 + 1200 + 3000 + 7500 = 12200 units >= 10000
 aggregate_reportable = true

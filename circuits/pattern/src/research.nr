@@ -58,12 +58,12 @@ pub struct Claim {
 }
 
 // ---------------------------------------------------------------------------
-// Design adapter (H1 chain over whole-unit legs; H2 threshold table; H4 aggregate)
+// Design adapter (H1 chain; H2 threshold table; H3 base units; H4 aggregate)
 // ---------------------------------------------------------------------------
 
-/// Leg amount as committed in the settlement chain (H1: whole units, u64).
-fn committed_amount(base_units: u128) -> u64 {
-    (base_units / UNIT) as u64
+/// Leg amount as committed in the settlement chain (H3: raw base units).
+fn committed_amount(base_units: u128) -> u128 {
+    base_units
 }
 
 /// The root the registry holds after recording every pinned leg: each leg's
@@ -82,7 +82,7 @@ fn registry_root(p: Pinned) -> Field {
 /// the circuit refolds the chain over the analysed legs. H2: the claimed
 /// threshold must be the pinned jurisdiction's (circuit table).
 fn attempt(pinned: Pinned, c: Claim) {
-    let mut amounts: [u64; 16] = [0; 16];
+    let mut amounts: [u128; 16] = [0; 16];
     let mut timestamps: [u64; 16] = [0; 16];
     let mut salts: [Field; 16] = [0; 16];
     for i in 0..16 {
@@ -100,7 +100,7 @@ fn attempt(pinned: Pinned, c: Claim) {
         c.legs.n,
         STRUCTURING,
         c.clean,
-        (c.threshold / UNIT) as u64,
+        c.threshold,
         c.window,
         root,
         SUBMITTER,

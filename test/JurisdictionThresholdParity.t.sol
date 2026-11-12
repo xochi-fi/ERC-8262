@@ -68,11 +68,11 @@ contract JurisdictionThresholdParityTest is Test {
 
     /// @dev Mirror of `circuits/shared/src/settlement.nr::get_reporting_threshold` (XIP-1).
     function _expectedReportingThreshold(uint8 jurisdictionId) internal pure returns (uint256) {
-        if (jurisdictionId == JurisdictionConfig.EU) return 10000;
-        if (jurisdictionId == JurisdictionConfig.US) return 10000;
-        if (jurisdictionId == JurisdictionConfig.UK) return 10000;
-        if (jurisdictionId == JurisdictionConfig.SINGAPORE) return 20000;
-        if (jurisdictionId == JurisdictionConfig.UAE) return 55000;
+        if (jurisdictionId == JurisdictionConfig.EU) return 10_000e18;
+        if (jurisdictionId == JurisdictionConfig.US) return 10_000e18;
+        if (jurisdictionId == JurisdictionConfig.UK) return 10_000e18;
+        if (jurisdictionId == JurisdictionConfig.SINGAPORE) return 20_000e18;
+        if (jurisdictionId == JurisdictionConfig.UAE) return 55_000e18;
         revert("unknown jurisdiction in test mirror");
     }
 

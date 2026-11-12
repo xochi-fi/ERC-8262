@@ -14,17 +14,26 @@
 ///
 /// Hash: one Poseidon2 (t=4) permutation per link, domain tag in the capacity
 /// element. Inputs are packed injectively: amount * 2^40 + timestamp, with
-/// timestamp < 2^40.
+/// amount < 2^96 and timestamp < 2^40.
+///
+/// Amounts are fixed-point base units with AMOUNT_DECIMALS = 18 of the trade
+/// jurisdiction's reporting currency (an 18-decimal stablecoin's raw units), so a
+/// leg's committed amount is its on-chain base-unit value, never rescaled or
+/// truncated. 2^96 base units is ~7.9e10 whole units per leg.
 
 use crate::constants::{JURISDICTION_EU, JURISDICTION_SG, JURISDICTION_UAE, JURISDICTION_UK, JURISDICTION_US};
 
-/// Reporting threshold per jurisdiction, in whole units of the jurisdiction's
-/// reporting currency. Must match Solidity JurisdictionConfig.getReportingThreshold
-/// (test/JurisdictionThresholdParity.t.sol). Research placeholder values; XIP-1
-/// governance fixes them (a change is a new pattern verifier, as for risk tiers).
-pub fn get_reporting_threshold(jurisdiction_id: u8) -> u64 {
+/// 10^AMOUNT_DECIMALS: one whole reporting-currency unit in base units.
+pub global AMOUNT_UNIT: u128 = 1000000000000000000;
+
+/// Reporting threshold per jurisdiction in base units (AMOUNT_UNIT per whole unit
+/// of the jurisdiction's reporting currency). Must match Solidity
+/// JurisdictionConfig.getReportingThreshold (test/JurisdictionThresholdParity.t.sol).
+/// Research placeholder values; XIP-1 governance fixes them (a change is a new
+/// pattern verifier, as for risk tiers).
+pub fn get_reporting_threshold(jurisdiction_id: u8) -> u128 {
     assert(jurisdiction_id <= JURISDICTION_UAE, "Invalid jurisdiction");
-    if jurisdiction_id == JURISDICTION_EU {
+    let whole: u128 = if jurisdiction_id == JURISDICTION_EU {
         10000 // EUR
     } else if jurisdiction_id == JURISDICTION_US {
         10000 // USD (BSA CTR)
@@ -34,7 +43,8 @@ pub fn get_reporting_threshold(jurisdiction_id: u8) -> u64 {
         20000 // SGD
     } else {
         55000 // AED (JURISDICTION_UAE, guarded by assert above)
-    }
+    };
+    whole * AMOUNT_UNIT
 }
 
 /// Domain tag for chain links ("XIP1.link"), placed in the capacity element
@@ -44,7 +54,8 @@ global DOMAIN_SETTLEMENT_LINK: Field = 0x584950312e6c696e6b * 0x1000000000000000
 global TWO_POW_40: Field = 0x10000000000;
 
 /// One link of the settlement chain.
-pub fn settlement_link(prev: Field, amount: u64, timestamp: u64, salt: Field) -> Field {
+pub fn settlement_link(prev: Field, amount: u128, timestamp: u64, salt: Field) -> Field {
+    (amount as Field).assert_max_bit_size::<96>();
     assert(timestamp < 1099511627776, "Leg timestamp exceeds 2^40");
     let packed = (amount as Field) * TWO_POW_40 + (timestamp as Field);
     std::hash::poseidon2_permutation([prev, packed, salt, DOMAIN_SETTLEMENT_LINK])[0]
@@ -53,7 +64,7 @@ pub fn settlement_link(prev: Field, amount: u64, timestamp: u64, salt: Field) ->
 /// Fold the first `n` legs onto `seed`.
 pub fn fold_settlement_root<let N: u32>(
     seed: Field,
-    amounts: [u64; N],
+    amounts: [u128; N],
     timestamps: [u64; N],
     salts: [Field; N],
     n: u32,
@@ -87,7 +98,7 @@ fn test_link_rejects_wide_timestamp() {
 
 #[test]
 fn test_fold_matches_manual_chain() {
-    let amounts: [u64; 4] = [5, 6, 0, 0];
+    let amounts: [u128; 4] = [5, 6, 0, 0];
     let timestamps: [u64; 4] = [1700000000, 1700000100, 0, 0];
     let salts: [Field; 4] = [11, 12, 0, 0];
     let manual = settlement_link(settlement_link(9, 5, 1700000000, 11), 6, 1700000100, 12);
@@ -96,11 +107,16 @@ fn test_fold_matches_manual_chain() {
 
 #[test]
 fn test_reporting_threshold_table() {
-    assert(get_reporting_threshold(0) == 10000);
-    assert(get_reporting_threshold(1) == 10000);
-    assert(get_reporting_threshold(2) == 10000);
-    assert(get_reporting_threshold(3) == 20000);
-    assert(get_reporting_threshold(4) == 55000);
+    assert(get_reporting_threshold(0) == 10000 * AMOUNT_UNIT);
+    assert(get_reporting_threshold(1) == 10000 * AMOUNT_UNIT);
+    assert(get_reporting_threshold(2) == 10000 * AMOUNT_UNIT);
+    assert(get_reporting_threshold(3) == 20000 * AMOUNT_UNIT);
+    assert(get_reporting_threshold(4) == 55000 * AMOUNT_UNIT);
+}
+
+#[test(should_fail)]
+fn test_link_rejects_amount_wider_than_96_bits() {
+    let _ = settlement_link(0, 0x1000000000000000000000000, 1700000000, 0);
 }
 
 #[test(should_fail_with = "Invalid jurisdiction")]
