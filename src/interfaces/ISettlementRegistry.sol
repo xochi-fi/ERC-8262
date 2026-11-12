@@ -74,6 +74,10 @@ interface ISettlementRegistry {
     error InvalidSubTradeCount(uint8 count);
     error PatternPublicInputsMismatch(bytes32 expected, bytes32 actual);
     error PatternAnalysisTypeMismatch(uint256 expected, uint256 actual);
+    /// @notice The registry has no reporting threshold for this jurisdiction.
+    error UnsupportedJurisdiction(uint8 jurisdictionId);
+    /// @notice The PATTERN proof's `reporting_threshold` is not the trade jurisdiction's.
+    error ReportingThresholdMismatch(uint256 expected, uint256 actual);
     /// @notice Raised when the pattern proof's `settlement_root` public input does
     ///         not match the keccak commitment over this trade's recorded
     ///         sub-settlement proof hashes (audit H-1).
@@ -136,6 +140,8 @@ interface ISettlementRegistry {
     ///      then enforces analysis_type==1 (anti-structuring). VELOCITY/ROUND-AMOUNT proofs
     ///      are rejected. The proof's `timestamp` public input must be >= the last leg's
     ///      record time (`PatternProofPredatesLastLeg`); the attestation's submission time is not enough.
+    ///      `time_window >= timestamp - createdAt` (`PatternWindowTooShort`) and
+    ///      `reporting_threshold == reportingThreshold(jurisdictionId)` (`ReportingThresholdMismatch`).
     /// @param tradeId The trade to finalize
     /// @param patternProofHash Proof hash of a pattern detection proof for the subject
     /// @param patternPublicInputs Original public inputs used to generate the pattern proof
@@ -155,6 +161,11 @@ interface ISettlementRegistry {
     /// @param tradeId The trade to query
     /// @return subSettlements Array of recorded sub-settlements (excludes unset entries)
     function getSubSettlements(bytes32 tradeId) external view returns (SubSettlement[] memory subSettlements);
+
+    /// @notice Reporting threshold a PATTERN proof must use for trades in `jurisdictionId`
+    /// @dev Fixed at deployment. `registerTrade` rejects jurisdictions where this is 0.
+    /// @return threshold The threshold, or 0 if the jurisdiction is unsupported
+    function reportingThreshold(uint8 jurisdictionId) external view returns (uint64 threshold);
 
     /// @notice The oracle contract used for attestation lookups
     /// @return The oracle address

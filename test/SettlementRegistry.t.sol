@@ -34,6 +34,14 @@ contract SettlementRegistryTest is Test {
         ps[0] = 1;
     }
 
+    /// @dev Reporting threshold 10000 for jurisdictions 0-4 (EU, US, UK, SG, UAE).
+    function _thresholds() internal pure returns (uint64[] memory ts) {
+        ts = new uint64[](5);
+        for (uint256 i; i < ts.length; i++) {
+            ts[i] = 10000;
+        }
+    }
+
     function setUp() public {
         verifier = new ERC8262Verifier(owner);
         oracle = new ERC8262Oracle(address(verifier), owner, INITIAL_CONFIG, _defaultProviders());
@@ -46,7 +54,7 @@ contract SettlementRegistryTest is Test {
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
         vm.stopPrank();
 
-        registry = new SettlementRegistry(address(oracle));
+        registry = new SettlementRegistry(address(oracle), _thresholds());
     }
 
     // -------------------------------------------------------------------------
@@ -59,7 +67,33 @@ contract SettlementRegistryTest is Test {
 
     function test_constructor_revert_zeroAddress() public {
         vm.expectRevert(SettlementRegistry.ZeroAddress.selector);
-        new SettlementRegistry(address(0));
+        new SettlementRegistry(address(0), _thresholds());
+    }
+
+    function test_constructor_revert_tooManyJurisdictions() public {
+        vm.expectRevert(abi.encodeWithSelector(SettlementRegistry.TooManyJurisdictions.selector, 9));
+        new SettlementRegistry(address(oracle), new uint64[](9));
+    }
+
+    function test_reportingThreshold_perJurisdiction() public {
+        uint64[] memory ts = new uint64[](8);
+        ts[0] = 10000;
+        ts[3] = 20000;
+        ts[4] = 55000;
+        ts[7] = type(uint64).max;
+        SettlementRegistry r = new SettlementRegistry(address(oracle), ts);
+        assertEq(r.reportingThreshold(0), 10000);
+        assertEq(r.reportingThreshold(1), 0);
+        assertEq(r.reportingThreshold(3), 20000);
+        assertEq(r.reportingThreshold(4), 55000);
+        assertEq(r.reportingThreshold(7), type(uint64).max);
+        assertEq(r.reportingThreshold(8), 0);
+    }
+
+    function test_registerTrade_revert_unsupportedJurisdiction() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnsupportedJurisdiction.selector, 5));
+        registry.registerTrade(keccak256("trade-1"), 5, 2);
     }
 
     // -------------------------------------------------------------------------
@@ -725,6 +759,31 @@ contract SettlementRegistryTest is Test {
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
+    }
+
+    /// @notice A PATTERN proof against a threshold the Oracle accepts but that is not the
+    ///         trade jurisdiction's must not finalize the trade.
+    function test_finalizeTrade_revert_reportingThresholdMismatch() public {
+        uint64[] memory ts = new uint64[](1);
+        ts[0] = 20000;
+        SettlementRegistry r = new SettlementRegistry(address(oracle), ts);
+
+        vm.prank(alice);
+        bytes32 tradeId = r.registerTrade(keccak256("trade-threshold"), 0, 2);
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        r.recordSubSettlement(tradeId, 0, p1);
+        r.recordSubSettlement(tradeId, 1, p2);
+        vm.stopPrank();
+
+        // _submitPatternFor uses reporting_threshold = 10000 (registered in the Oracle).
+        (bytes32 patternProof, bytes memory patternInputs) =
+            _submitPatternFor(alice, 1, r.computeSettlementRoot(tradeId));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.ReportingThresholdMismatch.selector, 20000, 10000));
+        r.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_wrongProofType() public {

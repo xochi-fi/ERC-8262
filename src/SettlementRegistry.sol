@@ -15,6 +15,8 @@ uint256 constant PATTERN_STRUCTURING = 1;
 ///         Anti-structuring: finalization requires a pattern detection proof for the subject.
 contract SettlementRegistry is ISettlementRegistry {
     error ZeroAddress();
+    /// @notice Constructor threshold table longer than `MAX_JURISDICTIONS`.
+    error TooManyJurisdictions(uint256 count);
 
     /// @notice The oracle contract used for attestation lookups
     IERC8262Oracle public immutable override oracle;
@@ -29,6 +31,16 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         (`amounts[16]`). One pattern proof cannot analyse more legs than it has slots,
     ///         so a larger trade could be finalized with legs the analysis never saw.
     uint8 internal constant MAX_SUB_TRADES = 16;
+
+    /// @notice Number of jurisdiction ids the threshold table can hold (two words of four u64).
+    uint8 internal constant MAX_JURISDICTIONS = 8;
+
+    /// @notice Reporting thresholds for jurisdictions 0-3 and 4-7, one u64 per jurisdiction
+    ///         (jurisdiction `j` at bits `64 * (j % 4)`). Zero marks an unsupported jurisdiction.
+    ///         Fixed at deployment: the registry has no owner, so a threshold change is a
+    ///         redeploy, like every other rule here.
+    uint256 internal immutable _thresholds0to3;
+    uint256 internal immutable _thresholds4to7;
 
     /// @notice Settlement storage by tradeId
     mapping(bytes32 tradeId => Settlement settlement) internal _settlements;
@@ -53,9 +65,19 @@ contract SettlementRegistry is ISettlementRegistry {
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     /// @param oracle_ The ERC8262Oracle contract address
-    constructor(address oracle_) {
+    /// @param reportingThresholds Reporting threshold per jurisdiction id (index); 0 = unsupported.
+    ///        Every non-zero value must also be registered in the Oracle
+    ///        (`registerReportingThreshold`), or no PATTERN proof for that jurisdiction can be submitted.
+    constructor(address oracle_, uint64[] memory reportingThresholds) {
         if (oracle_ == address(0)) revert ZeroAddress();
+        if (reportingThresholds.length > MAX_JURISDICTIONS) revert TooManyJurisdictions(reportingThresholds.length);
         oracle = IERC8262Oracle(oracle_);
+        uint256[2] memory words;
+        for (uint256 j; j < reportingThresholds.length; ++j) {
+            words[j / 4] |= uint256(reportingThresholds[j]) << (64 * (j % 4));
+        }
+        _thresholds0to3 = words[0];
+        _thresholds4to7 = words[1];
     }
 
     // -------------------------------------------------------------------------
@@ -72,6 +94,7 @@ contract SettlementRegistry is ISettlementRegistry {
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
         }
+        if (reportingThreshold(jurisdictionId) == 0) revert UnsupportedJurisdiction(jurisdictionId);
 
         _settlements[tradeId] = Settlement({
             tradeId: tradeId,
@@ -183,9 +206,10 @@ contract SettlementRegistry is ISettlementRegistry {
         //      (audit H-1; binds the pattern attestation to THIS specific settlement)
         //   8. The pattern proof has not been used to finalize a different trade
         //      (audit H-1 reuse-prevention; one PATTERN attestation per trade)
-        //
-        // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
-        // they analyze transaction patterns, not jurisdiction-specific thresholds.
+        //   9. reporting_threshold equals the trade jurisdiction's threshold
+        //      (`reportingThreshold(jurisdictionId)`); the Oracle only checks it is one of the
+        //      globally registered values, so another jurisdiction's (higher) threshold
+        //      would otherwise pass.
         if (patternProofHash == bytes32(0)) revert PatternProofRequired(tradeId);
         if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
         uint8 proofType = oracle.getProofType(patternProofHash);
@@ -206,35 +230,53 @@ contract SettlementRegistry is ISettlementRegistry {
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
         //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
         // Length is enforced by the Oracle on submission.
-        uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
-        if (proofTimestamp < settlement.lastSettledAt) {
-            revert PatternProofPredatesLastLeg(patternProofHash, proofTimestamp, settlement.lastSettledAt);
+        {
+            uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
+            if (proofTimestamp < settlement.lastSettledAt) {
+                revert PatternProofPredatesLastLeg(patternProofHash, proofTimestamp, settlement.lastSettledAt);
+            }
+            // The circuit analyses transactions in `[timestamp - time_window, timestamp]`; that
+            // range must reach back to registration so it spans every leg. Legs are recorded
+            // at or after `createdAt` (AttestationPredatesTrade), and the Oracle caps
+            // time_window at MAX_TIME_WINDOW (90 days) > TRADE_TTL, so an honest prover can
+            // always comply.
+            uint256 timeWindow = uint256(bytes32(patternPublicInputs[96:128]));
+            if (timeWindow < proofTimestamp - settlement.createdAt) {
+                revert PatternWindowTooShort(patternProofHash, timeWindow, proofTimestamp - settlement.createdAt);
+            }
         }
-        // The circuit analyses transactions in `[timestamp - time_window, timestamp]`; that
-        // range must reach back to registration so it spans every leg. Legs are recorded
-        // at or after `createdAt` (AttestationPredatesTrade), and the Oracle caps
-        // time_window at MAX_TIME_WINDOW (90 days) > TRADE_TTL, so an honest prover can
-        // always comply.
-        uint256 timeWindow = uint256(bytes32(patternPublicInputs[96:128]));
-        if (timeWindow < proofTimestamp - settlement.createdAt) {
-            revert PatternWindowTooShort(patternProofHash, timeWindow, proofTimestamp - settlement.createdAt);
+        {
+            uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
+            if (analysisType != PATTERN_STRUCTURING) {
+                revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
+            }
         }
-
-        uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
-        if (analysisType != PATTERN_STRUCTURING) {
-            revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
+        {
+            uint256 expectedThreshold = reportingThreshold(settlement.jurisdictionId);
+            uint256 patternThreshold = uint256(bytes32(patternPublicInputs[64:96]));
+            if (patternThreshold != expectedThreshold) {
+                revert ReportingThresholdMismatch(expectedThreshold, patternThreshold);
+            }
         }
-
-        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
-        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
-        if (patternSettlementRoot != expectedSettlementRoot) {
-            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
+        {
+            bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
+            bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
+            if (patternSettlementRoot != expectedSettlementRoot) {
+                revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
+            }
         }
 
         _usedPatternProofs[patternProofHash] = true;
         settlement.finalized = true;
 
         emit TradeFinalized(tradeId, block.timestamp);
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function reportingThreshold(uint8 jurisdictionId) public view returns (uint64 threshold) {
+        if (jurisdictionId >= MAX_JURISDICTIONS) return 0;
+        uint256 word = jurisdictionId < 4 ? _thresholds0to3 : _thresholds4to7;
+        return uint64(word >> (64 * (jurisdictionId % 4)));
     }
 
     /// @notice Compute the `settlement_root` public input that a PATTERN proof
