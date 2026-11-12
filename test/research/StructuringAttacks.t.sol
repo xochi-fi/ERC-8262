@@ -150,6 +150,22 @@ contract StructuringAttacks is Test {
         assertTrue(_finalized(t2));
     }
 
+    /// A split lapses with legs (outage) while a second split is in flight: once the lapsed
+    /// one is resolved, the in-flight split resumes and finalizes.
+    function test_honest_inFlightTradeResumesAfterResolve() public {
+        bytes32 a = _tradeId("honest-stuck");
+        a = _register(alice, a, 2);
+        _recordLegs(alice, a, 2, 0);
+        vm.warp(block.timestamp + 6 days);
+        bytes32 b = _tradeId("honest-inflight");
+        b = _register(alice, b, 2);
+        vm.warp(block.timestamp + 1 days);
+        _abandon(alice, a);
+        _recordLegs(alice, b, 2, 0);
+        _finalize(alice, b, J0_THRESHOLD, 2 days, block.timestamp);
+        assertTrue(_finalized(b));
+    }
+
     /// Two splits by the same subject run concurrently and both finalize.
     function test_honest_concurrentTrades() public {
         bytes32 t1 = _tradeId("honest-par-a");
@@ -362,6 +378,22 @@ contract StructuringAttacks is Test {
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.recordSubSettlement, (t, 0, leg)));
         assertFalse(ok, "leg settled before any structuring analysis of its split");
+    }
+
+    /// Alice lets a settled split lapse unresolved and keeps settling legs on another split
+    /// she registered before the lapse. (Added by lifecycle-gating research.)
+    function test_attack_legsOnLiveTradeWhileUnresolved() public {
+        bytes32 a = _tradeId("frozen-a");
+        a = _register(alice, a, 2);
+        _recordLegs(alice, a, 2, 0);
+        vm.warp(block.timestamp + 6 days);
+        bytes32 b = _tradeId("frozen-b");
+        b = _register(alice, b, 2);
+        vm.warp(block.timestamp + 1 days);
+        bytes32 leg = _submitCompliance(alice, 0);
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.recordSubSettlement, (b, 0, leg)));
+        assertFalse(ok, "legs kept settling while a lapsed split was unresolved");
     }
 
     /// Alice commits her analysed set at registration, the legs settle, then she finalizes

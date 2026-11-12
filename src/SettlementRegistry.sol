@@ -173,6 +173,10 @@ contract SettlementRegistry is ISettlementRegistry {
         if (block.timestamp > settlement.expiresAt) revert TradeExpiredError(tradeId);
         if (index >= settlement.subTradeCount) revert SubTradeIndexOutOfBounds(index, settlement.subTradeCount);
         if (_subSettlements[tradeId][index].settledAt != 0) revert SubTradeAlreadySettled(tradeId, index);
+        // An unresolved lapsed trade freezes every other split of the subject, not only new
+        // registrations: legs of in-flight trades wait until `abandonTrade` resolves it.
+        (, bytes32 unresolved) = _scanOpenTrades(msg.sender);
+        if (unresolved != bytes32(0)) revert UnresolvedTrade(unresolved);
 
         // Verify the attestation exists in the oracle
         IERC8262Oracle.ComplianceAttestation memory attestation = _fetchAttestation(proofHash);
