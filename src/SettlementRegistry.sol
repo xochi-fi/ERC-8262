@@ -25,8 +25,10 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Minimum number of sub-trades per settlement
     uint8 internal constant MIN_SUB_TRADES = 2;
 
-    /// @notice Maximum number of sub-trades per settlement
-    uint8 internal constant MAX_SUB_TRADES = 100;
+    /// @notice Maximum number of sub-trades per settlement: the PATTERN circuit's capacity
+    ///         (`amounts[16]`). One pattern proof cannot analyse more legs than it has slots,
+    ///         so a larger trade could be finalized with legs the analysis never saw.
+    uint8 internal constant MAX_SUB_TRADES = 16;
 
     /// @notice Settlement storage by tradeId
     mapping(bytes32 tradeId => Settlement settlement) internal _settlements;

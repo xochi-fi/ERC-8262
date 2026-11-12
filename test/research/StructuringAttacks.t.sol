@@ -107,6 +107,18 @@ contract StructuringAttacks is Test {
         assertTrue(_finalized(t2));
     }
 
+    /// A settlement with more legs than one pattern proof can analyse (17) is registered
+    /// as two trades (15 + 2), each finalized by its own pattern proof.
+    function test_honest_seventeenLegsAsTwoTrades() public {
+        bytes32 t1 = _register(alice, _tradeId("honest-17a"), 15);
+        bytes32 t2 = _register(alice, _tradeId("honest-17b"), 2);
+        _recordLegs(alice, t1, 15, 0);
+        _finalize(alice, t1, J0_THRESHOLD, 1 days, block.timestamp);
+        _recordLegs(alice, t2, 2, 0);
+        _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(t1) && _finalized(t2));
+    }
+
     // ---------------------------------------------------------------------
     // Attacks (pass = refused)
     // ---------------------------------------------------------------------

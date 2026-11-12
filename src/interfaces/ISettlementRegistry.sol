@@ -107,7 +107,7 @@ interface ISettlementRegistry {
     ///      can register, and thereby occupy, the caller's id.
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
-    /// @param subTradeCount Number of sub-trades (must be in [2, 100])
+    /// @param subTradeCount Number of sub-trades (must be in [2, 16], the PATTERN circuit's capacity)
     /// @return tradeId The registry key for every later call on this trade
     function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
         external
