@@ -28,6 +28,11 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice Maximum number of sub-trades per settlement
     uint8 internal constant MAX_SUB_TRADES = 100;
 
+    /// @notice Maximum trades a subject may hold open at once (registered, not closed).
+    /// @dev Bounds the scan in `registerTrade`. A trade is closed when finalized, abandoned,
+    ///      or past expiry with no leg recorded.
+    uint8 internal constant MAX_OPEN_TRADES = 4;
+
     /// @notice Settlement storage by tradeId
     mapping(bytes32 tradeId => Settlement settlement) internal _settlements;
 
@@ -45,8 +50,10 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         second (possibly abandoned) split.
     mapping(bytes32 proofHash => bool used) internal _usedLegProofs;
 
-    /// @notice Expired trades per subject that settled at least one leg unfinalized.
-    mapping(address subject => uint256 count) internal _abandonedSettledTrades;
+    /// @notice Per-subject table of open trades. Slot `Settlement.openSlot` holds the tradeId
+    ///         until the trade closes; a lapsed trade with a recorded leg keeps its slot, and
+    ///         blocks `registerTrade`, until `abandonTrade` resolves it.
+    mapping(address subject => bytes32[MAX_OPEN_TRADES] tradeIds) internal _openTrades;
 
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
@@ -66,11 +73,12 @@ contract SettlementRegistry is ISettlementRegistry {
 
     /// @inheritdoc ISettlementRegistry
     function registerTrade(bytes32 tradeId, uint8 jurisdictionId, uint8 subTradeCount) external {
-        if (_abandonedSettledTrades[msg.sender] != 0) revert SubjectHasAbandonedTrade(msg.sender);
         if (_settlements[tradeId].createdAt != 0) revert TradeAlreadyExists(tradeId);
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
         }
+        uint8 slot = _claimOpenSlot(msg.sender);
+        _openTrades[msg.sender][slot] = tradeId;
 
         _settlements[tradeId] = Settlement({
             tradeId: tradeId,
@@ -78,10 +86,12 @@ contract SettlementRegistry is ISettlementRegistry {
             jurisdictionId: jurisdictionId,
             subTradeCount: subTradeCount,
             settledCount: 0,
+            openSlot: slot,
             createdAt: block.timestamp,
             expiresAt: block.timestamp + TRADE_TTL,
             finalized: false,
-            expired: false
+            expired: false,
+            abandoned: false
         });
 
         emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount);
@@ -93,6 +103,7 @@ contract SettlementRegistry is ISettlementRegistry {
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (msg.sender != settlement.subject) revert NotTradeSubject(msg.sender, settlement.subject);
         if (settlement.finalized) revert TradeAlreadyFinalized(tradeId);
+        if (settlement.abandoned) revert TradeAlreadyAbandoned(tradeId);
         if (block.timestamp > settlement.expiresAt) revert TradeExpiredError(tradeId);
         if (index >= settlement.subTradeCount) revert SubTradeIndexOutOfBounds(index, settlement.subTradeCount);
         if (_subSettlements[tradeId][index].settledAt != 0) revert SubTradeAlreadySettled(tradeId, index);
@@ -149,11 +160,46 @@ contract SettlementRegistry is ISettlementRegistry {
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (msg.sender != settlement.subject) revert NotTradeSubject(msg.sender, settlement.subject);
         if (settlement.finalized) revert TradeAlreadyFinalized(tradeId);
+        if (settlement.abandoned) revert TradeAlreadyAbandoned(tradeId);
         if (block.timestamp > settlement.expiresAt) revert TradeExpiredError(tradeId);
         if (settlement.settledCount != settlement.subTradeCount) {
             revert TradeNotComplete(tradeId, settlement.settledCount, settlement.subTradeCount);
         }
 
+        _consumePatternProof(tradeId, settlement, patternProofHash, patternPublicInputs);
+        settlement.finalized = true;
+        _releaseOpenSlot(settlement);
+
+        emit TradeFinalized(tradeId, block.timestamp);
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function abandonTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external {
+        Settlement storage settlement = _settlements[tradeId];
+        if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
+        if (msg.sender != settlement.subject) revert NotTradeSubject(msg.sender, settlement.subject);
+        if (settlement.finalized) revert TradeAlreadyFinalized(tradeId);
+        if (settlement.abandoned) revert TradeAlreadyAbandoned(tradeId);
+
+        // Legs already moved value: closing the trade needs the same structuring evidence as
+        // finalizing it, bound to the legs actually recorded (missing indices hash as zero).
+        // With no leg recorded nothing settled, so the subject may cancel without a proof.
+        if (settlement.settledCount != 0) {
+            _consumePatternProof(tradeId, settlement, patternProofHash, patternPublicInputs);
+        }
+        settlement.abandoned = true;
+        _releaseOpenSlot(settlement);
+
+        emit TradeAbandoned(tradeId, settlement.settledCount, patternProofHash);
+    }
+
+    /// @dev Verify and consume the STRUCTURING pattern proof that closes `tradeId`.
+    function _consumePatternProof(
+        bytes32 tradeId,
+        Settlement storage settlement,
+        bytes32 patternProofHash,
+        bytes calldata patternPublicInputs
+    ) internal {
         // Anti-structuring: verify a pattern detection proof (0x03) exists for the subject.
         // Checks:
         //   1. patternProofHash is not zero
@@ -216,9 +262,37 @@ contract SettlementRegistry is ISettlementRegistry {
         }
 
         _usedPatternProofs[patternProofHash] = true;
-        settlement.finalized = true;
+    }
 
-        emit TradeFinalized(tradeId, block.timestamp);
+    /// @dev Find a free open-trade slot for `subject`, or revert. Every occupied slot is
+    ///      checked: a lapsed trade with a recorded leg blocks registration until the
+    ///      subject resolves it with `abandonTrade`; a lapsed trade with no leg moved no
+    ///      value, so its slot is free.
+    function _claimOpenSlot(address subject) internal view returns (uint8 slot) {
+        bytes32[MAX_OPEN_TRADES] storage open = _openTrades[subject];
+        slot = MAX_OPEN_TRADES;
+        for (uint8 i; i < MAX_OPEN_TRADES;) {
+            bytes32 openId = open[i];
+            if (openId == bytes32(0)) {
+                if (slot == MAX_OPEN_TRADES) slot = i;
+            } else {
+                Settlement storage openTrade = _settlements[openId];
+                if (block.timestamp > openTrade.expiresAt) {
+                    if (openTrade.settledCount != 0) revert UnresolvedTrade(openId);
+                    if (slot == MAX_OPEN_TRADES) slot = i;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (slot == MAX_OPEN_TRADES) revert OpenTradeLimit(subject);
+    }
+
+    /// @dev Free the trade's open-trade slot unless a later trade already reclaimed it.
+    function _releaseOpenSlot(Settlement storage settlement) internal {
+        bytes32[MAX_OPEN_TRADES] storage open = _openTrades[settlement.subject];
+        if (open[settlement.openSlot] == settlement.tradeId) delete open[settlement.openSlot];
     }
 
     /// @notice Compute the `settlement_root` public input that a PATTERN proof
@@ -272,12 +346,14 @@ contract SettlementRegistry is ISettlementRegistry {
         Settlement storage settlement = _settlements[tradeId];
         if (settlement.createdAt == 0) revert TradeNotFound(tradeId);
         if (settlement.finalized) revert TradeAlreadyFinalized(tradeId);
+        if (settlement.abandoned) revert TradeAlreadyAbandoned(tradeId);
         if (settlement.expired) revert TradeExpiredError(tradeId);
         if (block.timestamp <= settlement.expiresAt) revert TradeNotExpired(tradeId);
 
         // Record/finalize are already closed by the `block.timestamp > expiresAt` guard.
+        // A trade with a recorded leg keeps its open slot: only `abandonTrade` resolves it.
         settlement.expired = true;
-        if (settlement.settledCount != 0) _abandonedSettledTrades[settlement.subject]++;
+        if (settlement.settledCount == 0) _releaseOpenSlot(settlement);
 
         emit TradeExpired(tradeId, block.timestamp);
     }

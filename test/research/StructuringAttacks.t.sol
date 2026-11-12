@@ -107,6 +107,60 @@ contract StructuringAttacks is Test {
         assertTrue(_finalized(t2));
     }
 
+    /// A leg fails at its venue: the subject closes the split with a STRUCTURING proof over
+    /// the legs that did settle, then settles the remainder as a new split.
+    function test_honest_recoverAfterFailedLeg() public {
+        bytes32 t1 = _tradeId("honest-failed");
+        _register(alice, t1, 3);
+        _recordLegs(alice, t1, 2, 0);
+        _abandon(alice, t1);
+        bytes32 t2 = _tradeId("honest-remainder");
+        _register(alice, t2, 2);
+        _recordLegs(alice, t2, 2, 0);
+        _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(t2));
+    }
+
+    /// Legs settled but the subject missed the TTL (outage): she resolves the lapsed trade
+    /// with a STRUCTURING proof over its legs, then opens and finalizes another.
+    function test_honest_resolveLapsedTrade() public {
+        bytes32 t1 = _tradeId("honest-lapsed");
+        _register(alice, t1, 2);
+        _recordLegs(alice, t1, 2, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        _abandon(alice, t1);
+        bytes32 t2 = _tradeId("honest-after-lapse");
+        _register(alice, t2, 2);
+        _recordLegs(alice, t2, 2, 0);
+        _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(t2));
+    }
+
+    /// A trade that lapses before any leg settled moved no value and does not block.
+    function test_honest_lapsedEmptyTradeDoesNotBlock() public {
+        bytes32 t1 = _tradeId("honest-empty");
+        _register(alice, t1, 2);
+        vm.warp(block.timestamp + 7 days + 1);
+        bytes32 t2 = _tradeId("honest-after-empty");
+        _register(alice, t2, 2);
+        _recordLegs(alice, t2, 2, 0);
+        _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(t2));
+    }
+
+    /// Two splits by the same subject run concurrently and both finalize.
+    function test_honest_concurrentTrades() public {
+        bytes32 t1 = _tradeId("honest-par-a");
+        bytes32 t2 = _tradeId("honest-par-b");
+        _register(alice, t1, 2);
+        _register(alice, t2, 2);
+        _recordLegs(alice, t1, 2, 0);
+        _recordLegs(alice, t2, 2, 0);
+        _finalize(alice, t1, J0_THRESHOLD, 1 days, block.timestamp);
+        _finalize(alice, t2, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(t1) && _finalized(t2));
+    }
+
     // ---------------------------------------------------------------------
     // Attacks (pass = refused)
     // ---------------------------------------------------------------------
@@ -250,6 +304,41 @@ contract StructuringAttacks is Test {
         assertFalse(ok, "unbound pattern proof finalized");
     }
 
+    /// abandonAndRepeat without anyone calling expireTrade: the lapse alone must block.
+    /// (Added by lifecycle-gating research.)
+    function test_attack_abandonWithoutExpireCall() public {
+        bytes32 a = _tradeId("lazy-a");
+        _register(alice, a, 2);
+        _recordLegs(alice, a, 2, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        bytes32 b = _tradeId("lazy-b");
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        assertFalse(ok, "lapsed settled split did not block the next one");
+    }
+
+    /// Alice closes a split whose legs settled without a STRUCTURING proof bound to those
+    /// legs (no proof, then one bound to nothing), and opens the next split after the lapse.
+    /// (Added by lifecycle-gating research.)
+    function test_attack_abandonWithoutBoundProof() public {
+        bytes32 a = _tradeId("close-a");
+        _register(alice, a, 2);
+        _recordLegs(alice, a, 2, 0);
+        vm.prank(alice);
+        (bool closed,) =
+            address(registry).call(abi.encodeWithSignature("abandonTrade(bytes32,bytes32,bytes)", a, 0, ""));
+        (bytes32 pattern, bytes memory inputs) =
+            _submitPattern(alice, STRUCTURING, J0_THRESHOLD, 1 days, bytes32(0), block.timestamp);
+        vm.prank(alice);
+        (closed,) =
+            address(registry).call(abi.encodeWithSignature("abandonTrade(bytes32,bytes32,bytes)", a, pattern, inputs));
+        vm.warp(block.timestamp + 7 days + 1);
+        bytes32 b = _tradeId("close-b");
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        assertFalse(ok, "split closed without a bound structuring proof");
+    }
+
     // ---------------------------------------------------------------------
     // Helpers (MAY change with the design; attack goals MUST NOT)
     // ---------------------------------------------------------------------
@@ -278,6 +367,16 @@ contract StructuringAttacks is Test {
             _submitPattern(who, STRUCTURING, threshold, window, registry.computeSettlementRoot(t), ts);
         vm.prank(who);
         registry.finalizeTrade(t, pattern, inputs);
+    }
+
+    /// Close `t` unfinalized with a STRUCTURING proof bound to its recorded legs; the window
+    /// reaches back to registration.
+    function _abandon(address who, bytes32 t) internal {
+        uint256 window = block.timestamp - registry.getSettlement(t).createdAt + 1 hours;
+        (bytes32 pattern, bytes memory inputs) =
+            _submitPattern(who, STRUCTURING, J0_THRESHOLD, window, registry.computeSettlementRoot(t), block.timestamp);
+        vm.prank(who);
+        registry.abandonTrade(t, pattern, inputs);
     }
 
     function _tryFinalize(address who, bytes32 t, uint256 threshold, uint256 window, uint256 ts)

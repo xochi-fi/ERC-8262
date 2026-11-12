@@ -8,18 +8,22 @@ import {IERC8262Oracle} from "./IERC8262Oracle.sol";
 ///         attestation in the ERC-8262 Oracle before the trade can be finalized
 interface ISettlementRegistry {
     /// @notice A registered trade awaiting sub-settlement completion
-    /// @dev pending -> finalized (`finalizeTrade`) or pending -> expired (`expireTrade`);
-    ///      terminal flags are mutually exclusive.
+    /// @dev pending -> finalized (`finalizeTrade`), pending -> abandoned (`abandonTrade`), or
+    ///      pending -> expired (`expireTrade`); `finalized` excludes both others. An expired
+    ///      trade with a recorded leg stays unresolved, and blocks its subject's
+    ///      `registerTrade`, until `abandonTrade` also marks it abandoned.
     struct Settlement {
         bytes32 tradeId;
         address subject; // address that registered the trade
         uint8 jurisdictionId;
         uint8 subTradeCount; // total sub-trades expected
         uint8 settledCount; // sub-trades settled so far
+        uint8 openSlot; // index in the subject's open-trade table
         uint256 createdAt;
         uint256 expiresAt;
         bool finalized; // true only after a successful finalizeTrade
         bool expired; // true only after expireTrade closed the trade unfinalized
+        bool abandoned; // true only after abandonTrade closed the trade unfinalized
     }
 
     /// @notice A single sub-settlement linked to a compliance proof
@@ -46,6 +50,10 @@ interface ISettlementRegistry {
 
     /// @notice Emitted when a trade expires without finalization
     event TradeExpired(bytes32 indexed tradeId, uint256 timestamp);
+
+    /// @notice Emitted when the subject closes a trade unfinalized
+    /// @param patternProofHash STRUCTURING proof over the recorded legs; zero when none recorded
+    event TradeAbandoned(bytes32 indexed tradeId, uint8 settledCount, bytes32 patternProofHash);
 
     // -------------------------------------------------------------------------
     // Errors
@@ -91,14 +99,20 @@ interface ISettlementRegistry {
     error PatternProofPredatesTrade(bytes32 proofHash, uint256 proofTimestamp, uint256 tradeCreatedAt);
     /// @notice Proof hash already backs a leg of this or any other trade.
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
-    /// @notice Subject has an expired trade with settled legs that was never finalized.
-    error SubjectHasAbandonedTrade(address subject);
+    error TradeAlreadyAbandoned(bytes32 tradeId);
+    /// @notice Subject holds a lapsed trade with a recorded leg; resolve it with `abandonTrade`.
+    error UnresolvedTrade(bytes32 tradeId);
+    /// @notice Subject already holds the maximum number of open trades.
+    error OpenTradeLimit(address subject);
 
     // -------------------------------------------------------------------------
     // Functions
     // -------------------------------------------------------------------------
 
     /// @notice Register a new multi-leg trade for settlement tracking
+    /// @dev Reverts `UnresolvedTrade` while the caller holds a trade past expiry with a recorded
+    ///      leg that was neither finalized nor abandoned, and `OpenTradeLimit` when the caller
+    ///      already holds the maximum number of open trades.
     /// @param tradeId Unique identifier for the trade
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 100])
@@ -123,6 +137,17 @@ interface ISettlementRegistry {
     /// @param patternProofHash Proof hash of a pattern detection proof for the subject
     /// @param patternPublicInputs Original public inputs used to generate the pattern proof
     function finalizeTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external;
+
+    /// @notice Close an unfinalized trade, before or after expiry (for example after a leg
+    ///         failed at its venue)
+    /// @dev Subject only. With at least one leg recorded, requires a STRUCTURING pattern
+    ///      proof checked exactly as in `finalizeTrade` but bound to the recorded legs
+    ///      (`computeSettlementRoot`, unrecorded indices hash as zero). With no leg recorded
+    ///      the proof arguments are ignored. Frees the trade's open slot.
+    /// @param tradeId The trade to abandon
+    /// @param patternProofHash Proof hash of a STRUCTURING pattern proof for the subject
+    /// @param patternPublicInputs Original public inputs used to generate the pattern proof
+    function abandonTrade(bytes32 tradeId, bytes32 patternProofHash, bytes calldata patternPublicInputs) external;
 
     /// @notice Expire a trade that has passed its expiry window without finalization
     /// @dev Permissionless after expiry. Sets `expired`, never `finalized`.
