@@ -37,6 +37,8 @@
 
 use erc8262_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, validate_timestamp};
 
+mod research;
+
 /// Structuring: amounts clustered just below threshold
 global ANALYSIS_STRUCTURING: u8 = 1;
 /// Velocity: too many transactions in time window
