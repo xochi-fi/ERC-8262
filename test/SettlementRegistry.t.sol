@@ -384,6 +384,26 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
     }
 
+    /// @notice One compliance attestation must not back legs of two trades.
+    function test_recordSubSettlement_revert_sameProofOnTwoTrades() public {
+        bytes32 tradeA = keccak256("trade-a");
+        bytes32 tradeB = keccak256("trade-b");
+        vm.startPrank(alice);
+        registry.registerTrade(tradeA, 0, 2);
+        registry.registerTrade(tradeB, 0, 2);
+        vm.stopPrank();
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeA, 0, proofHash);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.DuplicateSubSettlementProof.selector, tradeA, proofHash)
+        );
+        registry.recordSubSettlement(tradeB, 0, proofHash);
+        vm.stopPrank();
+    }
+
     /// @notice Sub-settlements MUST be one of the compliance variants.
     /// @dev Without the proof-type guard, a MEMBERSHIP proof (subject in some
     ///      registered set) satisfies `subject` + `jurisdictionId` matching and
