@@ -28,6 +28,8 @@ contract SettlementRegistryTest is Test {
 
     bytes32 internal constant INITIAL_CONFIG = keccak256("initial-config");
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
+    /// @dev tx_set_hash committed at registration; the pattern helpers analyse this set.
+    bytes32 internal constant PLAN = bytes32(uint256(0xabcd));
 
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
         ps = new uint256[](1);
@@ -70,7 +72,7 @@ contract SettlementRegistryTest is Test {
         bytes32 tradeId = keccak256("trade-1");
 
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 3);
+        tradeId = registry.registerTrade(tradeId, 0, 3, PLAN);
 
         ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
         assertEq(s.tradeId, tradeId);
@@ -89,19 +91,19 @@ contract SettlementRegistryTest is Test {
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit ISettlementRegistry.TradeRegistered(tradeId, alice, 0, 3, tradeRef);
-        assertEq(registry.registerTrade(tradeRef, 0, 3), tradeId);
+        emit ISettlementRegistry.TradeRegistered(tradeId, alice, 0, 3, tradeRef, PLAN);
+        assertEq(registry.registerTrade(tradeRef, 0, 3, PLAN), tradeId);
     }
 
     function test_registerTrade_revert_duplicate() public {
         bytes32 tradeRef = keccak256("trade-1");
 
         vm.prank(alice);
-        bytes32 tradeId = registry.registerTrade(tradeRef, 0, 3);
+        bytes32 tradeId = registry.registerTrade(tradeRef, 0, 3, PLAN);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeAlreadyExists.selector, tradeId));
-        registry.registerTrade(tradeRef, 0, 3);
+        registry.registerTrade(tradeRef, 0, 3, PLAN);
     }
 
     /// @notice Trade ids are namespaced by the registering address: another caller using
@@ -109,9 +111,9 @@ contract SettlementRegistryTest is Test {
     function test_registerTrade_sameRefDifferentCallers() public {
         bytes32 tradeRef = keccak256("trade-1");
         vm.prank(bob);
-        bytes32 bobId = registry.registerTrade(tradeRef, 0, 2);
+        bytes32 bobId = registry.registerTrade(tradeRef, 0, 2, PLAN);
         vm.prank(alice);
-        bytes32 aliceId = registry.registerTrade(tradeRef, 0, 2);
+        bytes32 aliceId = registry.registerTrade(tradeRef, 0, 2, PLAN);
 
         assertTrue(bobId != aliceId);
         assertEq(registry.getSettlement(aliceId).subject, alice);
@@ -121,25 +123,25 @@ contract SettlementRegistryTest is Test {
     function test_registerTrade_revert_subTradeCountTooLow() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 1));
-        registry.registerTrade(keccak256("trade-1"), 0, 1);
+        registry.registerTrade(keccak256("trade-1"), 0, 1, PLAN);
     }
 
     function test_registerTrade_revert_subTradeCountZero() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 0));
-        registry.registerTrade(keccak256("trade-1"), 0, 0);
+        registry.registerTrade(keccak256("trade-1"), 0, 0, PLAN);
     }
 
     function test_registerTrade_revert_subTradeCountTooHigh() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.InvalidSubTradeCount.selector, 17));
-        registry.registerTrade(keccak256("trade-1"), 0, 17);
+        registry.registerTrade(keccak256("trade-1"), 0, 17, PLAN);
     }
 
     function test_registerTrade_boundsAccepted() public {
         vm.startPrank(alice);
-        bytes32 minId = registry.registerTrade(keccak256("trade-min"), 0, 2);
-        bytes32 maxId = registry.registerTrade(keccak256("trade-max"), 0, 16);
+        bytes32 minId = registry.registerTrade(keccak256("trade-min"), 0, 2, PLAN);
+        bytes32 maxId = registry.registerTrade(keccak256("trade-max"), 0, 16, PLAN);
         vm.stopPrank();
 
         assertEq(registry.getSettlement(minId).subTradeCount, 2);
@@ -153,7 +155,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_storesAndIncrements() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 3);
+        tradeId = registry.registerTrade(tradeId, 0, 3, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -173,7 +175,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_emitsEvent() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -186,7 +188,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_notSubject() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -198,7 +200,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_indexOutOfBounds() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -210,7 +212,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_alreadySettled() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash1 = _submitComplianceForAlice(0);
         bytes32 proofHash2 = _submitComplianceForAlice(0);
@@ -226,7 +228,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_attestationNotFound() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 fakeProofHash = bytes32(uint256(0xdead));
 
@@ -238,7 +240,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_subjectMismatch() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         // Bob submits a proof to the oracle (proof belongs to bob, not alice)
         bytes32 proofHash = _submitComplianceFor(bob, 0);
@@ -251,7 +253,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_jurisdictionMismatch() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2); // jurisdiction 0 (EU)
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN); // jurisdiction 0 (EU)
 
         // Alice submits a proof for jurisdiction 2 (UK). UK is permissive (does not
         // require signed signals), preserving the test's focus on jurisdiction-mismatch
@@ -266,7 +268,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_tradeExpired() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -298,7 +300,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_expiredAttestation() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
         uint256 attExpiresAt = oracle.getHistoricalProof(proofHash).expiresAt;
@@ -317,7 +319,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_revokedAttestation() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
         vm.prank(owner);
@@ -332,7 +334,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_revokedPatternAttestation() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -353,7 +355,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_acceptsAttestationAtExactExpiry() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
         vm.warp(oracle.getHistoricalProof(proofHash).expiresAt);
@@ -371,7 +373,7 @@ contract SettlementRegistryTest is Test {
         vm.warp(block.timestamp + 1);
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.prank(alice);
         vm.expectRevert(
@@ -386,7 +388,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_sameProofOnTwoLegs() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitComplianceForAlice(0);
 
@@ -408,7 +410,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_membershipProofRejected() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proofHash = _submitMembershipForAlice(0);
 
@@ -427,7 +429,7 @@ contract SettlementRegistryTest is Test {
     function test_recordSubSettlement_revert_patternProofRejected() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         (bytes32 patternProofHash,) = _submitPatternForAlice();
 
@@ -447,7 +449,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_succeeds() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         // Record two sub-settlements
         bytes32 proof1 = _submitComplianceForAlice(0);
@@ -472,7 +474,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_notComplete() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         // Only record one sub-settlement
         bytes32 proof1 = _submitComplianceForAlice(0);
@@ -499,7 +501,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_patternProofZero() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -516,7 +518,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_patternProofNotFound() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -534,7 +536,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_patternProofSubjectMismatch() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -560,7 +562,7 @@ contract SettlementRegistryTest is Test {
 
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -588,7 +590,7 @@ contract SettlementRegistryTest is Test {
         uint256 createdAt = block.timestamp;
         bytes32 tradeId = keccak256("trade-predates");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 p1 = _submitComplianceForAlice(0);
         bytes32 p2 = _submitComplianceForAlice(0);
@@ -619,7 +621,7 @@ contract SettlementRegistryTest is Test {
         uint256 createdAt = block.timestamp;
         bytes32 tradeId = keccak256("trade-boundary");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 p1 = _submitComplianceForAlice(0);
         bytes32 p2 = _submitComplianceForAlice(0);
@@ -640,7 +642,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_wrongProofType() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -660,7 +662,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_notSubject() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -679,7 +681,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_tradeExpired() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -704,7 +706,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_velocityAnalysisRejected() public {
         bytes32 tradeId = keccak256("trade-velocity");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -724,7 +726,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_roundAmountAnalysisRejected() public {
         bytes32 tradeId = keccak256("trade-round");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -743,7 +745,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_publicInputsMismatch() public {
         bytes32 tradeId = keccak256("trade-mismatch");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -781,7 +783,7 @@ contract SettlementRegistryTest is Test {
         // Trade A: alice's bound trade
         bytes32 tradeIdA = keccak256("trade-A");
         vm.prank(alice);
-        tradeIdA = registry.registerTrade(tradeIdA, 0, 2);
+        tradeIdA = registry.registerTrade(tradeIdA, 0, 2, PLAN);
         bytes32 a1 = _submitComplianceForAlice(0);
         bytes32 a2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -792,7 +794,7 @@ contract SettlementRegistryTest is Test {
         // Trade B: alice's second trade with different sub-settlements
         bytes32 tradeIdB = keccak256("trade-B");
         vm.prank(alice);
-        tradeIdB = registry.registerTrade(tradeIdB, 0, 2);
+        tradeIdB = registry.registerTrade(tradeIdB, 0, 2, PLAN);
         bytes32 b1 = _submitComplianceForAlice(0);
         bytes32 b2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -820,7 +822,7 @@ contract SettlementRegistryTest is Test {
     function test_finalizeTrade_revert_unboundPatternProofRejected() public {
         bytes32 tradeId = keccak256("trade-unbound");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
         bytes32 p1 = _submitComplianceForAlice(0);
         bytes32 p2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -846,9 +848,9 @@ contract SettlementRegistryTest is Test {
         bytes32 tradeA = keccak256("reuse-A");
         bytes32 tradeB = keccak256("reuse-B");
         vm.prank(alice);
-        tradeA = registry.registerTrade(tradeA, 0, 2);
+        tradeA = registry.registerTrade(tradeA, 0, 2, PLAN);
         vm.prank(alice);
-        tradeB = registry.registerTrade(tradeB, 0, 2);
+        tradeB = registry.registerTrade(tradeB, 0, 2, PLAN);
 
         bytes32 p1 = _submitComplianceForAlice(0);
         bytes32 p2 = _submitComplianceForAlice(0);
@@ -880,8 +882,8 @@ contract SettlementRegistryTest is Test {
         bytes32 tradeA = keccak256("leg-A");
         bytes32 tradeB = keccak256("leg-B");
         vm.startPrank(alice);
-        tradeA = registry.registerTrade(tradeA, 0, 2);
-        tradeB = registry.registerTrade(tradeB, 0, 2);
+        tradeA = registry.registerTrade(tradeA, 0, 2, PLAN);
+        tradeB = registry.registerTrade(tradeB, 0, 2, PLAN);
         vm.stopPrank();
         bytes32 p1 = _submitComplianceForAlice(0);
         vm.prank(alice);
@@ -924,7 +926,7 @@ contract SettlementRegistryTest is Test {
     function test_expireTrade_afterExpiry() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.warp(block.timestamp + 7 days + 1);
 
@@ -940,7 +942,7 @@ contract SettlementRegistryTest is Test {
     function test_expireTrade_permissionless() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.warp(block.timestamp + 7 days + 1);
 
@@ -957,7 +959,7 @@ contract SettlementRegistryTest is Test {
     function test_expireTrade_blocksFurtherTransitions() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.warp(block.timestamp + 7 days + 1);
         registry.expireTrade(tradeId);
@@ -979,7 +981,7 @@ contract SettlementRegistryTest is Test {
     function test_expireTrade_revert_beforeExpiry() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotExpired.selector, tradeId));
         registry.expireTrade(tradeId);
@@ -988,7 +990,7 @@ contract SettlementRegistryTest is Test {
     function test_expireTrade_revert_atExactExpiry() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         vm.warp(block.timestamp + 7 days); // exactly at expiry, not past
 
@@ -1018,7 +1020,7 @@ contract SettlementRegistryTest is Test {
     function test_getSettlement_returnsCorrectData() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 1, 5);
+        tradeId = registry.registerTrade(tradeId, 1, 5, PLAN);
 
         ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
         assertEq(s.tradeId, tradeId);
@@ -1041,7 +1043,7 @@ contract SettlementRegistryTest is Test {
     function test_getSubSettlements_returnsAllRecorded() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 3);
+        tradeId = registry.registerTrade(tradeId, 0, 3, PLAN);
 
         bytes32 proof0 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);
@@ -1062,7 +1064,7 @@ contract SettlementRegistryTest is Test {
     function test_getSubSettlements_emptyWhenNoneRecorded() public {
         bytes32 tradeId = keccak256("trade-1");
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         ISettlementRegistry.SubSettlement[] memory subs = registry.getSubSettlements(tradeId);
         assertEq(subs.length, 0);
@@ -1075,10 +1077,212 @@ contract SettlementRegistryTest is Test {
     }
 
     // -------------------------------------------------------------------------
+    // Lifecycle gating: plan commitment, abandonTrade, open-trade table
+    // -------------------------------------------------------------------------
+
+    function test_registerTrade_revert_zeroPlanCommitment() public {
+        vm.prank(alice);
+        vm.expectRevert(ISettlementRegistry.PlanCommitmentRequired.selector);
+        registry.registerTrade(keccak256("t"), 0, 2, bytes32(0));
+    }
+
+    function test_finalizeTrade_revert_txSetNotCommittedPlan() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 2);
+        bytes32 root = registry.computeSettlementRoot(tradeId);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternCustom(alice, bytes32(uint256(0xbeef)), 1 days, root);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementRegistry.PatternTxSetMismatch.selector, PLAN, bytes32(uint256(0xbeef)))
+        );
+        registry.finalizeTrade(tradeId, pattern, inputs);
+    }
+
+    function test_finalizeTrade_revert_windowExcludesTrade() public {
+        vm.warp(1_000_000);
+        uint256 createdAt = block.timestamp;
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 2);
+        vm.warp(createdAt + 2 days);
+        bytes32 root = registry.computeSettlementRoot(tradeId);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternCustom(alice, PLAN, 1 days, root);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.PatternWindowExcludesTrade.selector, pattern, createdAt + 1 days, createdAt
+            )
+        );
+        registry.finalizeTrade(tradeId, pattern, inputs);
+    }
+
+    function test_abandonTrade_noLegsNeedsNoProof() public {
+        vm.prank(alice);
+        bytes32 tradeId = registry.registerTrade(keccak256("t"), 0, 2, PLAN);
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit ISettlementRegistry.TradeAbandoned(tradeId, 0, bytes32(0));
+        registry.abandonTrade(tradeId, bytes32(0), "");
+        ISettlementRegistry.Settlement memory s = registry.getSettlement(tradeId);
+        assertTrue(s.abandoned);
+        assertFalse(s.finalized);
+    }
+
+    function test_abandonTrade_revert_legsWithoutProof() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternProofRequired.selector, tradeId));
+        registry.abandonTrade(tradeId, bytes32(0), "");
+    }
+
+    function test_abandonTrade_revert_notSubject() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 1);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.NotTradeSubject.selector, bob, alice));
+        registry.abandonTrade(tradeId, bytes32(0), "");
+    }
+
+    /// @notice Partial legs: the proof binds to the recorded legs, unrecorded indices as zero.
+    function test_abandonTrade_partialLegsWithBoundProof() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 1);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternBoundTo(tradeId);
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true);
+        emit ISettlementRegistry.TradeAbandoned(tradeId, 1, pattern);
+        registry.abandonTrade(tradeId, pattern, inputs);
+        assertTrue(registry.getSettlement(tradeId).abandoned);
+        assertTrue(registry.isPatternProofUsed(pattern));
+    }
+
+    function test_abandonTrade_blocksFurtherTransitions() public {
+        vm.prank(alice);
+        bytes32 tradeId = registry.registerTrade(keccak256("t"), 0, 2, PLAN);
+        vm.prank(alice);
+        registry.abandonTrade(tradeId, bytes32(0), "");
+        bytes32 proofHash = _submitComplianceForAlice(0);
+
+        bytes memory closed = abi.encodeWithSelector(ISettlementRegistry.TradeAlreadyAbandoned.selector, tradeId);
+        vm.prank(alice);
+        vm.expectRevert(closed);
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+        vm.prank(alice);
+        vm.expectRevert(closed);
+        registry.finalizeTrade(tradeId, bytes32(0), "");
+        vm.prank(alice);
+        vm.expectRevert(closed);
+        registry.abandonTrade(tradeId, bytes32(0), "");
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(closed);
+        registry.expireTrade(tradeId);
+    }
+
+    function test_registerTrade_revert_unresolvedLapsedTrade() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("a"), 1);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnresolvedTrade.selector, tradeId));
+        registry.registerTrade(keccak256("b"), 0, 2, PLAN);
+
+        // expireTrade closes the trade but does not resolve it.
+        registry.expireTrade(tradeId);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnresolvedTrade.selector, tradeId));
+        registry.registerTrade(keccak256("b"), 0, 2, PLAN);
+    }
+
+    function test_registerTrade_afterResolvingLapsedTrade() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("a"), 1);
+        vm.warp(block.timestamp + 7 days + 1);
+        bytes32 root = registry.computeSettlementRoot(tradeId);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternCustom(alice, PLAN, 8 days, root);
+        vm.prank(alice);
+        registry.abandonTrade(tradeId, pattern, inputs);
+        vm.prank(alice);
+        registry.registerTrade(keccak256("b"), 0, 2, PLAN);
+    }
+
+    function test_registerTrade_openTradeLimitAndLapsedEmptySlot() public {
+        vm.startPrank(alice);
+        for (uint256 i; i < 4; i++) {
+            registry.registerTrade(bytes32(i + 1), 0, 2, PLAN);
+        }
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.OpenTradeLimit.selector, alice));
+        registry.registerTrade(bytes32(uint256(5)), 0, 2, PLAN);
+        vm.stopPrank();
+
+        // Bob's table is separate.
+        vm.prank(bob);
+        registry.registerTrade(bytes32(uint256(5)), 0, 2, PLAN);
+
+        // Lapsed trades with no leg moved no value: their slots free up.
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(alice);
+        registry.registerTrade(bytes32(uint256(5)), 0, 2, PLAN);
+    }
+
+    function test_isLegAuthorized() public {
+        vm.prank(alice);
+        bytes32 tradeId = registry.registerTrade(keccak256("t"), 0, 2, PLAN);
+        assertTrue(registry.isLegAuthorized(tradeId, 0));
+        assertFalse(registry.isLegAuthorized(tradeId, 2), "index out of range");
+        assertFalse(registry.isLegAuthorized(keccak256("none"), 0), "unregistered");
+
+        bytes32 proofHash = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, proofHash);
+        assertFalse(registry.isLegAuthorized(tradeId, 0), "already recorded");
+        assertTrue(registry.isLegAuthorized(tradeId, 1));
+
+        vm.warp(block.timestamp + 7 days + 1);
+        assertFalse(registry.isLegAuthorized(tradeId, 1), "lapsed");
+    }
+
+    /// @notice A subject holding an unresolved lapsed trade gets no leg authorized on a
+    ///         trade it registered earlier and that is still live.
+    function test_isLegAuthorized_falseWhileSubjectUnresolved() public {
+        _registerAndSettle(keccak256("a"), 1);
+        vm.warp(block.timestamp + 6 days);
+        vm.prank(alice);
+        bytes32 live = registry.registerTrade(keccak256("b"), 0, 2, PLAN);
+        assertTrue(registry.isLegAuthorized(live, 0));
+        vm.warp(block.timestamp + 1 days + 1);
+        assertFalse(registry.isLegAuthorized(live, 0));
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
     uint256 internal _proofNonce;
+
+    /// @dev Register `ref` for alice (2 legs) and record `legs` of them.
+    function _registerAndSettle(bytes32 ref, uint8 legs) internal returns (bytes32 tradeId) {
+        vm.prank(alice);
+        tradeId = registry.registerTrade(ref, 0, 2, PLAN);
+        for (uint8 i; i < legs; i++) {
+            bytes32 proofHash = _submitComplianceForAlice(0);
+            vm.prank(alice);
+            registry.recordSubSettlement(tradeId, i, proofHash);
+        }
+    }
+
+    /// @dev STRUCTURING proof as `who` over `txSet` with `window`, bound to `root`, dated now.
+    function _submitPatternCustom(address who, bytes32 txSet, uint256 window, bytes32 root)
+        internal
+        returns (bytes32 proofHash, bytes memory publicInputs)
+    {
+        bytes memory proof = _uniqueProof();
+        publicInputs = abi.encodePacked(
+            bytes32(uint256(1)),
+            bytes32(uint256(1)),
+            bytes32(uint256(10000)),
+            bytes32(window),
+            txSet,
+            bytes32(uint256(uint160(who))),
+            root,
+            bytes32(block.timestamp)
+        );
+        vm.prank(who);
+        oracle.submitCompliance(0, ProofTypes.PATTERN, proof, publicInputs, bytes32(0));
+        proofHash = oracle.computeProofHash(proof, ProofTypes.PATTERN);
+    }
 
     function _uniqueProof() internal returns (bytes memory) {
         _proofNonce++;
@@ -1190,7 +1394,7 @@ contract SettlementRegistryTest is Test {
     function _setupAndFinalizeTradeForAlice() internal returns (bytes32 tradeId) {
         tradeId = keccak256(abi.encodePacked("finalized-trade-", _proofNonce));
         vm.prank(alice);
-        tradeId = registry.registerTrade(tradeId, 0, 2);
+        tradeId = registry.registerTrade(tradeId, 0, 2, PLAN);
 
         bytes32 proof1 = _submitComplianceForAlice(0);
         bytes32 proof2 = _submitComplianceForAlice(0);

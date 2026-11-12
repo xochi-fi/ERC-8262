@@ -25,6 +25,7 @@ interface ISettlementRegistry {
         bool finalized; // true only after a successful finalizeTrade
         bool expired; // true only after expireTrade closed the trade unfinalized
         bool abandoned; // true only after abandonTrade closed the trade unfinalized
+        bytes32 planTxSetHash; // tx_set_hash every closing PATTERN proof must carry
     }
 
     /// @notice A single sub-settlement linked to a compliance proof
@@ -40,12 +41,14 @@ interface ISettlementRegistry {
 
     /// @notice Emitted when a new trade is registered
     /// @param tradeRef Caller-chosen reference; `tradeId = computeTradeId(subject, tradeRef)`
+    /// @param planTxSetHash Committed analysed set; see `registerTrade`
     event TradeRegistered(
         bytes32 indexed tradeId,
         address indexed subject,
         uint8 indexed jurisdictionId,
         uint8 subTradeCount,
-        bytes32 tradeRef
+        bytes32 tradeRef,
+        bytes32 planTxSetHash
     );
 
     /// @notice Emitted when a sub-settlement is recorded against a trade
@@ -114,6 +117,10 @@ interface ISettlementRegistry {
     error UnresolvedTrade(bytes32 tradeId);
     /// @notice Subject already holds the maximum number of open trades.
     error OpenTradeLimit(address subject);
+    /// @notice `registerTrade` needs a non-zero `planTxSetHash`.
+    error PlanCommitmentRequired();
+    /// @notice The PATTERN proof analysed a set other than the one committed at registration.
+    error PatternTxSetMismatch(bytes32 expected, bytes32 actual);
 
     // -------------------------------------------------------------------------
     // Functions
@@ -126,10 +133,20 @@ interface ISettlementRegistry {
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 16], the pattern circuit's capacity)
+    /// @param planTxSetHash The pattern circuit's `tx_set_hash` over the planned leg amounts and
+    ///        planned times (at most the closing proof's timestamp). Every PATTERN proof that
+    ///        finalizes or abandons the trade MUST carry this exact value. Non-zero.
     /// @return tradeId `computeTradeId(msg.sender, tradeRef)`, the key for every other call
-    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
+    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount, bytes32 planTxSetHash)
         external
         returns (bytes32 tradeId);
+
+    /// @notice Venue-facing gate: whether leg `index` of `tradeId` may be executed now.
+    /// @dev True iff the trade is registered, not finalized or abandoned, within its TTL, the
+    ///      index is in range and unrecorded, and the subject holds no unresolved lapsed trade.
+    ///      A venue SHOULD check this before executing a leg; the registry cannot see legs
+    ///      executed without it.
+    function isLegAuthorized(bytes32 tradeId, uint8 index) external view returns (bool authorized);
 
     /// @notice Trade key for a subject's reference: `keccak256(abi.encode(subject, tradeRef))`
     function computeTradeId(address subject, bytes32 tradeRef) external pure returns (bytes32 tradeId);

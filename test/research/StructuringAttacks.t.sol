@@ -41,6 +41,8 @@ contract StructuringAttacks is Test {
     bytes32 internal constant DEFAULT_PROVIDER_SET_HASH = bytes32(uint256(0xaabb));
     uint256 internal constant J0_THRESHOLD = 10000;
     uint256 internal constant FOREIGN_THRESHOLD = 999999;
+    /// tx_set_hash committed at registration; `_submitPattern` proofs analyse this set.
+    bytes32 internal constant PLAN = bytes32(uint256(0xabcd));
     uint256 internal constant STRUCTURING = 1;
     uint256 internal constant VELOCITY = 2;
 
@@ -184,7 +186,7 @@ contract StructuringAttacks is Test {
         bytes32 t = _tradeId("frontrun");
         _register(bob, t, 2);
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 2)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 2, PLAN)));
         assertTrue(ok, "victim locked out of her own tradeId");
     }
 
@@ -233,7 +235,7 @@ contract StructuringAttacks is Test {
     function test_attack_moreLegsThanCircuitCapacity() public {
         bytes32 t = _tradeId("seventeen");
         vm.prank(alice);
-        (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17)));
+        (bool registered,) = address(registry).call(abi.encodeCall(registry.registerTrade, (t, 0, 17, PLAN)));
         if (!registered) return; // refused at registration
         t = registry.computeTradeId(alice, t);
         _recordLegs(alice, t, 17, 0);
@@ -250,7 +252,7 @@ contract StructuringAttacks is Test {
         registry.expireTrade(a);
         bytes32 b = _tradeId("abandon-b");
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
         assertFalse(ok, "abandoned settled split did not block the next one");
     }
 
@@ -314,7 +316,7 @@ contract StructuringAttacks is Test {
         vm.warp(block.timestamp + 7 days + 1);
         bytes32 b = _tradeId("lazy-b");
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
         assertFalse(ok, "lapsed settled split did not block the next one");
     }
 
@@ -336,8 +338,29 @@ contract StructuringAttacks is Test {
         vm.warp(block.timestamp + 7 days + 1);
         bytes32 b = _tradeId("close-b");
         vm.prank(alice);
-        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2, PLAN)));
         assertFalse(ok, "split closed without a bound structuring proof");
+    }
+
+    /// Alice commits her analysed set at registration, the legs settle, then she finalizes
+    /// with a proof over a different set chosen after the legs paid.
+    /// (Added by lifecycle-gating research.)
+    function test_attack_analysedSetChosenAfterLegs() public {
+        bytes32 t = _tradeId("swap-set");
+        t = _register(alice, t, 2);
+        _recordLegs(alice, t, 2, 0);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternOverSet(
+            alice,
+            STRUCTURING,
+            J0_THRESHOLD,
+            1 days,
+            bytes32(uint256(0xbeef)),
+            registry.computeSettlementRoot(t),
+            block.timestamp
+        );
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.finalizeTrade, (t, pattern, inputs)));
+        assertFalse(ok, "analysed set picked after the legs settled");
     }
 
     // ---------------------------------------------------------------------
@@ -351,7 +374,7 @@ contract StructuringAttacks is Test {
     /// Register reference `ref` as `who`; returns the trade id every other call uses.
     function _register(address who, bytes32 ref, uint8 n) internal returns (bytes32 t) {
         vm.prank(who);
-        t = registry.registerTrade(ref, 0, n);
+        t = registry.registerTrade(ref, 0, n, PLAN);
     }
 
     /// Submit and record `n` legs, `spacing` seconds apart (first leg after 1 minute).
@@ -446,13 +469,25 @@ contract StructuringAttacks is Test {
         bytes32 root,
         uint256 ts
     ) internal returns (bytes32, bytes memory inputs) {
+        return _submitPatternOverSet(who, analysisType, threshold, window, PLAN, root, ts);
+    }
+
+    function _submitPatternOverSet(
+        address who,
+        uint256 analysisType,
+        uint256 threshold,
+        uint256 window,
+        bytes32 txSet,
+        bytes32 root,
+        uint256 ts
+    ) internal returns (bytes32, bytes memory inputs) {
         bytes memory proof = _proof();
         inputs = abi.encodePacked(
             bytes32(analysisType),
             bytes32(uint256(1)),
             bytes32(threshold),
             bytes32(window),
-            bytes32(uint256(0xabcd)),
+            txSet,
             bytes32(uint256(uint160(who))),
             root,
             bytes32(ts)

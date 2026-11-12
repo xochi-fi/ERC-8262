@@ -74,7 +74,7 @@ contract SettlementRegistry is ISettlementRegistry {
     // -------------------------------------------------------------------------
 
     /// @inheritdoc ISettlementRegistry
-    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount)
+    function registerTrade(bytes32 tradeRef, uint8 jurisdictionId, uint8 subTradeCount, bytes32 planTxSetHash)
         external
         returns (bytes32 tradeId)
     {
@@ -85,6 +85,9 @@ contract SettlementRegistry is ISettlementRegistry {
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
         }
+        // Fixes the transaction set every closing PATTERN proof must analyse before any leg
+        // moves value, so the subject cannot pick the analysed set after seeing the legs.
+        if (planTxSetHash == bytes32(0)) revert PlanCommitmentRequired();
         uint8 slot = _claimOpenSlot(msg.sender);
         _openTrades[msg.sender][slot] = tradeId;
 
@@ -100,10 +103,11 @@ contract SettlementRegistry is ISettlementRegistry {
             expiresAt: block.timestamp + TRADE_TTL,
             finalized: false,
             expired: false,
-            abandoned: false
+            abandoned: false,
+            planTxSetHash: planTxSetHash
         });
 
-        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef);
+        emit TradeRegistered(tradeId, msg.sender, jurisdictionId, subTradeCount, tradeRef, planTxSetHash);
     }
 
     /// @inheritdoc ISettlementRegistry
@@ -243,6 +247,10 @@ contract SettlementRegistry is ISettlementRegistry {
         //      transaction into that window; a shorter window cannot have analysed the
         //      early legs. Consequence: a trade can only be closed with a proof while
         //      `timestamp - createdAt` fits the Oracle's MAX_TIME_WINDOW.
+        //  10. tx_set_hash equals the plan committed at registerTrade: the analysed set was
+        //      fixed before any leg moved value. Still prover-chosen: nothing ties the
+        //      committed amounts to the legs' real amounts without an amount-committing
+        //      compliance circuit, or venues checking their leg against the plan opening.
         //
         // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
         // they analyze transaction patterns, not jurisdiction-specific thresholds.
@@ -280,6 +288,8 @@ contract SettlementRegistry is ISettlementRegistry {
         if (analysisType != PATTERN_STRUCTURING) {
             revert PatternAnalysisTypeMismatch(PATTERN_STRUCTURING, analysisType);
         }
+        bytes32 txSetHash = bytes32(patternPublicInputs[128:160]);
+        if (txSetHash != settlement.planTxSetHash) revert PatternTxSetMismatch(settlement.planTxSetHash, txSetHash);
 
         bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
         bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
@@ -290,29 +300,49 @@ contract SettlementRegistry is ISettlementRegistry {
         _usedPatternProofs[patternProofHash] = true;
     }
 
-    /// @dev Find a free open-trade slot for `subject`, or revert. Every occupied slot is
-    ///      checked: a lapsed trade with a recorded leg blocks registration until the
-    ///      subject resolves it with `abandonTrade`; a lapsed trade with no leg moved no
-    ///      value, so its slot is free.
-    function _claimOpenSlot(address subject) internal view returns (uint8 slot) {
+    /// @dev One pass over `subject`'s open-trade table. `freeSlot` is the first slot that is
+    ///      empty or holds a lapsed trade with no leg (it moved no value), or MAX_OPEN_TRADES
+    ///      if none. `unresolved` is a lapsed trade with a recorded leg that was neither
+    ///      finalized nor abandoned, or zero.
+    function _scanOpenTrades(address subject) internal view returns (uint8 freeSlot, bytes32 unresolved) {
         bytes32[MAX_OPEN_TRADES] storage open = _openTrades[subject];
-        slot = MAX_OPEN_TRADES;
+        freeSlot = MAX_OPEN_TRADES;
         for (uint8 i; i < MAX_OPEN_TRADES;) {
             bytes32 openId = open[i];
             if (openId == bytes32(0)) {
-                if (slot == MAX_OPEN_TRADES) slot = i;
+                if (freeSlot == MAX_OPEN_TRADES) freeSlot = i;
             } else {
                 Settlement storage openTrade = _settlements[openId];
                 if (block.timestamp > openTrade.expiresAt) {
-                    if (openTrade.settledCount != 0) revert UnresolvedTrade(openId);
-                    if (slot == MAX_OPEN_TRADES) slot = i;
+                    if (openTrade.settledCount != 0) unresolved = openId;
+                    else if (freeSlot == MAX_OPEN_TRADES) freeSlot = i;
                 }
             }
             unchecked {
                 ++i;
             }
         }
+    }
+
+    /// @dev Free slot for a new trade by `subject`; reverts while the subject holds an
+    ///      unresolved lapsed trade (resolve it with `abandonTrade`) or has no free slot.
+    function _claimOpenSlot(address subject) internal view returns (uint8 slot) {
+        bytes32 unresolved;
+        (slot, unresolved) = _scanOpenTrades(subject);
+        if (unresolved != bytes32(0)) revert UnresolvedTrade(unresolved);
         if (slot == MAX_OPEN_TRADES) revert OpenTradeLimit(subject);
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function isLegAuthorized(bytes32 tradeId, uint8 index) external view returns (bool authorized) {
+        Settlement storage settlement = _settlements[tradeId];
+        if (
+            settlement.createdAt == 0 || settlement.finalized || settlement.abandoned
+                || block.timestamp > settlement.expiresAt || index >= settlement.subTradeCount
+                || _subSettlements[tradeId][index].settledAt != 0
+        ) return false;
+        (, bytes32 unresolved) = _scanOpenTrades(settlement.subject);
+        return unresolved == bytes32(0);
     }
 
     /// @dev Free the trade's open-trade slot unless a later trade already reclaimed it.
