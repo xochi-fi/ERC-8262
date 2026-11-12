@@ -14,12 +14,13 @@
 ///
 /// Hash: one Poseidon2 (t=4) permutation per link, domain tag in the capacity
 /// element. Inputs are packed injectively: amount * 2^40 + timestamp, with
-/// amount < 2^96 and timestamp < 2^40.
+/// amount < 2^128 (u128, range-checked by the circuits' input types) and
+/// timestamp < 2^40, so packed < 2^168 < p.
 ///
 /// Amounts are fixed-point base units with AMOUNT_DECIMALS = 18 of the trade
 /// jurisdiction's reporting currency (an 18-decimal stablecoin's raw units), so a
 /// leg's committed amount is its on-chain base-unit value, never rescaled or
-/// truncated. 2^96 base units is ~7.9e10 whole units per leg.
+/// truncated. Sums use checked u128 arithmetic: an overflowing set fails to prove.
 
 use crate::constants::{JURISDICTION_EU, JURISDICTION_SG, JURISDICTION_UAE, JURISDICTION_UK, JURISDICTION_US};
 
@@ -55,7 +56,6 @@ global TWO_POW_40: Field = 0x10000000000;
 
 /// One link of the settlement chain.
 pub fn settlement_link(prev: Field, amount: u128, timestamp: u64, salt: Field) -> Field {
-    (amount as Field).assert_max_bit_size::<96>();
     assert(timestamp < 1099511627776, "Leg timestamp exceeds 2^40");
     let packed = (amount as Field) * TWO_POW_40 + (timestamp as Field);
     std::hash::poseidon2_permutation([prev, packed, salt, DOMAIN_SETTLEMENT_LINK])[0]
@@ -112,11 +112,6 @@ fn test_reporting_threshold_table() {
     assert(get_reporting_threshold(2) == 10000 * AMOUNT_UNIT);
     assert(get_reporting_threshold(3) == 20000 * AMOUNT_UNIT);
     assert(get_reporting_threshold(4) == 55000 * AMOUNT_UNIT);
-}
-
-#[test(should_fail)]
-fn test_link_rejects_amount_wider_than_96_bits() {
-    let _ = settlement_link(0, 0x1000000000000000000000000, 1700000000, 0);
 }
 
 #[test(should_fail_with = "Invalid jurisdiction")]

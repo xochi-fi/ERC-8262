@@ -57,7 +57,7 @@ fn main(
     signature: [u8; 64],
     pubkey_x: [u8; 32],
     pubkey_y: [u8; 32],
-    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---

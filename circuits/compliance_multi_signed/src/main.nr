@@ -60,7 +60,7 @@ fn main(
     pubkey_xs: [[u8; 32]; 5],
     pubkey_ys: [[u8; 32]; 5],
     signatures: [[u8; 64]; 5],
-    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---

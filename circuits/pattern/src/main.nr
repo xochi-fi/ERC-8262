@@ -39,7 +39,7 @@
 ///
 /// Private inputs:
 ///   - amounts: transaction amounts in base units (shared::AMOUNT_UNIT per whole unit of
-///              the jurisdiction's reporting currency), each < 2^96
+///              the jurisdiction's reporting currency)
 ///   - timestamps: transaction timestamps
 ///   - salts: per-leg blinding committed in the settlement chain
 ///   - num_transactions: how many are active
@@ -101,7 +101,7 @@ fn main(
     // diluted by adding small legs.
     let mut total: u128 = 0;
     for i in 0..MAX_TRANSACTIONS {
-        total += amounts[i]; // each < 2^96 (settlement_link) or zero (inactive)
+        total += amounts[i]; // checked u128 add; inactive slots are asserted zero below
     }
     assert(
         aggregate_reportable == (total >= reporting_threshold),

@@ -43,7 +43,7 @@ fn main(
     weight_sum: u32,             // sum of active weights
     provider_ids: [Field; 8],    // provider identifiers
     num_providers: u32,          // how many are active (1-8)
-    leg_amount: u128,            // XIP-1: settlement leg amount (base units, < 2^96)
+    leg_amount: u128,            // XIP-1: settlement leg amount (base units)
     leg_salt: Field,             // XIP-1: settlement leg blinding
 
     // --- Public inputs ---
