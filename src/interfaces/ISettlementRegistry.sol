@@ -89,7 +89,7 @@ interface ISettlementRegistry {
     /// @notice The PATTERN proof's own `timestamp` public input predates trade registration.
     /// @dev `proofTimestamp` is public input 7, not the Oracle attestation time, which may be later.
     error PatternProofPredatesTrade(bytes32 proofHash, uint256 proofTimestamp, uint256 tradeCreatedAt);
-    /// @notice Proof hash already backs a leg of this or any other trade.
+    /// @notice Proof hash already backs another leg of this trade.
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
 
     // -------------------------------------------------------------------------
@@ -104,7 +104,7 @@ interface ISettlementRegistry {
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
     /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,
-    ///      `block.timestamp <= expiresAt`, `timestamp >= createdAt`, never used by any leg.
+    ///      `block.timestamp <= expiresAt`, `timestamp >= createdAt`, unused in this trade.
     /// @param tradeId The trade to record against
     /// @param index The sub-trade index (0-based, must be < subTradeCount)
     /// @param proofHash The proof hash from a prior oracle submission
