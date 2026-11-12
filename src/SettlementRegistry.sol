@@ -5,6 +5,7 @@ import {ISettlementRegistry} from "./interfaces/ISettlementRegistry.sol";
 import {IERC8262Oracle} from "./interfaces/IERC8262Oracle.sol";
 import {ERC8262Oracle} from "./ERC8262Oracle.sol";
 import {ProofTypes} from "./libraries/ProofTypes.sol";
+import {JurisdictionConfig} from "./libraries/JurisdictionConfig.sol";
 
 /// @dev Mirror of ERC8262Oracle.PATTERN_STRUCTURING constant. Must match circuits/pattern.
 uint256 constant PATTERN_STRUCTURING = 1;
@@ -271,7 +272,10 @@ contract SettlementRegistry is ISettlementRegistry {
         return bytes32(uint256(digest) % BN254_FR_MODULUS);
     }
 
-    /// @dev XIP-1 finalize checks 7-8: seed, chain root and jurisdiction pinned to the trade.
+    /// @dev XIP-1 finalize checks 7-8: seed, chain root, jurisdiction and its reporting
+    ///      threshold pinned to the trade. The circuit also asserts threshold ==
+    ///      table[jurisdiction_id]; checking it here keeps the registry independent of
+    ///      that table being right in the deployed verifier.
     function _checkPatternBinding(bytes32 tradeId, Settlement storage settlement, bytes calldata patternPublicInputs)
         internal
         view
@@ -290,6 +294,12 @@ contract SettlementRegistry is ISettlementRegistry {
         uint256 patternJurisdiction = uint256(bytes32(patternPublicInputs[288:320]));
         if (patternJurisdiction != settlement.jurisdictionId) {
             revert PatternJurisdictionMismatch(settlement.jurisdictionId, patternJurisdiction);
+        }
+
+        uint256 expectedThreshold = JurisdictionConfig.getReportingThreshold(settlement.jurisdictionId);
+        uint256 patternThreshold = uint256(bytes32(patternPublicInputs[64:96]));
+        if (patternThreshold != expectedThreshold) {
+            revert ReportingThresholdMismatch(expectedThreshold, patternThreshold);
         }
     }
 

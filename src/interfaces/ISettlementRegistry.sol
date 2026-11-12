@@ -74,6 +74,9 @@ interface ISettlementRegistry {
     error SettlementSeedMismatch(bytes32 expected, bytes32 actual);
     /// @notice Raised when the pattern proof's `jurisdiction_id` is not the trade's.
     error PatternJurisdictionMismatch(uint8 expected, uint256 actual);
+    /// @notice Raised when the pattern proof's `reporting_threshold` is not the trade
+    ///         jurisdiction's (JurisdictionConfig.getReportingThreshold).
+    error ReportingThresholdMismatch(uint256 expected, uint256 actual);
     /// @notice Raised when the caller-supplied leg public inputs do not hash to the
     ///         leg attestation's stored publicInputsHash.
     error LegPublicInputsMismatch(bytes32 expected, bytes32 actual);

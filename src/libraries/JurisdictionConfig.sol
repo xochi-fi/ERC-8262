@@ -78,6 +78,22 @@ library JurisdictionConfig {
         return getThresholds(jurisdictionId).highFloor;
     }
 
+    /// @notice Anti-structuring reporting threshold for PATTERN proofs (XIP-1).
+    /// @dev Mirrors `circuits/shared/src/settlement.nr::get_reporting_threshold`, which the
+    ///      pattern circuit asserts against its `reporting_threshold` public input
+    ///      (test/JurisdictionThresholdParity.t.sol). Same unit as the leg amounts the
+    ///      settlement chain commits. Research placeholder values.
+    /// @param jurisdictionId The jurisdiction (0=EU, 1=US, 2=UK, 3=SG, 4=UAE)
+    /// @return threshold The reporting threshold
+    function getReportingThreshold(uint8 jurisdictionId) internal pure returns (uint256 threshold) {
+        if (jurisdictionId == EU) return 10000;
+        if (jurisdictionId == US) return 10000;
+        if (jurisdictionId == UK) return 10000;
+        if (jurisdictionId == SINGAPORE) return 20000;
+        if (jurisdictionId == UAE) return 55000;
+        revert InvalidJurisdiction(jurisdictionId);
+    }
+
     /// @notice Whether the jurisdiction requires provider-signed screening signals.
     /// @dev When true, the Oracle accepts only the signed proof-type variants
     ///      (COMPLIANCE_SIGNED, RISK_SCORE_SIGNED) and rejects unsigned (COMPLIANCE,

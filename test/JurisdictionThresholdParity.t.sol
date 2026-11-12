@@ -65,4 +65,24 @@ contract JurisdictionThresholdParityTest is Test {
             "Solidity highFloor * 100 must equal Noir get_high_threshold (basis points)"
         );
     }
+
+    /// @dev Mirror of `circuits/shared/src/settlement.nr::get_reporting_threshold` (XIP-1).
+    function _expectedReportingThreshold(uint8 jurisdictionId) internal pure returns (uint256) {
+        if (jurisdictionId == JurisdictionConfig.EU) return 10000;
+        if (jurisdictionId == JurisdictionConfig.US) return 10000;
+        if (jurisdictionId == JurisdictionConfig.UK) return 10000;
+        if (jurisdictionId == JurisdictionConfig.SINGAPORE) return 20000;
+        if (jurisdictionId == JurisdictionConfig.UAE) return 55000;
+        revert("unknown jurisdiction in test mirror");
+    }
+
+    function test_parity_reportingThreshold_allJurisdictions() public pure {
+        for (uint8 j = JurisdictionConfig.EU; j <= JurisdictionConfig.UAE; j++) {
+            assertEq(
+                JurisdictionConfig.getReportingThreshold(j),
+                _expectedReportingThreshold(j),
+                "Solidity getReportingThreshold must equal Noir get_reporting_threshold"
+            );
+        }
+    }
 }

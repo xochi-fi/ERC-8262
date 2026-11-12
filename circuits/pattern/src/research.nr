@@ -58,7 +58,7 @@ pub struct Claim {
 }
 
 // ---------------------------------------------------------------------------
-// Design adapter (H1: settlement chain over whole-unit legs)
+// Design adapter (H1 settlement chain over whole-unit legs; H2 threshold table)
 // ---------------------------------------------------------------------------
 
 /// Leg amount as committed in the settlement chain (H1: whole units, u64).
@@ -79,8 +79,8 @@ fn registry_root(p: Pinned) -> Field {
 }
 
 /// H1: the registry pins settlement_seed, settlement_root and jurisdiction_id;
-/// the circuit refolds the chain over the analysed legs. Threshold still free
-/// (any Oracle-registered value).
+/// the circuit refolds the chain over the analysed legs. H2: the claimed
+/// threshold must be the pinned jurisdiction's (circuit table).
 fn attempt(pinned: Pinned, c: Claim) {
     let mut amounts: [u64; 16] = [0; 16];
     let mut timestamps: [u64; 16] = [0; 16];

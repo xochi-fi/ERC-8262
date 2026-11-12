@@ -16,6 +16,27 @@
 /// element. Inputs are packed injectively: amount * 2^40 + timestamp, with
 /// timestamp < 2^40.
 
+use crate::constants::{JURISDICTION_EU, JURISDICTION_SG, JURISDICTION_UAE, JURISDICTION_UK, JURISDICTION_US};
+
+/// Reporting threshold per jurisdiction, in whole units of the jurisdiction's
+/// reporting currency. Must match Solidity JurisdictionConfig.getReportingThreshold
+/// (test/JurisdictionThresholdParity.t.sol). Research placeholder values; XIP-1
+/// governance fixes them (a change is a new pattern verifier, as for risk tiers).
+pub fn get_reporting_threshold(jurisdiction_id: u8) -> u64 {
+    assert(jurisdiction_id <= JURISDICTION_UAE, "Invalid jurisdiction");
+    if jurisdiction_id == JURISDICTION_EU {
+        10000 // EUR
+    } else if jurisdiction_id == JURISDICTION_US {
+        10000 // USD (BSA CTR)
+    } else if jurisdiction_id == JURISDICTION_UK {
+        10000 // EUR equivalent (MLR 2017 high-value dealer)
+    } else if jurisdiction_id == JURISDICTION_SG {
+        20000 // SGD
+    } else {
+        55000 // AED (JURISDICTION_UAE, guarded by assert above)
+    }
+}
+
 /// Domain tag for chain links ("XIP1.link"), placed in the capacity element
 /// alongside the absorbed length so no other Poseidon2 use can produce a link.
 global DOMAIN_SETTLEMENT_LINK: Field = 0x584950312e6c696e6b * 0x10000000000000000 + 3;
@@ -71,4 +92,18 @@ fn test_fold_matches_manual_chain() {
     let salts: [Field; 4] = [11, 12, 0, 0];
     let manual = settlement_link(settlement_link(9, 5, 1700000000, 11), 6, 1700000100, 12);
     assert(fold_settlement_root(9, amounts, timestamps, salts, 2) == manual);
+}
+
+#[test]
+fn test_reporting_threshold_table() {
+    assert(get_reporting_threshold(0) == 10000);
+    assert(get_reporting_threshold(1) == 10000);
+    assert(get_reporting_threshold(2) == 10000);
+    assert(get_reporting_threshold(3) == 20000);
+    assert(get_reporting_threshold(4) == 55000);
+}
+
+#[test(should_fail_with = "Invalid jurisdiction")]
+fn test_reporting_threshold_rejects_unknown_jurisdiction() {
+    let _ = get_reporting_threshold(5);
 }

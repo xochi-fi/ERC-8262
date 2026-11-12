@@ -12,7 +12,8 @@
 /// Public inputs:
 ///   - analysis_type: which pattern was analyzed (1=structuring, 2=velocity, 3=round amounts)
 ///   - result: boolean (true = no structuring detected, i.e. clean)
-///   - reporting_threshold: the jurisdiction's reporting threshold (in basis points)
+///   - reporting_threshold: the jurisdiction's reporting threshold; the circuit asserts it
+///                          equals shared::get_reporting_threshold(jurisdiction_id)
 ///   - time_window: the analysis window in seconds; every active transaction
 ///                  lies in [timestamp - time_window, timestamp]
 ///   - tx_set_hash: commitment to the transaction set analyzed
@@ -42,7 +43,10 @@
 ///   - salts: per-leg blinding committed in the settlement chain
 ///   - num_transactions: how many are active
 
-use erc8262_shared::{MAX_TRANSACTIONS, compute_tx_set_hash, fold_settlement_root, validate_timestamp};
+use erc8262_shared::{
+    MAX_TRANSACTIONS, compute_tx_set_hash, fold_settlement_root, get_reporting_threshold,
+    validate_timestamp,
+};
 
 mod research;
 
@@ -61,10 +65,6 @@ global MAX_VELOCITY: u32 = 10;
 global ROUND_DIVISOR: u64 = 1000;
 /// Maximum percentage of round amounts before flagging
 global MAX_ROUND_PCT: u32 = 80;
-
-/// Maximum reporting threshold to prevent u64 overflow in floor calculation.
-/// floor = threshold * 90 / 100, so threshold must be < 2^64 / 90.
-global MAX_REPORTING_THRESHOLD: u64 = 204962515653461695;
 
 fn main(
     // --- Private ---
@@ -86,17 +86,15 @@ fn main(
     jurisdiction_id: pub u8,       // XIP-1: trade jurisdiction (registry-pinned)
     aggregate_reportable: pub bool, // XIP-1: sum of analysed amounts >= threshold
 ) {
-    // Not yet constrained (later XIP-1 hypotheses); referenced so they stay public.
-    let _ = jurisdiction_id;
-    let _ = aggregate_reportable;
     // Validate inputs
     assert(num_transactions >= 1, "At least one transaction required");
     assert(num_transactions <= MAX_TRANSACTIONS, "Too many transactions");
-    assert(reporting_threshold > 0, "Threshold must be positive");
+    // XIP-1: the threshold is the pinned jurisdiction's, from the circuit table.
     assert(
-        reporting_threshold <= MAX_REPORTING_THRESHOLD,
-        "Threshold too large, would overflow",
+        reporting_threshold == get_reporting_threshold(jurisdiction_id),
+        "Threshold is not the jurisdiction's",
     );
+    let _ = aggregate_reportable; // constrained by a later XIP-1 hypothesis
     assert(time_window > 0, "Time window must be positive");
 
     // Timestamp must be within reasonable bounds (freshness is the Oracle's job)
@@ -335,31 +333,39 @@ fn test_round_amounts_all_round() {
     run(amounts, timestamps, 4, ANALYSIS_ROUND_AMOUNT, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
+/// XIP-1: the threshold comes from the jurisdiction table (EU = 10_000), so the
+/// former MAX_REPORTING_THRESHOLD overflow-boundary cases no longer apply; these
+/// keep the single-transaction floor boundary at the table threshold.
 #[test]
-fn test_structuring_max_threshold_single_tx() {
-    // Single transaction at MAX_REPORTING_THRESHOLD with amount well below floor.
-    // floor = 204962515653461695 * 90 / 100 = 184466264088115525
-    // amount 100 < floor -> not suspicious -> clean
-    let amounts: [u64; 16] = [100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+fn test_structuring_single_tx_below_floor() {
+    // floor = 10000 * 90 / 100 = 9000; amount 8999 < floor -> clean
+    let amounts: [u64; 16] = [8999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, true, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test]
-fn test_structuring_max_threshold_single_tx_suspicious() {
-    // Single transaction with amount at the floor value (suspicious range).
-    // floor = 204962515653461695 * 90 / 100 = 184466264088115525
-    // amount == floor -> in [floor, threshold) -> suspicious
-    // 1 suspicious out of 1 total: half = (1+1)/2 = 1, suspicious_count(1) < 1 is false -> not clean
-    let amounts: [u64; 16] = [184466264088115525, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+fn test_structuring_single_tx_at_floor_suspicious() {
+    // amount == floor (9000) -> in [floor, threshold) -> 1 of 1 suspicious -> not clean
+    let amounts: [u64; 16] = [9000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let timestamps: [u64; 16] = [1700000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
     let tx_hash = compute_tx_set_hash(amounts, timestamps);
 
-    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, MAX_REPORTING_THRESHOLD, 3600, tx_hash, 0xdead, 0, 1700003600);
+    run(amounts, timestamps, 1, ANALYSIS_STRUCTURING, false, 10000, 3600, tx_hash, 0xdead, 0, 1700003600);
+}
+
+#[test(should_fail_with = "Threshold is not the jurisdiction's")]
+fn test_main_revert_threshold_not_jurisdictions() {
+    let amounts: [u64; 16] = [500, 1200, 3000, 7500, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let timestamps: [u64; 16] = [1700000000, 1700001000, 1700002000, 1700003000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let tx_hash = compute_tx_set_hash(amounts, timestamps);
+
+    run(amounts, timestamps, 4, ANALYSIS_STRUCTURING, true, 20000, 3600, tx_hash, 0xdead, 0, 1700003600);
 }
 
 #[test(should_fail_with = "Timestamp before 2021")]
