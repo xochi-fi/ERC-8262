@@ -927,10 +927,16 @@ contract SettlementRegistryTest is Test {
     /// @notice A PATTERN proof generated against a DIFFERENT settlement set's
     ///         proofHashes cannot be used to finalize this trade.
     function test_finalizeTrade_revert_settlementRootMismatch() public {
-        // Trade A: alice's bound trade
+        // Both trades registered up front: a fully settled, unfinalized trade blocks
+        // further registrations by its subject.
         bytes32 tradeIdA = keccak256("trade-A");
-        vm.prank(alice);
+        bytes32 tradeIdB = keccak256("trade-B");
+        vm.startPrank(alice);
         tradeIdA = registry.registerTrade(tradeIdA, 0, 2);
+        tradeIdB = registry.registerTrade(tradeIdB, 0, 2);
+        vm.stopPrank();
+
+        // Trade A: alice's bound trade
         bytes32 a1 = _submitComplianceForAlice(0);
         bytes32 a2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -939,9 +945,6 @@ contract SettlementRegistryTest is Test {
         vm.stopPrank();
 
         // Trade B: alice's second trade with different sub-settlements
-        bytes32 tradeIdB = keccak256("trade-B");
-        vm.prank(alice);
-        tradeIdB = registry.registerTrade(tradeIdB, 0, 2);
         bytes32 b1 = _submitComplianceForAlice(0);
         bytes32 b2 = _submitComplianceForAlice(0);
         vm.startPrank(alice);
@@ -1142,6 +1145,75 @@ contract SettlementRegistryTest is Test {
         bytes32 tradeId = keccak256("nonexistent");
         vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.TradeNotFound.selector, tradeId));
         registry.expireTrade(tradeId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Settled-but-unfinalized trades block registration
+    // -------------------------------------------------------------------------
+
+    function _registerAndSettle(bytes32 tradeRef) internal returns (bytes32 tradeId) {
+        vm.prank(alice);
+        tradeId = registry.registerTrade(tradeRef, 0, 2);
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.startPrank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        registry.recordSubSettlement(tradeId, 1, p2);
+        vm.stopPrank();
+    }
+
+    function test_registerTrade_revert_settledTradeUnfinalized() public {
+        _registerAndSettle(keccak256("trade-a"));
+        assertEq(registry.unfinalizedSettledTrades(alice), 1);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnfinalizedSettledTrades.selector, alice, 1));
+        registry.registerTrade(keccak256("trade-b"), 0, 2);
+    }
+
+    function test_registerTrade_afterSettledTradeFinalized() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("trade-a"));
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternBoundTo(tradeId);
+        vm.prank(alice);
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
+        assertEq(registry.unfinalizedSettledTrades(alice), 0);
+
+        vm.prank(alice);
+        registry.registerTrade(keccak256("trade-b"), 0, 2);
+    }
+
+    /// @notice Expiry does not clear the block: settling every leg and letting the trade
+    ///         expire bars the subject for good.
+    function test_registerTrade_revert_settledTradeExpired() public {
+        bytes32 tradeId = _registerAndSettle(keccak256("trade-a"));
+        vm.warp(block.timestamp + 7 days + 1);
+        registry.expireTrade(tradeId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnfinalizedSettledTrades.selector, alice, 1));
+        registry.registerTrade(keccak256("trade-b"), 0, 2);
+    }
+
+    /// @notice A trade that expires with legs missing (a genuine leg failure) does not block.
+    function test_registerTrade_afterIncompleteTradeExpired() public {
+        vm.prank(alice);
+        bytes32 tradeId = registry.registerTrade(keccak256("trade-a"), 0, 2);
+        bytes32 p1 = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+        vm.warp(block.timestamp + 7 days + 1);
+        registry.expireTrade(tradeId);
+        assertEq(registry.unfinalizedSettledTrades(alice), 0);
+
+        vm.prank(alice);
+        registry.registerTrade(keccak256("trade-b"), 0, 2);
+    }
+
+    /// @notice The block is per subject.
+    function test_registerTrade_otherSubjectUnaffected() public {
+        _registerAndSettle(keccak256("trade-a"));
+        vm.prank(bob);
+        registry.registerTrade(keccak256("trade-a"), 0, 2);
     }
 
     // -------------------------------------------------------------------------

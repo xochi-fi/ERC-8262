@@ -58,6 +58,12 @@ contract SettlementRegistry is ISettlementRegistry {
     ///         attestation evidences one payment, so it backs at most one leg of one trade.
     mapping(bytes32 proofHash => bytes32 tradeId) internal _legProofTrade;
 
+    /// @notice Per subject: trades with every leg recorded but not finalized. While non-zero
+    ///         the subject cannot register another trade. Expiry never decrements it, so a
+    ///         fully settled trade left to expire bars its subject from the registry for good:
+    ///         paying every leg and skipping the pattern proof cannot be repeated.
+    mapping(address subject => uint256 count) internal _unfinalizedSettled;
+
     /// @notice BN254 scalar field modulus. Settlement_root public input is a Field
     ///         element; the keccak commitment must be reduced mod this so the
     ///         Solidity check matches the in-circuit representation.
@@ -95,6 +101,8 @@ contract SettlementRegistry is ISettlementRegistry {
             revert InvalidSubTradeCount(subTradeCount);
         }
         if (reportingThreshold(jurisdictionId) == 0) revert UnsupportedJurisdiction(jurisdictionId);
+        uint256 unfinalized = _unfinalizedSettled[msg.sender];
+        if (unfinalized != 0) revert UnfinalizedSettledTrades(msg.sender, unfinalized);
 
         _settlements[tradeId] = Settlement({
             tradeId: tradeId,
@@ -169,8 +177,10 @@ contract SettlementRegistry is ISettlementRegistry {
         _subSettlements[tradeId][index] =
             SubSettlement({index: index, proofHash: proofHash, settledAt: block.timestamp});
 
-        settlement.settledCount++;
         settlement.lastSettledAt = uint64(block.timestamp);
+        if (++settlement.settledCount == settlement.subTradeCount) {
+            ++_unfinalizedSettled[msg.sender];
+        }
 
         emit SubSettlementRecorded(tradeId, index, proofHash);
     }
@@ -268,6 +278,7 @@ contract SettlementRegistry is ISettlementRegistry {
 
         _usedPatternProofs[patternProofHash] = true;
         settlement.finalized = true;
+        --_unfinalizedSettled[msg.sender];
 
         emit TradeFinalized(tradeId, block.timestamp);
     }
@@ -277,6 +288,11 @@ contract SettlementRegistry is ISettlementRegistry {
         if (jurisdictionId >= MAX_JURISDICTIONS) return 0;
         uint256 word = jurisdictionId < 4 ? _thresholds0to3 : _thresholds4to7;
         return uint64(word >> (64 * (jurisdictionId % 4)));
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function unfinalizedSettledTrades(address subject) external view returns (uint256 count) {
+        return _unfinalizedSettled[subject];
     }
 
     /// @notice Compute the `settlement_root` public input that a PATTERN proof

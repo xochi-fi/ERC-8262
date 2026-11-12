@@ -122,6 +122,37 @@ contract StructuringAttacks is Test {
         assertTrue(_finalized(t1) && _finalized(t2));
     }
 
+    /// A leg genuinely fails: the trade expires with one of three legs recorded, and the
+    /// user settles the remainder as a new split.
+    function test_honest_recoverAfterLegFailure() public {
+        bytes32 failed = _register(alice, _tradeId("honest-failed"), 3);
+        _recordLegs(alice, failed, 1, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        registry.expireTrade(failed);
+        bytes32 retry = _register(alice, _tradeId("honest-retry"), 2);
+        _recordLegs(alice, retry, 2, 0);
+        _finalize(alice, retry, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(retry));
+    }
+
+    /// Two splits open at once, legs interleaved, both finalized.
+    function test_honest_concurrentTrades() public {
+        bytes32 a = _register(alice, _tradeId("honest-conc-a"), 2);
+        bytes32 b = _register(alice, _tradeId("honest-conc-b"), 2);
+        vm.warp(block.timestamp + 1 minutes);
+        for (uint8 i; i < 2; i++) {
+            bytes32 legA = _submitCompliance(alice, 0);
+            bytes32 legB = _submitCompliance(alice, 0);
+            vm.startPrank(alice);
+            registry.recordSubSettlement(a, i, legA);
+            registry.recordSubSettlement(b, i, legB);
+            vm.stopPrank();
+        }
+        _finalize(alice, a, J0_THRESHOLD, 1 days, block.timestamp);
+        _finalize(alice, b, J0_THRESHOLD, 1 days, block.timestamp);
+        assertTrue(_finalized(a) && _finalized(b));
+    }
+
     // ---------------------------------------------------------------------
     // Attacks (pass = refused)
     // ---------------------------------------------------------------------
@@ -213,6 +244,18 @@ contract StructuringAttacks is Test {
         vm.prank(alice);
         (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
         assertFalse(ok, "abandoned settled split did not block the next one");
+    }
+
+    /// Variant found in this research: Alice settles every leg, never finalizes, and opens
+    /// the next split once the first is past expiry without anyone calling expireTrade.
+    function test_attack_abandonWithoutExpireCall() public {
+        bytes32 a = _register(alice, _tradeId("abandon-quiet-a"), 2);
+        _recordLegs(alice, a, 2, 0);
+        vm.warp(block.timestamp + 7 days + 1);
+        bytes32 b = _tradeId("abandon-quiet-b");
+        vm.prank(alice);
+        (bool ok,) = address(registry).call(abi.encodeCall(registry.registerTrade, (b, 0, 2)));
+        assertFalse(ok, "settled, unfinalized, unexpired-on-chain split did not block the next one");
     }
 
     /// Expired trade must never read as finalized.

@@ -78,6 +78,8 @@ interface ISettlementRegistry {
     error UnsupportedJurisdiction(uint8 jurisdictionId);
     /// @notice The PATTERN proof's `reporting_threshold` is not the trade jurisdiction's.
     error ReportingThresholdMismatch(uint256 expected, uint256 actual);
+    /// @notice The subject has trades with every leg recorded that were never finalized.
+    error UnfinalizedSettledTrades(address subject, uint256 count);
     /// @notice Raised when the pattern proof's `settlement_root` public input does
     ///         not match the keccak commitment over this trade's recorded
     ///         sub-settlement proof hashes (audit H-1).
@@ -112,7 +114,9 @@ interface ISettlementRegistry {
 
     /// @notice Register a new multi-leg trade for settlement tracking
     /// @dev The trade is keyed by `computeTradeId(msg.sender, tradeRef)`, so no other caller
-    ///      can register, and thereby occupy, the caller's id.
+    ///      can register, and thereby occupy, the caller's id. Reverts if `jurisdictionId` has no
+    ///      reporting threshold (`UnsupportedJurisdiction`) or the caller has a fully settled,
+    ///      unfinalized trade (`UnfinalizedSettledTrades`).
     /// @param tradeRef Caller-chosen reference, unique per caller
     /// @param jurisdictionId Jurisdiction for compliance verification
     /// @param subTradeCount Number of sub-trades (must be in [2, 16], the PATTERN circuit's capacity)
@@ -166,6 +170,11 @@ interface ISettlementRegistry {
     /// @dev Fixed at deployment. `registerTrade` rejects jurisdictions where this is 0.
     /// @return threshold The threshold, or 0 if the jurisdiction is unsupported
     function reportingThreshold(uint8 jurisdictionId) external view returns (uint64 threshold);
+
+    /// @notice Trades of `subject` with every leg recorded and no finalization yet
+    /// @dev `registerTrade` reverts while this is non-zero. Only `finalizeTrade` lowers it;
+    ///      a fully settled trade that expires keeps it raised permanently.
+    function unfinalizedSettledTrades(address subject) external view returns (uint256 count);
 
     /// @notice The oracle contract used for attestation lookups
     /// @return The oracle address
