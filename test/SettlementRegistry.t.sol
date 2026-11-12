@@ -572,17 +572,17 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, proofTs, block.timestamp
+                ISettlementRegistry.PatternProofPredatesLastLeg.selector, patternProof, proofTs, block.timestamp
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
-    /// @notice Regression: a PATTERN proof dated BEFORE `registerTrade` but
-    ///         submitted to the Oracle afterwards (still within MAX_PROOF_AGE)
-    ///         must not finalize the trade. The Oracle attestation timestamp is
-    ///         the submission block time, so only the proof's own timestamp
-    ///         (public input [7]) shows it predates the trade.
+    /// @notice Regression: a PATTERN proof dated BEFORE the last leg (here, before
+    ///         `registerTrade`) but submitted to the Oracle afterwards (still within
+    ///         MAX_PROOF_AGE) must not finalize the trade. The Oracle attestation timestamp
+    ///         is the submission block time, so only the proof's own timestamp (public
+    ///         input [7]) shows it predates the legs.
     function test_finalizeTrade_revert_patternProofTimestampPredatesTrade() public {
         vm.warp(1_000_000);
         uint256 createdAt = block.timestamp;
@@ -606,13 +606,14 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, createdAt - 1, createdAt
+                ISettlementRegistry.PatternProofPredatesLastLeg.selector, patternProof, createdAt - 1, createdAt
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
-    /// @notice Boundary: a PATTERN proof timestamp equal to `createdAt` is accepted.
+    /// @notice Boundary: a PATTERN proof timestamp equal to the last leg's block time
+    ///         (here `createdAt`) is accepted.
     function test_finalizeTrade_patternProofTimestampAtCreatedAt() public {
         vm.warp(1_000_000);
         uint256 createdAt = block.timestamp;
