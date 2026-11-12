@@ -39,7 +39,13 @@ print(sum(f["gates_per_opcode"]), f["circuit_size"])'
 
 printf 'METRIC circuit_attacks_total=%s\n' "$total"
 printf 'METRIC circuit_attacks_blocked=%s\n' "$blocked"
+gates_total=0
 for pkg in pattern compliance; do
   read -r g s < <(sizes "$pkg")
   printf 'METRIC %s_gates=%s\nMETRIC %s_circuit_size=%s\n' "$pkg" "$g" "$pkg" "$s"
+  gates_total=$((gates_total + g))
 done
+# Lexicographic objective for autoresearch keep/discard: attacks blocked first,
+# then fewer pattern + compliance gates (each < 10^6), so cost-only hypotheses
+# can be kept when they do not lose an attack.
+printf 'METRIC circuit_score=%s\n' "$((blocked * 1000000 - gates_total))"
