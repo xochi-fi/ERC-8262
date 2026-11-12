@@ -31,6 +31,9 @@ contract SettlementRegistryTest is Test {
     /// @dev tx_set_hash committed at registration; the pattern helpers analyse this set.
     bytes32 internal constant PLAN = bytes32(uint256(0xabcd));
 
+    /// @dev Every jurisdiction uses the threshold the pattern helpers prove against.
+    uint256[5] internal THRESHOLDS = [uint256(10000), 10000, 10000, 10000, 10000];
+
     function _defaultProviders() internal pure returns (uint256[] memory ps) {
         ps = new uint256[](1);
         ps[0] = 1;
@@ -48,7 +51,7 @@ contract SettlementRegistryTest is Test {
         oracle.registerReportingThreshold(bytes32(uint256(10000)));
         vm.stopPrank();
 
-        registry = new SettlementRegistry(address(oracle));
+        registry = new SettlementRegistry(address(oracle), THRESHOLDS);
     }
 
     // -------------------------------------------------------------------------
@@ -61,7 +64,7 @@ contract SettlementRegistryTest is Test {
 
     function test_constructor_revert_zeroAddress() public {
         vm.expectRevert(SettlementRegistry.ZeroAddress.selector);
-        new SettlementRegistry(address(0));
+        new SettlementRegistry(address(0), THRESHOLDS);
     }
 
     // -------------------------------------------------------------------------
@@ -1079,6 +1082,29 @@ contract SettlementRegistryTest is Test {
     // -------------------------------------------------------------------------
     // Lifecycle gating: plan commitment, abandonTrade, open-trade table
     // -------------------------------------------------------------------------
+
+    function test_registerTrade_revert_unsupportedJurisdiction() public {
+        SettlementRegistry euOnly = new SettlementRegistry(address(oracle), [uint256(10000), 0, 0, 0, 0]);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnsupportedJurisdiction.selector, 1));
+        euOnly.registerTrade(keccak256("t"), 1, 2, PLAN);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.UnsupportedJurisdiction.selector, 5));
+        euOnly.registerTrade(keccak256("t"), 5, 2, PLAN);
+        assertEq(euOnly.reportingThreshold(0), 10000);
+    }
+
+    /// @notice A threshold registered in the Oracle, but not the trade jurisdiction's, is refused.
+    function test_finalizeTrade_revert_thresholdNotJurisdictions() public {
+        vm.prank(owner);
+        oracle.registerReportingThreshold(bytes32(uint256(20000)));
+        registry = new SettlementRegistry(address(oracle), [uint256(20000), 10000, 10000, 10000, 10000]);
+        bytes32 tradeId = _registerAndSettle(keccak256("t"), 2);
+        (bytes32 pattern, bytes memory inputs) = _submitPatternBoundTo(tradeId); // threshold 10000
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementRegistry.PatternThresholdMismatch.selector, 20000, 10000));
+        registry.finalizeTrade(tradeId, pattern, inputs);
+    }
 
     function test_registerTrade_revert_zeroPlanCommitment() public {
         vm.prank(alice);

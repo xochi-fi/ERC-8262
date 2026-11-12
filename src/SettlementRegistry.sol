@@ -19,6 +19,15 @@ contract SettlementRegistry is ISettlementRegistry {
     /// @notice The oracle contract used for attestation lookups
     IERC8262Oracle public immutable override oracle;
 
+    /// @notice Reporting threshold per jurisdiction (0=EU, 1=US, 2=UK, 3=SG, 4=UAE), fixed at
+    ///         deployment; 0 marks a jurisdiction this registry does not serve. Ownerless: a
+    ///         threshold change means deploying a new registry.
+    uint256 internal immutable _threshold0;
+    uint256 internal immutable _threshold1;
+    uint256 internal immutable _threshold2;
+    uint256 internal immutable _threshold3;
+    uint256 internal immutable _threshold4;
+
     /// @notice Trade expiry duration (7 days from registration)
     uint256 internal constant TRADE_TTL = 7 days;
 
@@ -64,9 +73,27 @@ contract SettlementRegistry is ISettlementRegistry {
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     /// @param oracle_ The ERC8262Oracle contract address
-    constructor(address oracle_) {
+    /// @param reportingThresholds STRUCTURING reporting threshold per jurisdiction id 0..4, in the
+    ///        pattern circuit's amount unit; 0 leaves the jurisdiction unsupported. Each
+    ///        non-zero value must also be registered in the Oracle or no proof will verify.
+    constructor(address oracle_, uint256[5] memory reportingThresholds) {
         if (oracle_ == address(0)) revert ZeroAddress();
         oracle = IERC8262Oracle(oracle_);
+        _threshold0 = reportingThresholds[0];
+        _threshold1 = reportingThresholds[1];
+        _threshold2 = reportingThresholds[2];
+        _threshold3 = reportingThresholds[3];
+        _threshold4 = reportingThresholds[4];
+    }
+
+    /// @inheritdoc ISettlementRegistry
+    function reportingThreshold(uint8 jurisdictionId) public view returns (uint256 threshold) {
+        if (jurisdictionId == 0) threshold = _threshold0;
+        else if (jurisdictionId == 1) threshold = _threshold1;
+        else if (jurisdictionId == 2) threshold = _threshold2;
+        else if (jurisdictionId == 3) threshold = _threshold3;
+        else if (jurisdictionId == 4) threshold = _threshold4;
+        if (threshold == 0) revert UnsupportedJurisdiction(jurisdictionId);
     }
 
     // -------------------------------------------------------------------------
@@ -85,6 +112,7 @@ contract SettlementRegistry is ISettlementRegistry {
         if (subTradeCount < MIN_SUB_TRADES || subTradeCount > MAX_SUB_TRADES) {
             revert InvalidSubTradeCount(subTradeCount);
         }
+        reportingThreshold(jurisdictionId); // reverts for a jurisdiction this registry does not serve
         // Fixes the transaction set every closing PATTERN proof must analyse before any leg
         // moves value, so the subject cannot pick the analysed set after seeing the legs.
         if (planTxSetHash == bytes32(0)) revert PlanCommitmentRequired();
@@ -251,9 +279,9 @@ contract SettlementRegistry is ISettlementRegistry {
         //      fixed before any leg moved value. Still prover-chosen: nothing ties the
         //      committed amounts to the legs' real amounts without an amount-committing
         //      compliance circuit, or venues checking their leg against the plan opening.
-        //
-        // Jurisdiction is intentionally not checked. PATTERN proofs are jurisdiction-agnostic:
-        // they analyze transaction patterns, not jurisdiction-specific thresholds.
+        //  11. reporting_threshold equals this registry's threshold for the trade's
+        //      jurisdiction. The Oracle only checks membership in its global registered set,
+        //      which would accept another jurisdiction's (higher) threshold.
         if (patternProofHash == bytes32(0)) revert PatternProofRequired(tradeId);
         if (_usedPatternProofs[patternProofHash]) revert PatternProofAlreadyUsed(patternProofHash);
         uint8 proofType = oracle.getProofType(patternProofHash);
@@ -270,6 +298,23 @@ contract SettlementRegistry is ISettlementRegistry {
         if (inputsHash != patternAttestation.publicInputsHash) {
             revert PatternPublicInputsMismatch(patternAttestation.publicInputsHash, inputsHash);
         }
+        _checkPatternFields(settlement, patternProofHash, patternPublicInputs);
+
+        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
+        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
+        if (patternSettlementRoot != expectedSettlementRoot) {
+            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
+        }
+
+        _usedPatternProofs[patternProofHash] = true;
+    }
+
+    /// @dev Checks 4, 6, 9, 10 and 11 of `_consumePatternProof` on already-authenticated inputs.
+    function _checkPatternFields(
+        Settlement storage settlement,
+        bytes32 patternProofHash,
+        bytes calldata patternPublicInputs
+    ) internal view {
         // PATTERN public inputs layout (32 bytes each, 8 fields total):
         //   [0]=analysis_type, [1]=result, [2]=reporting_threshold, [3]=time_window,
         //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
@@ -290,14 +335,9 @@ contract SettlementRegistry is ISettlementRegistry {
         }
         bytes32 txSetHash = bytes32(patternPublicInputs[128:160]);
         if (txSetHash != settlement.planTxSetHash) revert PatternTxSetMismatch(settlement.planTxSetHash, txSetHash);
-
-        bytes32 expectedSettlementRoot = _computeSettlementRoot(tradeId, settlement.subTradeCount);
-        bytes32 patternSettlementRoot = bytes32(patternPublicInputs[192:224]);
-        if (patternSettlementRoot != expectedSettlementRoot) {
-            revert SettlementRootMismatch(expectedSettlementRoot, patternSettlementRoot);
-        }
-
-        _usedPatternProofs[patternProofHash] = true;
+        uint256 threshold = uint256(bytes32(patternPublicInputs[64:96]));
+        uint256 expectedThreshold = reportingThreshold(settlement.jurisdictionId);
+        if (threshold != expectedThreshold) revert PatternThresholdMismatch(expectedThreshold, threshold);
     }
 
     /// @dev One pass over `subject`'s open-trade table. `freeSlot` is the first slot that is

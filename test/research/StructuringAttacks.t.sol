@@ -61,7 +61,7 @@ contract StructuringAttacks is Test {
         oracle.registerReportingThreshold(bytes32(J0_THRESHOLD));
         oracle.registerReportingThreshold(bytes32(FOREIGN_THRESHOLD));
         vm.stopPrank();
-        registry = new SettlementRegistry(address(oracle));
+        registry = new SettlementRegistry(address(oracle), [J0_THRESHOLD, FOREIGN_THRESHOLD, 0, 0, 0]);
         vm.warp(1_800_000_000);
     }
 

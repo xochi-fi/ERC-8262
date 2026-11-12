@@ -121,6 +121,10 @@ interface ISettlementRegistry {
     error PlanCommitmentRequired();
     /// @notice The PATTERN proof analysed a set other than the one committed at registration.
     error PatternTxSetMismatch(bytes32 expected, bytes32 actual);
+    /// @notice Jurisdiction has no reporting threshold in this registry.
+    error UnsupportedJurisdiction(uint8 jurisdictionId);
+    /// @notice The PATTERN proof's reporting_threshold is not the trade jurisdiction's.
+    error PatternThresholdMismatch(uint256 expected, uint256 actual);
 
     // -------------------------------------------------------------------------
     // Functions
@@ -150,6 +154,10 @@ interface ISettlementRegistry {
 
     /// @notice Trade key for a subject's reference: `keccak256(abi.encode(subject, tradeRef))`
     function computeTradeId(address subject, bytes32 tradeRef) external pure returns (bytes32 tradeId);
+
+    /// @notice STRUCTURING reporting threshold a closing PATTERN proof must use for
+    ///         `jurisdictionId`; fixed at deployment. Reverts `UnsupportedJurisdiction` if unset.
+    function reportingThreshold(uint8 jurisdictionId) external view returns (uint256 threshold);
 
     /// @notice Record a sub-settlement by linking it to a verified compliance proof
     /// @dev Attestation: compliance variant for the trade's subject and jurisdiction,
