@@ -16,6 +16,7 @@ interface ISettlementRegistry {
         uint8 jurisdictionId;
         uint8 subTradeCount; // total sub-trades expected
         uint8 settledCount; // sub-trades settled so far
+        uint64 lastSettledAt; // block.timestamp of the latest recordSubSettlement (0 before any)
         uint256 createdAt;
         uint256 expiresAt;
         bool finalized; // true only after a successful finalizeTrade
@@ -92,9 +93,9 @@ interface ISettlementRegistry {
     error AttestationRevoked(bytes32 proofHash);
     /// @notice Leg attestation was recorded (Oracle submission time) before the trade was registered.
     error AttestationPredatesTrade(bytes32 proofHash, uint256 attestedAt, uint256 tradeCreatedAt);
-    /// @notice The PATTERN proof's own `timestamp` public input predates trade registration.
+    /// @notice The PATTERN proof's own `timestamp` public input predates the last recorded leg.
     /// @dev `proofTimestamp` is public input 7, not the Oracle attestation time, which may be later.
-    error PatternProofPredatesTrade(bytes32 proofHash, uint256 proofTimestamp, uint256 tradeCreatedAt);
+    error PatternProofPredatesLastLeg(bytes32 proofHash, uint256 proofTimestamp, uint256 lastSettledAt);
     /// @notice Proof hash already backs a leg of `tradeId` (this trade or another one).
     error DuplicateSubSettlementProof(bytes32 tradeId, bytes32 proofHash);
 
@@ -130,8 +131,8 @@ interface ISettlementRegistry {
     ///      The caller supplies the original public inputs so the registry can verify
     ///      keccak256(patternPublicInputs) matches the attestation's stored publicInputsHash,
     ///      then enforces analysis_type==1 (anti-structuring). VELOCITY/ROUND-AMOUNT proofs
-    ///      are rejected. The proof's `timestamp` public input must be >= `createdAt`
-    ///      (`PatternProofPredatesTrade`); the attestation's submission time is not enough.
+    ///      are rejected. The proof's `timestamp` public input must be >= the last leg's
+    ///      record time (`PatternProofPredatesLastLeg`); the attestation's submission time is not enough.
     /// @param tradeId The trade to finalize
     /// @param patternProofHash Proof hash of a pattern detection proof for the subject
     /// @param patternPublicInputs Original public inputs used to generate the pattern proof

@@ -1,17 +1,18 @@
-[FAIL: 17 legs on a 16-slot proof] test_attack_moreLegsThanCircuitCapacity() (gas: 7161509)
-[FAIL: 1h window over 3 days of legs] test_attack_windowDoesNotCoverLegs() (gas: 2052720)
+[FAIL: 1h window over 3 days of legs] test_attack_windowDoesNotCoverLegs() (gas: 2052742)
 [FAIL: abandoned settled split did not block the next one] test_attack_abandonAndRepeat() (gas: 1360346)
 [FAIL: foreign threshold accepted] test_attack_foreignThreshold() (gas: 1686918)
 [FAIL: pattern proof made before the last leg finalized the trade] test_attack_patternPredatesLastLeg() (gas: 1683673)
-[PASS] test_attack_crossTradeLegReuse() (gas: 984834)
+[PASS] test_attack_crossTradeLegReuse() (gas: 984856)
 [PASS] test_attack_expiredReadsFinalized() (gas: 1266795)
+[PASS] test_attack_moreLegsThanCircuitCapacity() (gas: 13578)
 [PASS] test_attack_patternReuse() (gas: 2491529)
 [PASS] test_attack_tradeIdFrontrun() (gas: 203319)
 [PASS] test_attack_unboundSettlementRoot() (gas: 1640079)
 [PASS] test_attack_wrongAnalysisType() (gas: 1640829)
 [PASS] test_honest_legsOverTwoDays() (gas: 2053321)
 [PASS] test_honest_secondTradeAfterFinalized() (gas: 2791954)
+[PASS] test_honest_seventeenLegsAsTwoTrades() (gas: 7539947)
 [PASS] test_honest_sixteenLegs() (gas: 6795881)
 [PASS] test_honest_twoLegs() (gas: 1687308)
 METRIC attacks_total=11
-METRIC attacks_blocked=6
+METRIC attacks_blocked=7

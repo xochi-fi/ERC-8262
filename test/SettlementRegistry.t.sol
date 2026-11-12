@@ -595,7 +595,7 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, proofTs, block.timestamp
+                ISettlementRegistry.PatternProofPredatesLastLeg.selector, patternProof, proofTs, block.timestamp
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
@@ -629,13 +629,14 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                ISettlementRegistry.PatternProofPredatesTrade.selector, patternProof, createdAt - 1, createdAt
+                ISettlementRegistry.PatternProofPredatesLastLeg.selector, patternProof, createdAt - 1, createdAt
             )
         );
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
-    /// @notice Boundary: a PATTERN proof timestamp equal to `createdAt` is accepted.
+    /// @notice Boundary: a PATTERN proof timestamp equal to the last leg's record time
+    ///         (here also `createdAt`) is accepted.
     function test_finalizeTrade_patternProofTimestampAtCreatedAt() public {
         vm.warp(1_000_000);
         uint256 createdAt = block.timestamp;
@@ -657,6 +658,45 @@ contract SettlementRegistryTest is Test {
         vm.prank(alice);
         registry.finalizeTrade(tradeId, patternProof, patternInputs);
         assertTrue(registry.getSettlement(tradeId).finalized);
+    }
+
+    /// @notice A PATTERN proof dated after registration but before the last leg was
+    ///         recorded must not finalize the trade, even though its settlement_root
+    ///         (computable off-chain from the leg proof hashes) matches.
+    function test_finalizeTrade_revert_patternProofPredatesLastLeg() public {
+        vm.warp(1_000_000);
+        bytes32 tradeId = keccak256("trade-early-pattern");
+        vm.prank(alice);
+        tradeId = registry.registerTrade(tradeId, 0, 2);
+
+        bytes32 p1 = _submitComplianceForAlice(0);
+        bytes32 p2 = _submitComplianceForAlice(0);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 0, p1);
+
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = p1;
+        hashes[1] = p2;
+        bytes32 root = bytes32(
+            uint256(keccak256(abi.encode(uint8(2), hashes)))
+                % 21888242871839275222246405745257275088548364400416034343698204186575808495617
+        );
+        vm.warp(block.timestamp + 10 minutes);
+        uint256 patternTs = block.timestamp;
+        (bytes32 patternProof, bytes memory patternInputs) = _submitPatternFor(alice, 1, root, patternTs);
+
+        vm.warp(block.timestamp + 10 minutes);
+        vm.prank(alice);
+        registry.recordSubSettlement(tradeId, 1, p2);
+        assertEq(registry.computeSettlementRoot(tradeId), root);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementRegistry.PatternProofPredatesLastLeg.selector, patternProof, patternTs, block.timestamp
+            )
+        );
+        registry.finalizeTrade(tradeId, patternProof, patternInputs);
     }
 
     function test_finalizeTrade_revert_wrongProofType() public {

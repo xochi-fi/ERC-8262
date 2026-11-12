@@ -79,6 +79,7 @@ contract SettlementRegistry is ISettlementRegistry {
             jurisdictionId: jurisdictionId,
             subTradeCount: subTradeCount,
             settledCount: 0,
+            lastSettledAt: 0,
             createdAt: block.timestamp,
             expiresAt: block.timestamp + TRADE_TTL,
             finalized: false,
@@ -146,6 +147,7 @@ contract SettlementRegistry is ISettlementRegistry {
             SubSettlement({index: index, proofHash: proofHash, settledAt: block.timestamp});
 
         settlement.settledCount++;
+        settlement.lastSettledAt = uint64(block.timestamp);
 
         emit SubSettlementRecorded(tradeId, index, proofHash);
     }
@@ -166,14 +168,12 @@ contract SettlementRegistry is ISettlementRegistry {
         //   1. patternProofHash is not zero
         //   2. The proof type is PATTERN (0x03) via oracle.getProofType()
         //   3. The attestation exists and subject matches
-        //   4. The pattern proof's own `timestamp` public input (word 7) is >= the trade's
-        //      createdAt. This is stricter than the attestation (submission) time, which the
-        //      Oracle already holds at or after the proof timestamp. It does not prove the
-        //      proof was generated after registerTrade: the timestamp is prover-chosen and
-        //      `settlement_root` does not commit to tradeId, so a prover holding the leg proof
-        //      hashes can build inputs dated after createdAt in advance and submit them once
-        //      the chain reaches that date. Legs use the submission time instead (see
-        //      `recordSubSettlement`).
+        //   4. The pattern proof's own `timestamp` public input (word 7) is >= the time the
+        //      last leg was recorded (`lastSettledAt`, itself >= createdAt). The Oracle
+        //      rejects future-dated proofs, so the PATTERN attestation was submitted after
+        //      every leg was on-chain, and the circuit's analysed range
+        //      `[timestamp - time_window, timestamp]` reaches the last leg. It does not prove
+        //      the analysed amounts are the legs' amounts: those are private witness data.
         //   5. Caller-supplied patternPublicInputs hashes to the stored publicInputsHash
         //      (checked before reading any field, including the timestamp in check 4)
         //   6. analysis_type == STRUCTURING (1) -- VELOCITY / ROUND_AMOUNT proofs do NOT
@@ -207,8 +207,8 @@ contract SettlementRegistry is ISettlementRegistry {
         //   [4]=tx_set_hash, [5]=submitter, [6]=settlement_root, [7]=timestamp
         // Length is enforced by the Oracle on submission.
         uint256 proofTimestamp = uint256(bytes32(patternPublicInputs[224:256]));
-        if (proofTimestamp < settlement.createdAt) {
-            revert PatternProofPredatesTrade(patternProofHash, proofTimestamp, settlement.createdAt);
+        if (proofTimestamp < settlement.lastSettledAt) {
+            revert PatternProofPredatesLastLeg(patternProofHash, proofTimestamp, settlement.lastSettledAt);
         }
 
         uint256 analysisType = uint256(bytes32(patternPublicInputs[0:32]));
