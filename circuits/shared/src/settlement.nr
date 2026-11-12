@@ -58,7 +58,7 @@ global TWO_POW_40: Field = 0x10000000000;
 pub fn settlement_link(prev: Field, amount: u128, timestamp: u64, salt: Field) -> Field {
     assert(timestamp < 1099511627776, "Leg timestamp exceeds 2^40");
     let packed = (amount as Field) * TWO_POW_40 + (timestamp as Field);
-    std::hash::poseidon2_permutation([prev, packed, salt, DOMAIN_SETTLEMENT_LINK])[0]
+    std::hash::pedersen_hash([DOMAIN_SETTLEMENT_LINK, prev, packed, salt])
 }
 
 /// Fold the first `n` legs onto `seed`.
